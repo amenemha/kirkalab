@@ -21,7 +21,11 @@ def list_users(
 
 
 @router.post("/", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def create_user(user_in: UserCreate, db: Session = Depends(get_db)) -> models.User:
+def create_user(
+    user_in: UserCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_admin),
+) -> models.User:
     if crud_users.get_user_by_email(db, email=user_in.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
