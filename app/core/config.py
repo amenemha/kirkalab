@@ -9,13 +9,10 @@ class Settings(BaseSettings):
     app_name: str = "kirkalab"
     environment: str = "development"
     debug: bool = False
-
     database_url: str = "sqlite:///./kirkalab.db"
-
     secret_key: str = "CHANGE_ME"
     access_token_expire_minutes: int = 60
     algorithm: str = "HS256"
-
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -28,4 +25,9 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+
+    if settings.environment.lower() == "production" and settings.secret_key == "CHANGE_ME":
+        raise ValueError("SECRET_KEY must be set in production")
+
+    return settings
