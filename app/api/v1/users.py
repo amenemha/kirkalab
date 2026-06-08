@@ -33,3 +33,18 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)) -> models.Us
             detail="User with this handle already exists",
         )
     return crud_users.create_user(db, user_in=user_in)
+
+
+@router.get("/{user_id}", response_model=UserRead)
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_admin),
+) -> models.User:
+    user = crud_users.get_user(db, user_id=user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    return user
