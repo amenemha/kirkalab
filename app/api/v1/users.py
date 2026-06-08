@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 
 from app.api.v1.auth import get_current_admin
@@ -48,3 +48,20 @@ def get_user(
             detail="User not found",
         )
     return user
+
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_admin),
+) -> Response:
+    user = crud_users.get_user(db, user_id=user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    crud_users.delete_user(db, user=user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
