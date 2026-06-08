@@ -156,3 +156,89 @@ def test_non_admin_cannot_delete_user(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403, resp.text
+
+
+
+def test_admin_can_update_user(client, db):
+    admin_token, _ = _make_admin(client, db)
+    email, handle = _creds("patchme")
+    target = _create_user(client, email, handle)
+    resp = client.patch(
+        f"/api/v1/users/{target['id']}",
+        json={"handle": "updated_handle"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == target["id"]
+    assert body["handle"] == "updated_handle"
+    assert body["email"] == email
+
+
+def test_admin_can_update_password(client, db):
+    admin_token, _ = _make_admin(client, db)
+    email, handle = _creds("pwd")
+    target = _create_user(client, email, handle)
+    new_password = "NewSecret456789"
+    resp = client.patch(
+        f"/api/v1/users/{target['id']}",
+        json={"password": new_password},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": new_password},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_update_user_not_found(client, db):
+    admin_token, _ = _make_admin(client, db)
+    resp = client.patch(
+        "/api/v1/users/99999999",
+        json={"handle": "nobody"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_non_admin_cannot_update_user(client):
+    email, handle = _creds("plain")
+    created = _create_user(client, email, handle)
+    token = _login(client, email)
+    resp = client.patch(
+        f"/api/v1/users/{created['id']}",
+        json={"handle": "hacked"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_update_user_duplicate_email(client, db):
+    admin_token, _ = _make_admin(client, db)
+    email_a, handle_a = _creds("usera")
+    _create_user(client, email_a, handle_a)
+    email_b, handle_b = _creds("userb")
+    target = _create_user(client, email_b, handle_b)
+    resp = client.patch(
+        f"/api/v1/users/{target['id']}",
+        json={"email": email_a},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 400, resp.text
+
+
+def test_update_user_cannot_escalate_admin(client, db):
+    admin_token, _ = _make_admin(client, db)
+    email, handle = _creds("escalate")
+    target = _create_user(client, email, handle)
+    resp = client.patch(
+        f"/api/v1/users/{target['id']}",
+        json={"is_admin": True, "is_active": False},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    user = db.get(models.User, target["id"])
+    assert user.is_admin is False
+    assert user.is_active is True

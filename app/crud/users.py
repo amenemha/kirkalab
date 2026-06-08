@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.db import models
-from app.schemas.users import UserCreate
+from app.schemas.users import UserCreate, UserUpdate
 
 
 def get_user(db: Session, user_id: int) -> models.User | None:
@@ -41,3 +41,16 @@ def create_user(db: Session, user_in: UserCreate) -> models.User:
 def delete_user(db: Session, user: models.User) -> None:
     db.delete(user)
     db.commit()
+
+
+
+def update_user(db: Session, user: models.User, user_in: UserUpdate) -> models.User:
+    data = user_in.model_dump(exclude_unset=True)
+    if "password" in data:
+        user.hashed_password = hash_password(data.pop("password"))
+    for field, value in data.items():
+        setattr(user, field, value)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
