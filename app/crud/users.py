@@ -35,3 +35,9 @@ def create_user(db: Session, user_in: UserCreate) -> models.User:
     db.commit()
     db.refresh(user)
     return user
+
+
+
+def delete_user(db: Session, user: models.User) -> None:
+    db.delete(user)
+    db.commit()
