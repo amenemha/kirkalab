@@ -5,7 +5,7 @@ from app.api.v1.auth import get_current_admin
 from app.crud import users as crud_users
 from app.db import models
 from app.db.session import get_db
-from app.schemas.users import UserCreate, UserRead
+from app.schemas.users import UserCreate, UserRead, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -65,3 +65,33 @@ def delete_user(
         )
     crud_users.delete_user(db, user=user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch("/{user_id}", response_model=UserRead)
+def update_user(
+    user_id: int,
+    user_in: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_admin),
+) -> models.User:
+    user = crud_users.get_user(db, user_id=user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    if user_in.email is not None and user_in.email != user.email:
+        existing = crud_users.get_user_by_email(db, email=user_in.email)
+        if existing is not None and existing.id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User with this email already exists",
+            )
+    if user_in.handle is not None and user_in.handle != user.handle:
+        existing = crud_users.get_user_by_handle(db, handle=user_in.handle)
+        if existing is not None and existing.id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User with this handle already exists",
+            )
+    return crud_users.update_user(db, user=user, user_in=user_in)
