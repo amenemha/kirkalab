@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
 
+    # First-admin bootstrap (optional). If all three are set and no user with
+    # this email exists, an admin user is created on startup.
+    first_admin_email: str | None = None
+    first_admin_handle: str | None = None
+    first_admin_password: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
