@@ -11,6 +11,6 @@ python-multipart==0.0.20
 email-validator==2.2.0
 
 # Dev / test
-pytest==8.3.4
+pytest==9.0.3
 httpx==0.28.1
 ruff==0.8.4
