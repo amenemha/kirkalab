@@ -1,0 +1,36 @@
+# Version control
+.git
+.gitignore
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files and secrets
+.env
+*.env
+!.env.example
+
+# Local databases / logs
+*.sqlite3
+*.db
+*.log
+
+# Docker / CI artifacts
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
