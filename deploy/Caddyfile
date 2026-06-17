@@ -1,12 +1,21 @@
-# Caddyfile — reverse proxy with automatic HTTPS for the Kirkalab API.
+# Caddyfile — reverse proxy with automatic HTTPS for Kirkalab.
 # Caddy obtains and renews Let's Encrypt certificates automatically.
+# It serves the static frontend (mounted at /srv) and proxies the API
+# and health check to the FastAPI app (uvicorn on port 8000).
 # Set the DOMAIN and ACME_EMAIL variables in your prod .env file.
 
 {$DOMAIN} {
 	tls {$ACME_EMAIL}
 
-	# Proxy all traffic to the FastAPI app (uvicorn on port 8000).
-	reverse_proxy app:8000
+	root * /srv
+
+	# API and health check go to the FastAPI app.
+	@backend path /api/* /health
+	reverse_proxy @backend app:8000
+
+	# Everything else is the static SPA; fall back to index.html.
+	try_files {path} /index.html
+	file_server
 
 	# Security headers.
 	header {
