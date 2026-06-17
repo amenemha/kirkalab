@@ -1,3 +1,7 @@
+import os
+
+os.environ.setdefault("ENVIRONMENT", "test")
+
 from collections.abc import Generator
 
 import pytest

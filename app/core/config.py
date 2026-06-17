@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./kirkalab.db"
     secret_key: str = "CHANGE_ME"
     access_token_expire_minutes: int = 60
+    refresh_token_expire_minutes: int = 60 * 24 * 14
+    email_token_expire_minutes: int = 60 * 24
+    reset_token_expire_minutes: int = 30
+    auth_rate_limit: str = "10/minute"
     algorithm: str = "HS256"
     host: str = "127.0.0.1"
     port: int = 8000
