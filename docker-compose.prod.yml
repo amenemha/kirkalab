@@ -57,6 +57,7 @@ services:
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.prod}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend:/srv:ro
       - caddy_data:/data
       - caddy_config:/config
       - caddy_logs:/var/log/caddy

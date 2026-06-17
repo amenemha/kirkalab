@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kirkalab — Admin</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<header class="topbar">
+<span class="brand">Kirkalab</span>
+<span id="whoami" class="whoami"></span>
+<button id="logout-btn" class="btn ghost hidden">Выйти</button>
+</header>
+
+<main class="container">
+<!-- Экран входа -->
+<section id="login-view" class="card">
+<h1>Вход</h1>
+<form id="login-form" autocomplete="on">
+<label>Email<input type="email" id="login-email" required /></label>
+<label>Пароль<input type="password" id="login-password" required /></label>
+<button type="submit" class="btn primary">Войти</button>
+</form>
+<p class="muted"><a href="#" id="show-reset">Забыли пароль?</a></p>
+<p id="login-error" class="error" role="alert"></p>
+</section>
+
+<!-- Сброс пароля -->
+<section id="reset-view" class="card hidden">
+<h1>Сброс пароля</h1>
+<form id="reset-request-form">
+<label>Email<input type="email" id="reset-email" required /></label>
+<button type="submit" class="btn primary">Запросить токен</button>
+</form>
+<form id="reset-confirm-form" class="mt">
+<label>Токен<input type="text" id="reset-token" required /></label>
+<label>Новый пароль<input type="password" id="reset-new-password" minlength="8" required /></label>
+<button type="submit" class="btn primary">Сменить пароль</button>
+</form>
+<p class="muted"><a href="#" id="show-login">Назад ко входу</a></p>
+<p id="reset-msg" class="info" role="status"></p>
+</section>
+
+<!-- Панель -->
+<section id="dashboard-view" class="hidden">
+<div class="card">
+<h1>Профиль</h1>
+<dl id="profile" class="profile"></dl>
+<button id="verify-email-btn" class="btn">Подтвердить email</button>
+<p id="profile-msg" class="info" role="status"></p>
+</div>
+
+<div class="card" id="users-card">
+<div class="row between">
+<h1>Пользователи</h1>
+<button id="refresh-users" class="btn ghost">Обновить</button>
+</div>
+<table class="users">
+<thead><tr><th>ID</th><th>Email</th><th>Handle</th><th>Активен</th><th>Админ</th><th>Создан</th></tr></thead>
+<tbody id="users-body"></tbody>
+</table>
+<p id="users-msg" class="info" role="status"></p>
+</div>
+</section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
