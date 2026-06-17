@@ -1,0 +1,89 @@
+# docker-compose.prod.yml — production stack for VPS deployment.
+# Usage on the server:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Differences from the dev docker-compose.yml:
+#   - Caddy reverse proxy terminates TLS (automatic HTTPS) on 80/443.
+#   - The app is NOT published directly to the host; only Caddy is exposed.
+#   - PostgreSQL port is not published to the host.
+#   - A backup service dumps the database on a schedule.
+#   - JSON file logging with rotation for every service.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kirkalab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:-kirkalab}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kirkalab} -d ${POSTGRES_DB:-kirkalab}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  app:
+    build: .
+    restart: always
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-kirkalab}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kirkalab}
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env.prod}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.prod}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    depends_on:
+      - app
+    logging: *default-logging
+
+  backup:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      PGUSER: ${POSTGRES_USER:-kirkalab}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-kirkalab}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+    volumes:
+      - ./deploy/backup.sh:/usr/local/bin/backup.sh:ro
+      - backups:/backups
+    entrypoint: ["/bin/sh", "/usr/local/bin/backup.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
+  backups:
