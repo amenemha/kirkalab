@@ -1,8 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.limiter import limiter
 from app.core.security import (
     EMAIL_VERIFY,
     PASSWORD_RESET,
@@ -30,6 +34,7 @@ from app.schemas.users import (
 )
 
 settings = get_settings()
+logger = logging.getLogger("app.auth")
 router = APIRouter(prefix="/auth", tags=["auth"])
 bearer_scheme = HTTPBearer(auto_error=True)
 
@@ -73,11 +78,17 @@ def get_current_admin(
 
 
 def _token_subject(user: models.User) -> dict:
-    return {"user_id": user.id, "email": user.email, "is_admin": user.is_admin}
+    return {
+        "user_id": user.id,
+        "email": user.email,
+        "is_admin": user.is_admin,
+        "token_version": user.token_version,
+    }
 
 
 @router.post("/login", response_model=Token)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Token:
+@limiter.limit("5/minute")
+def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)) -> Token:
     user = crud_users.get_user_by_email(db, email=payload.email)
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
@@ -96,20 +107,38 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Token:
     )
 
 
+def _invalid_refresh() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid refresh token",
+    )
+
+
 @router.post("/refresh", response_model=Token)
-def refresh(payload: RefreshRequest, db: Session = Depends(get_db)) -> Token:
+@limiter.limit("10/minute")
+def refresh(request: Request, payload: RefreshRequest, db: Session = Depends(get_db)) -> Token:
     data = decode_token(payload.refresh_token, expected_type=REFRESH)
-    if data is None or "user_id" not in data:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-        )
+    if data is None or "user_id" not in data or "jti" not in data:
+        raise _invalid_refresh()
+
+    jti = data["jti"]
+    # Reject a token that has already been rotated away or otherwise revoked.
+    if crud_users.is_token_revoked(db, jti):
+        raise _invalid_refresh()
+
     user = crud_users.get_user(db, user_id=int(data["user_id"]))
     if user is None or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-        )
+        raise _invalid_refresh()
+
+    # A password change bumps token_version, invalidating older refresh tokens.
+    if data.get("token_version") != user.token_version:
+        raise _invalid_refresh()
+
+    # Rotation: blacklist the presented jti so it cannot be replayed, then mint
+    # a brand-new refresh token (with a fresh jti) alongside the access token.
+    token_exp = datetime.fromtimestamp(int(data["exp"]), tz=timezone.utc)
+    crud_users.revoke_token(db, jti=jti, expires_at=token_exp)
+
     subject = _token_subject(user)
     return Token(
         access_token=create_access_token(subject),
@@ -122,9 +151,12 @@ def request_email_verification(
     current_user: models.User = Depends(get_current_user),
 ) -> dict:
     token = create_email_token(_token_subject(current_user))
-    # In production this token is emailed to the user; returned here for
-    # client integration and testability.
-    return {"email_verify_token": token}
+    # SECURITY: never return the token in the API response — it grants the
+    # ability to act on the account. Deliver it out-of-band instead.
+    # TODO(email): send this token by email once SMTP delivery is configured;
+    # until then it is written to the server log for operators only.
+    logger.info("Email-verification token issued for user_id=%s: %s", current_user.id, token)
+    return {"detail": "Verification instructions have been sent"}
 
 
 @router.post("/verify-email")
@@ -144,19 +176,26 @@ def verify_email(payload: EmailVerifyRequest, db: Session = Depends(get_db)) -> 
     return {"detail": "Email verified", "email": user.email}
 
 
+_RESET_GENERIC_RESPONSE = {
+    "detail": "If the account exists, password reset instructions have been sent"
+}
+
+
 @router.post("/password-reset/request")
+@limiter.limit("3/minute")
 def request_password_reset(
-    payload: PasswordResetRequest, db: Session = Depends(get_db)
+    request: Request, payload: PasswordResetRequest, db: Session = Depends(get_db)
 ) -> dict:
     user = crud_users.get_user_by_email(db, email=payload.email)
-    # Always return the same response to avoid user enumeration.
-    if user is None:
-        return {"detail": "If the account exists, a reset token has been issued"}
-    token = create_reset_token(_token_subject(user))
-    return {
-        "detail": "If the account exists, a reset token has been issued",
-        "reset_token": token,
-    }
+    # Anti-enumeration: respond identically whether or not the account exists,
+    # and never expose the reset token in the response (the endpoint is
+    # unauthenticated, so a leaked token = full account takeover).
+    if user is not None:
+        token = create_reset_token(_token_subject(user))
+        # TODO(email): deliver this token by email once SMTP is configured;
+        # for now it is logged server-side for operators only.
+        logger.info("Password-reset token issued for user_id=%s: %s", user.id, token)
+    return _RESET_GENERIC_RESPONSE
 
 
 @router.post("/password-reset/confirm")

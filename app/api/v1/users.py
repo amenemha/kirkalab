@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Response
 from sqlalchemy.orm import Session
 
 from app.api.v1.auth import get_current_admin
+from app.core.limiter import limiter
 from app.crud import users as crud_users
 from app.db import models
 from app.db.session import get_db
@@ -21,7 +22,10 @@ def list_users(
 
 
 @router.post("/", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def create_user(user_in: UserCreate, db: Session = Depends(get_db)) -> models.User:
+@limiter.limit("3/minute")
+def create_user(
+    request: Request, user_in: UserCreate, db: Session = Depends(get_db)
+) -> models.User:
     if crud_users.get_user_by_email(db, email=user_in.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

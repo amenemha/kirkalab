@@ -1,12 +1,14 @@
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.v1.auth import _token_subject
 from app.core.config import get_settings
+from app.core.limiter import limiter
 from app.core.security import create_access_token, create_refresh_token
 from app.crud import users as crud_users
 from app.db import models
@@ -19,7 +21,14 @@ from app.schemas.users import (
 )
 
 settings = get_settings()
+logger = logging.getLogger("app.qr_auth")
 router = APIRouter(prefix="/auth/qr", tags=["auth-qr"])
+
+# Telegram user IDs are positive 64-bit integers. They are nowhere near the
+# top of that range today, but BigInteger is the storage ceiling, so we reject
+# anything outside (0, 2**63) as malformed.
+_TELEGRAM_ID_MIN = 1
+_TELEGRAM_ID_MAX = 2**63 - 1
 
 
 def _now() -> datetime:
@@ -39,7 +48,8 @@ def _is_expired(session: models.QrLoginSession) -> bool:
 
 
 @router.post("/start", response_model=QrStartResponse)
-def start_qr_session(db: Session = Depends(get_db)) -> QrStartResponse:
+@limiter.limit("10/minute")
+def start_qr_session(request: Request, db: Session = Depends(get_db)) -> QrStartResponse:
     session_id = secrets.token_urlsafe(32)
     expires_at = _now() + timedelta(seconds=settings.qr_session_ttl_seconds)
     session = models.QrLoginSession(
@@ -108,15 +118,43 @@ def qr_session_status(
 
 
 @router.post("/approve", response_model=QrApproveResponse)
+@limiter.limit("10/minute")
 def approve_qr_session(
+    request: Request,
     payload: QrApproveRequest,
     db: Session = Depends(get_db),
     x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
 ) -> QrApproveResponse:
+    # TRUST MODEL: this endpoint is the bridge between the Telegram bot and the
+    # backend. The only party permitted to call it is *our* bot, which proves
+    # its identity by presenting BOT_INTERNAL_SECRET in the X-Bot-Secret
+    # header. We therefore trust the bot's assertion of which telegram_user_id
+    # approved the session — the bot, not this endpoint, authenticates the
+    # Telegram user (Telegram has already verified them before the bot ever
+    # sees the message). Consequences:
+    #   * The shared secret is the entire perimeter, so it is compared in
+    #     constant time and a missing/empty configured secret denies all calls.
+    #   * telegram_user_id is still validated for shape (defence in depth), but
+    #     its *authenticity* rests on the bot's authenticated channel.
+    #   * The rate limit on this route caps brute-force attempts against both
+    #     the secret and session_id guessing.
     expected = settings.bot_internal_secret
+    # Constant-time comparison avoids leaking the secret via timing. compare_digest
+    # is short-circuited only when the secret is unset or the header is absent,
+    # neither of which reveals anything about a configured secret's value.
     if not expected or not x_bot_secret or not secrets.compare_digest(x_bot_secret, expected):
+        logger.warning(
+            "QR approve rejected: invalid bot secret (session_id=%s)",
+            payload.session_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Invalid bot secret"
+        )
+
+    if not _TELEGRAM_ID_MIN <= payload.telegram_user_id <= _TELEGRAM_ID_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid telegram_user_id",
         )
 
     session = db.scalar(
