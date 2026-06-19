@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -70,6 +71,9 @@ class DeviceModel(Base):
     """Catalog of mining hardware (internal ASIC database)."""
 
     __tablename__ = "device_models"
+    __table_args__ = (
+        UniqueConstraint("brand", "model_name", name="uq_device_models_brand_model"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     brand: Mapped[str] = mapped_column(String, nullable=False, index=True)

@@ -1,7 +1,7 @@
 """calc core: asic data, device profiles, market snapshots
 
-Revision ID: 0003_calc_core_asic_data
-Revises: 0002_qr_login
+Revision ID: 0004_calc_core_asic_data
+Revises: 0003_token_revocation
 Create Date: 2026-06-19 00:00:00.000000
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = "0003_calc_core_asic_data"
-down_revision: Union[str, None] = "0002_qr_login"
+revision: str = "0004_calc_core_asic_data"
+down_revision: Union[str, None] = "0003_token_revocation"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
