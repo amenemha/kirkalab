@@ -14,7 +14,12 @@
 	# which would otherwise be sorted ahead by Caddy's built-in directive order.
 	@backend path /api/* /health
 	handle @backend {
-		reverse_proxy app:8000
+		reverse_proxy app:8000 {
+			# Caddy sets these by default; declared explicitly so the backend
+			# rate limiter can trust X-Forwarded-For to identify the real client.
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Real-IP {remote_host}
+		}
 	}
 
 	# Everything else is the static SPA; fall back to index.html.

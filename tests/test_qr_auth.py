@@ -136,6 +136,24 @@ def test_expired_session_cannot_be_approved(client, db):
     assert resp.status_code == 409, resp.text
 
 
+def test_approve_rejects_non_positive_telegram_id(client):
+    session_id = _start(client)["session_id"]
+    resp = _approve(client, session_id, telegram_user_id=0)
+    assert resp.status_code == 422, resp.text
+
+
+def test_approve_rejects_negative_telegram_id(client):
+    session_id = _start(client)["session_id"]
+    resp = _approve(client, session_id, telegram_user_id=-5)
+    assert resp.status_code == 422, resp.text
+
+
+def test_approve_rejects_out_of_range_telegram_id(client):
+    session_id = _start(client)["session_id"]
+    resp = _approve(client, session_id, telegram_user_id=2**63)
+    assert resp.status_code == 422, resp.text
+
+
 def test_reused_telegram_id_maps_to_same_user(client, db):
     s1 = _start(client)["session_id"]
     _approve(client, s1, telegram_user_id=77777)
