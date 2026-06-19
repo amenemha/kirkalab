@@ -11,8 +11,8 @@ bcrypt==4.0.1
 python-multipart==0.0.32
 email-validator==2.3.0
 slowapi==0.1.9
+httpx==0.28.1
 
 # Dev / test
 pytest==9.1.0
-httpx==0.28.1
 ruff==0.15.17
