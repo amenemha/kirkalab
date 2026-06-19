@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -72,7 +73,12 @@ class DeviceModel(Base):
 
     __tablename__ = "device_models"
     __table_args__ = (
-        UniqueConstraint("brand", "model_name", name="uq_device_models_brand_model"),
+        UniqueConstraint(
+            "brand",
+            "model_name",
+            "variant",
+            name="uq_device_models_brand_model_variant",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -86,6 +92,27 @@ class DeviceModel(Base):
     default_power_w: Mapped[int] = mapped_column(Integer, nullable=False)
     released_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # --- Passport card: full spec sheet (all nullable) ---
+    series: Mapped[str | None] = mapped_column(String, nullable=True)
+    variant: Mapped[str | None] = mapped_column(String, nullable=True)
+    hashrate_unit: Mapped[str | None] = mapped_column(String, nullable=True)
+    efficiency_j_per_th: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4), nullable=True
+    )
+    cooling_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    release_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    voltage_input: Mapped[str | None] = mapped_column(String, nullable=True)
+    noise_db: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    operating_temp: Mapped[str | None] = mapped_column(String, nullable=True)
+    dimensions_mm: Mapped[str | None] = mapped_column(String, nullable=True)
+    weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+    chip: Mapped[str | None] = mapped_column(String, nullable=True)
+    network: Mapped[str | None] = mapped_column(String, nullable=True)
+    max_hashrate_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # verified | normalized | factory
     data_quality: Mapped[str] = mapped_column(
         String, default="factory", nullable=False
@@ -174,4 +201,47 @@ class RevokedToken(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class UserSettings(Base):
+    """Per-user preferences. One row per user (free tier).
+
+    PRO-only behaviour (multiple price profiles, saved devices, language
+    switching) is intentionally out of scope here — this table holds the single
+    set of settings available to every user.
+    """
+
+    __tablename__ = "user_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    # RU/EN/KZ/UK; NULL = follow Telegram locale
+    language: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    # Saved price per kWh (available to all users, free tier included)
+    default_power_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4), nullable=True
+    )
+    currency: Mapped[str | None] = mapped_column(
+        String(8), default="USDT", server_default="USDT", nullable=True
+    )
+    timezone: Mapped[str | None] = mapped_column(String, nullable=True)
+    hide_small_assets: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
