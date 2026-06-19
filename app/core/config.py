@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     first_admin_handle: str | None = None
     first_admin_password: str | None = None
 
+    # Telegram QR-login.
+    bot_username: str = "roibot_ai_bot"
+    # Shared secret the bot must present (X-Bot-Secret) to approve QR sessions.
+    bot_internal_secret: str | None = None
+    qr_session_ttl_seconds: int = 120
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -52,5 +58,8 @@ def get_settings() -> Settings:
 
     if settings.environment.lower() == "production" and settings.debug:
         raise ValueError("DEBUG must be disabled in production")
+
+    if settings.environment.lower() == "production" and not settings.bot_internal_secret:
+        raise ValueError("BOT_INTERNAL_SECRET must be set in production")
 
     return settings

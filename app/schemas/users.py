@@ -52,3 +52,25 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     handle: Optional[str] = Field(default=None, min_length=3, max_length=50)
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+
+
+class QrStartResponse(BaseModel):
+    session_id: str
+    deep_link: str
+    expires_at: datetime
+
+
+class QrStatusResponse(BaseModel):
+    status: str
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    token_type: Optional[str] = None
+
+
+class QrApproveRequest(BaseModel):
+    session_id: str
+    telegram_user_id: int
+
+
+class QrApproveResponse(BaseModel):
+    status: str
