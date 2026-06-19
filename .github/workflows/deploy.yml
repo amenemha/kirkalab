@@ -24,6 +24,7 @@ jobs:
           script: |
             cd /opt/kirkalab
             git pull origin main
-            docker compose pull
-            docker compose up -d --build
+            docker compose -f docker-compose.prod.yml --env-file .env.prod pull
+            docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T api alembic upgrade head || true
             docker image prune -f
