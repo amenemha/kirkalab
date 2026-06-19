@@ -13,6 +13,11 @@ class BotSettings(BaseSettings):
 
   # Telegram bot token from @BotFather.
   bot_token: str
+  # Public bot username (without @), used for deep links if needed.
+  bot_username: str = "roibot_ai_bot"
+  # Shared secret sent as X-Bot-Secret when approving QR sessions. Must match
+  # the API's BOT_INTERNAL_SECRET. Without it QR approval cannot work.
+  bot_internal_secret: str | None = None
   # Base URL of the Kirkalab API (e.g. http://app:8000 inside docker network).
   api_base_url: str = "http://app:8000"
   # Request timeout for API calls, seconds.

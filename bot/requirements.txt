@@ -1,4 +1,4 @@
 # Kirkalab Telegram bot dependencies
-aiogram>=3.4,<4.0
+aiogram>=3.7,<4.0
 httpx>=0.27,<0.29
 pydantic-settings>=2.0,<3.0
