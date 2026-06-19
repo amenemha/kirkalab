@@ -35,6 +35,18 @@ class Settings(BaseSettings):
     bot_internal_secret: str | None = None
     qr_session_ttl_seconds: int = 120
 
+    # Market data integrations (CoinGecko + mempool.space, both public).
+    coingecko_base_url: str = "https://api.coingecko.com"
+    mempool_base_url: str = "https://mempool.space"
+    # How long an in-memory market snapshot is reused before refreshing.
+    market_cache_ttl_seconds: int = 300
+    # How old a persisted snapshot may be and still serve as a fallback.
+    market_max_staleness_seconds: int = 3600
+    # Per-request HTTP timeout and number of extra attempts on failure.
+    market_http_timeout_seconds: float = 5.0
+    market_http_retries: int = 2
+    market_default_block_reward_btc: str = "3.125"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
