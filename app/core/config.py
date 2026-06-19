@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +12,8 @@ class Settings(BaseSettings):
     debug: bool = False
     database_url: str = "sqlite:///./kirkalab.db"
     secret_key: str = "CHANGE_ME"
+    # Allowed CORS origins, parsed from the comma-separated CORS_ORIGINS env var.
+    cors_origins: list[str] = []
     access_token_expire_minutes: int = 60
     refresh_token_expire_minutes: int = 60 * 24 * 14
     email_token_expire_minutes: int = 60 * 24
@@ -32,6 +35,13 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_cors_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -39,5 +49,8 @@ def get_settings() -> Settings:
 
     if settings.environment.lower() == "production" and settings.secret_key == "CHANGE_ME":
         raise ValueError("SECRET_KEY must be set in production")
+
+    if settings.environment.lower() == "production" and settings.debug:
+        raise ValueError("DEBUG must be disabled in production")
 
     return settings
