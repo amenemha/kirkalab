@@ -26,5 +26,6 @@ jobs:
             git pull origin main
             docker compose -f docker-compose.prod.yml --env-file .env.prod pull
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
-            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T api alembic upgrade head || true
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T app alembic upgrade head
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile || docker compose -f docker-compose.prod.yml --env-file .env.prod restart caddy
             docker image prune -f
