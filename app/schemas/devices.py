@@ -42,6 +42,35 @@ class DeviceModelRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class BrandRead(BaseModel):
+    brand: str
+    model_count: int
+
+
+class DeviceModelBrief(BaseModel):
+    """Compact row for the model-list screen (brand -> model picker)."""
+
+    id: int
+    brand: str
+    model_name: str
+    variant: str | None = None
+    default_hashrate_ths: Decimal
+    default_power_w: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeviceModelPage(BaseModel):
+    """One page of models for a brand, with the totals the bot needs to
+    render pagination controls."""
+
+    brand: str
+    total: int
+    skip: int
+    limit: int
+    items: list[DeviceModelBrief]
+
+
 class DeviceProfileRead(BaseModel):
     id: int
     owner_user_id: int | None

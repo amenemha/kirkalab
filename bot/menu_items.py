@@ -11,6 +11,7 @@ from __future__ import annotations
 MAIN_MENU_ITEMS: list[tuple[str, str]] = [
   ("profile", "👤 Профиль"),
   ("calculator", "🧮 Калькулятор ASIC"),
+  ("catalog", "📋 Каталог ASIC"),
   ("reports", "📊 Мои отчёты"),
   ("plan", "💎 Тариф"),
   ("help", "ℹ️ Помощь"),

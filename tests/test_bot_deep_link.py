@@ -37,7 +37,20 @@ def test_qr_prefix_constant():
 
 def test_main_menu_has_expected_items():
   actions = [action for action, _ in MAIN_MENU_ITEMS]
-  assert actions == ["profile", "calculator", "reports", "plan", "help"]
+  assert actions == [
+    "profile",
+    "calculator",
+    "catalog",
+    "reports",
+    "plan",
+    "help",
+  ]
+
+
+def test_catalog_is_implemented_not_stub():
+  actions = {action for action, _ in MAIN_MENU_ITEMS}
+  assert "catalog" in actions
+  assert "catalog" not in STUB_ACTIONS
 
 
 def test_menu_labels_have_emoji_and_text():
