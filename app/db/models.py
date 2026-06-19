@@ -33,6 +33,10 @@ class User(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # PRO tier flag. Gates the firmware economy delta and saving custom builds.
+    is_pro: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
 
     # Bumped whenever every issued refresh token for this user must be
     # invalidated at once (e.g. on password change). The value is embedded in
@@ -151,6 +155,99 @@ class DeviceProfile(Base):
     power_w: Mapped[int] = mapped_column(Integer, nullable=False)
     cooling_type: Mapped[str | None] = mapped_column(String, nullable=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class FirmwarePreset(Base):
+    """System-wide firmware tuning presets for a device model.
+
+    A base ``device_models`` row carries factory hashrate/power. A custom
+    firmware (Vnish/Braiins/LuxOS/Pitbit/stock) shifts those: overclock raises
+    TH/s and watts, undervolt/underclock lowers watts. Each row is one such
+    operating point, shared across all users (``is_system=True``)."""
+
+    __tablename__ = "firmware_presets"
+    __table_args__ = (
+        UniqueConstraint(
+            "device_model_id",
+            "firmware",
+            "preset_name",
+            name="uq_firmware_presets_model_fw_name",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    device_model_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("device_models.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # vnish / braiins / luxos / pitbit / stock
+    firmware: Mapped[str] = mapped_column(String, nullable=False)
+    preset_name: Mapped[str] = mapped_column(String, nullable=False)
+    # overclock / underclock / undervolt / balanced / stock
+    mode: Mapped[str] = mapped_column(String, nullable=False)
+    hashrate: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    hashrate_unit: Mapped[str] = mapped_column(
+        String, default="TH/s", server_default="TH/s", nullable=False
+    )
+    power_w: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    efficiency_j_per_th: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4), nullable=True
+    )
+    is_system: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    source_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class UserFirmwareBuild(Base):
+    """A user's own saved firmware build (PRO feature).
+
+    Unlike :class:`FirmwarePreset` these are free-form labels the user attaches
+    to a tuning of their own (e.g. "Vnish разгон", "Pitbit даунвольт с деффи").
+    Saving builds is a PRO capability; the gating is enforced at the
+    service/endpoint layer (``User.is_pro``)."""
+
+    __tablename__ = "user_firmware_builds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    device_model_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("device_models.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    build_name: Mapped[str] = mapped_column(String, nullable=False)
+    firmware: Mapped[str | None] = mapped_column(String, nullable=True)
+    mode: Mapped[str | None] = mapped_column(String, nullable=True)
+    hashrate: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    hashrate_unit: Mapped[str] = mapped_column(
+        String, default="TH/s", server_default="TH/s", nullable=False
+    )
+    power_w: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
