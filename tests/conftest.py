@@ -1,6 +1,7 @@
 import os
 
 os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("BOT_INTERNAL_SECRET", "test-bot-secret")
 
 from collections.abc import Generator
 
