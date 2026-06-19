@@ -70,3 +70,20 @@ class KirkalabApiClient:
     if response.status_code != 200:
       raise ApiError(self._detail(response, "Could not fetch profile"), response.status_code)
     return response.json()
+
+  async def approve_qr(
+    self, session_id: str, telegram_user_id: int, bot_secret: str
+  ) -> dict:
+    """Approve a QR-login session on behalf of the Telegram user.
+
+    Sends the X-Bot-Secret header and the exact QrApproveRequest body the
+    API expects: {"session_id": ..., "telegram_user_id": ...}.
+    """
+    headers = {"X-Bot-Secret": bot_secret}
+    payload = {"session_id": session_id, "telegram_user_id": telegram_user_id}
+    response = await self._request(
+      "POST", "/api/v1/auth/qr/approve", json=payload, headers=headers
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "QR approval failed"), response.status_code)
+    return response.json()
