@@ -70,6 +70,10 @@ def seed_device_models(bind: Connection | Engine | Session) -> int:
         if (brand, model_name) not in existing
     ]
     if to_insert:
+        # Migration 0004 runs this before the 0005 passport columns exist, so
+        # the insert must reference only the starter columns. The values below
+        # name them explicitly and no DeviceModel column carries a Python-side
+        # default that would silently add a later column to the statement.
         bind.execute(table.insert(), to_insert)
         # Sessions need an explicit commit; Connections are committed by the
         # caller's transaction (Alembic migration / engine.begin()).
