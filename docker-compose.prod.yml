@@ -46,6 +46,23 @@ services:
         condition: service_healthy
     logging: *default-logging
 
+  bot:
+    build:
+      context: .
+      dockerfile: bot/Dockerfile
+    restart: always
+    env_file:
+      - .env.prod
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN in .env.prod}
+      BOT_USERNAME: ${BOT_USERNAME:-roibot_ai_bot}
+      BOT_INTERNAL_SECRET: ${BOT_INTERNAL_SECRET:?set BOT_INTERNAL_SECRET in .env.prod}
+      # Reach the backend over the internal compose network, never the public domain.
+      API_BASE_URL: http://app:8000
+    depends_on:
+      - app
+    logging: *default-logging
+
   caddy:
     image: caddy:2-alpine
     restart: always
