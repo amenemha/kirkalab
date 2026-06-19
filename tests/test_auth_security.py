@@ -71,13 +71,20 @@ def _auth_header(client, email):
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_email_verification_flow(client):
+def test_email_verification_request_does_not_leak_token(client, caplog):
+    import logging
+
     email, handle = _creds()
     _create_user(client, email, handle)
     headers = _auth_header(client, email)
-    req = client.post("/api/v1/auth/verify-email/request", headers=headers)
+    with caplog.at_level(logging.INFO, logger="app.auth"):
+        req = client.post("/api/v1/auth/verify-email/request", headers=headers)
     assert req.status_code == 200, req.text
-    token = req.json()["email_verify_token"]
+    # Token must NOT be returned in the response body.
+    assert "email_verify_token" not in req.json()
+    assert req.json()["detail"]
+    # The token is logged server-side so it can still be exercised in tests.
+    token = caplog.records[-1].args[-1]
     resp = client.post("/api/v1/auth/verify-email", json={"token": token})
     assert resp.status_code == 200, resp.text
     assert resp.json()["email"] == email
@@ -88,15 +95,24 @@ def test_verify_email_rejects_invalid_token(client):
     assert resp.status_code == 400, resp.text
 
 
-def test_password_reset_flow(client):
+def _reset_token_from_logs(caplog):
+    return caplog.records[-1].args[-1]
+
+
+def test_password_reset_flow(client, caplog):
+    import logging
+
     email, handle = _creds()
     _create_user(client, email, handle)
-    req = client.post(
-        "/api/v1/auth/password-reset/request",
-        json={"email": email},
-    )
+    with caplog.at_level(logging.INFO, logger="app.auth"):
+        req = client.post(
+            "/api/v1/auth/password-reset/request",
+            json={"email": email},
+        )
     assert req.status_code == 200, req.text
-    token = req.json()["reset_token"]
+    # Token must NOT appear in the response — only in the server log.
+    assert "reset_token" not in req.json()
+    token = _reset_token_from_logs(caplog)
     new_password = "BrandNew99999"
     resp = client.post(
         "/api/v1/auth/password-reset/confirm",
@@ -108,14 +124,86 @@ def test_password_reset_flow(client):
     assert _login(client, email, new_password).status_code == 200
 
 
-def test_password_reset_request_unknown_email(client):
-    resp = client.post(
-        "/api/v1/auth/password-reset/request",
-        json={"email": "nobody@example.com"},
+def test_password_reset_request_unknown_email_is_indistinguishable(client, caplog):
+    import logging
+
+    known_email, handle = _creds()
+    _create_user(client, known_email, handle)
+
+    with caplog.at_level(logging.INFO, logger="app.auth"):
+        known = client.post(
+            "/api/v1/auth/password-reset/request", json={"email": known_email}
+        )
+        unknown = client.post(
+            "/api/v1/auth/password-reset/request",
+            json={"email": "nobody@example.com"},
+        )
+
+    # Identical status + body regardless of whether the account exists.
+    assert known.status_code == unknown.status_code == 200
+    assert known.json() == unknown.json()
+    assert "reset_token" not in unknown.json()
+
+
+def test_password_change_revokes_existing_refresh_tokens(client, caplog):
+    import logging
+
+    email, handle = _creds()
+    _create_user(client, email, handle)
+    old_refresh = _login(client, email).json()["refresh_token"]
+
+    # Reset the password (which bumps token_version).
+    with caplog.at_level(logging.INFO, logger="app.auth"):
+        client.post("/api/v1/auth/password-reset/request", json={"email": email})
+    token = _reset_token_from_logs(caplog)
+    client.post(
+        "/api/v1/auth/password-reset/confirm",
+        json={"token": token, "new_password": "BrandNew99999"},
     )
-    # Same generic response, no enumeration, and no token leaked.
-    assert resp.status_code == 200, resp.text
-    assert "reset_token" not in resp.json()
+
+    # The refresh token minted before the password change is now invalid.
+    resp = client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": old_refresh}
+    )
+    assert resp.status_code == 401, resp.text
+
+
+def test_refresh_rotation_invalidates_old_token(client):
+    email, handle = _creds()
+    _create_user(client, email, handle)
+    first_refresh = _login(client, email).json()["refresh_token"]
+
+    rotated = client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": first_refresh}
+    )
+    assert rotated.status_code == 200, rotated.text
+    new_refresh = rotated.json()["refresh_token"]
+    assert new_refresh and new_refresh != first_refresh
+
+    # Replaying the now-rotated token must fail.
+    replay = client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": first_refresh}
+    )
+    assert replay.status_code == 401, replay.text
+
+    # The freshly issued token still works.
+    again = client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": new_refresh}
+    )
+    assert again.status_code == 200, again.text
+
+
+def test_refresh_rejects_token_without_jti(client):
+    # A refresh token forged without a jti claim must be rejected.
+    from app.core.security import REFRESH, _create_token
+
+    forged = _create_token(
+        {"user_id": 1, "email": "x@example.com", "is_admin": False, "token_version": 0},
+        REFRESH,
+        60,
+    )
+    resp = client.post("/api/v1/auth/refresh", json={"refresh_token": forged})
+    assert resp.status_code == 401, resp.text
 
 
 def test_password_reset_confirm_rejects_invalid_token(client):

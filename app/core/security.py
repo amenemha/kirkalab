@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -37,7 +38,12 @@ def create_access_token(subject: dict[str, Any]) -> str:
 
 
 def create_refresh_token(subject: dict[str, Any]) -> str:
-    return _create_token(subject, REFRESH, settings.refresh_token_expire_minutes)
+    # Each refresh token carries a unique ``jti`` so it can be individually
+    # revoked on rotation, plus the user's ``token_version`` so a password
+    # change can invalidate every outstanding refresh token at once.
+    payload = subject.copy()
+    payload.setdefault("jti", uuid4().hex)
+    return _create_token(payload, REFRESH, settings.refresh_token_expire_minutes)
 
 
 def create_email_token(subject: dict[str, Any]) -> str:

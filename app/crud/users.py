@@ -1,6 +1,7 @@
 import secrets
+from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
@@ -79,9 +80,48 @@ def update_user(db: Session, user: models.User, user_in: UserUpdate) -> models.U
     data = user_in.model_dump(exclude_unset=True)
     if "password" in data:
         user.hashed_password = hash_password(data.pop("password"))
+        # Invalidate every outstanding refresh token for this user: bumping the
+        # version makes previously issued refresh tokens fail the version check.
+        user.token_version = (user.token_version or 0) + 1
     for field, value in data.items():
         setattr(user, field, value)
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+def is_token_revoked(db: Session, jti: str) -> bool:
+    return (
+        db.scalar(
+            select(models.RevokedToken.id).where(models.RevokedToken.jti == jti)
+        )
+        is not None
+    )
+
+
+def revoke_token(db: Session, jti: str, expires_at: datetime) -> None:
+    """Blacklist a refresh-token ``jti`` until it would expire anyway.
+
+    Idempotent: a ``jti`` that is already revoked is left untouched so a
+    double-spend of the same token does not raise.
+    """
+    if is_token_revoked(db, jti):
+        return
+    db.add(models.RevokedToken(jti=jti, expires_at=expires_at))
+    db.commit()
+
+
+def prune_revoked_tokens(db: Session) -> int:
+    """Delete blacklist rows whose tokens have already expired.
+
+    An expired JWT is rejected by signature/expiry validation regardless, so
+    keeping it on the blacklist serves no purpose. Returns the number removed.
+    """
+    result = db.execute(
+        delete(models.RevokedToken).where(
+            models.RevokedToken.expires_at < datetime.now(timezone.utc)
+        )
+    )
+    db.commit()
+    return result.rowcount or 0
