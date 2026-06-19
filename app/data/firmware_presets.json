@@ -1,0 +1,82 @@
+[
+  {
+    "brand": "Bitmain",
+    "model_name": "Antminer S19 XP",
+    "variant": "140 TH",
+    "presets": [
+      {"firmware": "stock", "preset_name": "Stock", "mode": "stock", "hashrate": 140, "power_w": 3010},
+      {"firmware": "vnish", "preset_name": "Eco", "mode": "undervolt", "hashrate": 134, "power_w": 2520, "source_url": "https://vnish.com/"},
+      {"firmware": "vnish", "preset_name": "Turbo", "mode": "overclock", "hashrate": 158, "power_w": 3620, "source_url": "https://vnish.com/"}
+    ]
+  },
+  {
+    "brand": "Bitmain",
+    "model_name": "Antminer S19j Pro",
+    "variant": "104 TH",
+    "presets": [
+      {"firmware": "stock", "preset_name": "Stock", "mode": "stock", "hashrate": 104, "power_w": 3068},
+      {"firmware": "vnish", "preset_name": "Eco", "mode": "undervolt", "hashrate": 100, "power_w": 2700, "source_url": "https://vnish.com/"},
+      {"firmware": "vnish", "preset_name": "Turbo", "mode": "overclock", "hashrate": 122, "power_w": 3720, "source_url": "https://vnish.com/"}
+    ]
+  },
+  {
+    "brand": "Bitmain",
+    "model_name": "Antminer S21",
+    "variant": "200 TH",
+    "presets": [
+      {"firmware": "stock", "preset_name": "Stock", "mode": "stock", "hashrate": 200, "power_w": 3500},
+      {"firmware": "braiins", "preset_name": "Eco", "mode": "undervolt", "hashrate": 190, "power_w": 2950, "source_url": "https://braiins.com/os"},
+      {"firmware": "vnish", "preset_name": "Turbo", "mode": "overclock", "hashrate": 232, "power_w": 4250, "source_url": "https://vnish.com/"}
+    ]
+  },
+  {
+    "brand": "Bitmain",
+    "model_name": "Antminer S21 Pro",
+    "variant": "234 TH",
+    "presets": [
+      {"firmware": "stock", "preset_name": "Stock", "mode": "stock", "hashrate": 234, "power_w": 3531},
+      {"firmware": "vnish", "preset_name": "Eco", "mode": "undervolt", "hashrate": 224, "power_w": 3050, "source_url": "https://vnish.com/"},
+      {"firmware": "vnish", "preset_name": "Turbo", "mode": "overclock", "hashrate": 258, "power_w": 4180, "source_url": "https://vnish.com/"}
+    ]
+  },
+  {
+    "brand": "Bitmain",
+    "model_name": "Antminer T21",
+    "variant": "190 TH",
+    "presets": [
+      {"firmware": "stock", "preset_name": "Stock", "mode": "stock", "hashrate": 190, "power_w": 3610},
+      {"firmware": "vnish", "preset_name": "Eco", "mode": "undervolt", "hashrate": 182, "power_w": 3120, "source_url": "https://vnish.com/"},
+      {"firmware": "vnish", "preset_name": "Turbo", "mode": "overclock", "hashrate": 215, "power_w": 4250, "source_url": "https://vnish.com/"}
+    ]
+  },
+  {
+    "brand": "MicroBT",
+    "model_name": "WhatsMiner M50S",
+    "variant": "M50S",
+    "presets": [
+      {"firmware": "stock", "preset_name": "Stock", "mode": "stock", "hashrate": 126, "power_w": 3276},
+      {"firmware": "luxos", "preset_name": "Eco", "mode": "undervolt", "hashrate": 120, "power_w": 2820, "source_url": "https://docs.luxor.tech/firmware/luxos"},
+      {"firmware": "luxos", "preset_name": "Turbo", "mode": "overclock", "hashrate": 142, "power_w": 3900, "source_url": "https://docs.luxor.tech/firmware/luxos"}
+    ]
+  },
+  {
+    "brand": "MicroBT",
+    "model_name": "WhatsMiner M60S",
+    "variant": "M60S",
+    "presets": [
+      {"firmware": "stock", "preset_name": "Stock", "mode": "stock", "hashrate": 186, "power_w": 3441},
+      {"firmware": "luxos", "preset_name": "Eco", "mode": "undervolt", "hashrate": 178, "power_w": 2980, "source_url": "https://docs.luxor.tech/firmware/luxos"},
+      {"firmware": "luxos", "preset_name": "Turbo", "mode": "overclock", "hashrate": 208, "power_w": 4100, "source_url": "https://docs.luxor.tech/firmware/luxos"}
+    ]
+  },
+  {
+    "brand": "MicroBT",
+    "model_name": "WhatsMiner M66S",
+    "variant": "M66S",
+    "presets": [
+      {"firmware": "stock", "preset_name": "Stock", "mode": "stock", "hashrate": 298, "power_w": 5518},
+      {"firmware": "luxos", "preset_name": "Eco", "mode": "undervolt", "hashrate": 286, "power_w": 4900, "source_url": "https://docs.luxor.tech/firmware/luxos"},
+      {"firmware": "luxos", "preset_name": "Turbo", "mode": "overclock", "hashrate": 330, "power_w": 6450, "source_url": "https://docs.luxor.tech/firmware/luxos"}
+    ]
+  }
+]

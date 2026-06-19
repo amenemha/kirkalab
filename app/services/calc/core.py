@@ -58,6 +58,94 @@ class MiningResult:
     block_reward_btc: Decimal
 
 
+@dataclass(frozen=True)
+class CompareResult:
+    """Delta between a baseline (stock) scenario and a custom one.
+
+    ``base`` / ``custom`` are full :class:`MiningResult` objects so callers can
+    surface either side in full. The ``delta_*`` fields are custom - base."""
+
+    base: MiningResult
+    custom: MiningResult
+    delta_profit_day: Decimal
+    delta_power_w: Decimal
+    delta_power_cost_day: Decimal
+    delta_hashrate: Decimal
+    delta_efficiency_j_per_th: Decimal | None
+    economy_note: str
+
+
+def _efficiency_j_per_th(power_w: int, hashrate_ths: Decimal) -> Decimal | None:
+    if hashrate_ths <= 0:
+        return None
+    return (Decimal(power_w) / hashrate_ths).quantize(Decimal("0.0001"))
+
+
+def compare(
+    base_inp: MiningInput, custom_inp: MiningInput, market: MarketData
+) -> CompareResult:
+    """Run two scenarios against the same market data and return their delta.
+
+    The profit formula is **not** duplicated — both sides go through
+    :func:`calculate`. Designed to extend to multi-device fleets later: it takes
+    two independent inputs rather than assuming a single model."""
+    base = calculate(base_inp, market)
+    custom = calculate(custom_inp, market)
+
+    delta_profit_day = custom.net_profit_day - base.net_profit_day
+    delta_power_cost_day = custom.power_cost_day - base.power_cost_day
+    delta_power_w = (
+        Decimal(custom_inp.power_w) * custom_inp.quantity
+        - Decimal(base_inp.power_w) * base_inp.quantity
+    )
+    delta_hashrate = (
+        custom_inp.hashrate_ths * custom_inp.quantity
+        - base_inp.hashrate_ths * base_inp.quantity
+    )
+
+    base_eff = _efficiency_j_per_th(base_inp.power_w, base_inp.hashrate_ths)
+    custom_eff = _efficiency_j_per_th(custom_inp.power_w, custom_inp.hashrate_ths)
+    delta_efficiency: Decimal | None = None
+    if base_eff is not None and custom_eff is not None:
+        delta_efficiency = custom_eff - base_eff
+
+    economy_note = _build_economy_note(
+        delta_power_w=delta_power_w,
+        delta_hashrate=delta_hashrate,
+        delta_profit_day=delta_profit_day,
+    )
+
+    return CompareResult(
+        base=base,
+        custom=custom,
+        delta_profit_day=delta_profit_day,
+        delta_power_w=delta_power_w,
+        delta_power_cost_day=delta_power_cost_day,
+        delta_hashrate=delta_hashrate,
+        delta_efficiency_j_per_th=delta_efficiency,
+        economy_note=economy_note,
+    )
+
+
+def _build_economy_note(
+    *, delta_power_w: Decimal, delta_hashrate: Decimal, delta_profit_day: Decimal
+) -> str:
+    parts: list[str] = []
+    if delta_power_w < 0:
+        parts.append(f"андервольт: {delta_power_w:+.0f} Вт")
+    elif delta_power_w > 0:
+        parts.append(f"разгон: {delta_power_w:+.0f} Вт")
+    else:
+        parts.append("мощность без изменений")
+
+    if delta_hashrate != 0:
+        parts.append(f"{delta_hashrate:+.2f} TH/s")
+
+    sign = "прибыль" if delta_profit_day >= 0 else "убыток"
+    parts.append(f"{delta_profit_day:+.4f} USDT/день ({sign})")
+    return ", ".join(parts)
+
+
 def calculate(inp: MiningInput, market: MarketData) -> MiningResult:
     """Compute profitability. Never divides by zero."""
     uptime = inp.uptime_pct / Decimal(100)
