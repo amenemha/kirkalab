@@ -21,6 +21,13 @@ __all__ = [
   "model_page_kb",
   "device_card_kb",
   "firmware_back_kb",
+  "calc_start_kb",
+  "calc_brand_list_kb",
+  "calc_model_page_kb",
+  "calc_quantity_kb",
+  "calc_price_kb",
+  "calc_result_kb",
+  "calc_pro_stub_kb",
 ]
 
 # Models shown per page on the brand -> model screen. Kept small so the inline
@@ -128,6 +135,130 @@ def firmware_back_kb(model_id: int) -> InlineKeyboardMarkup:
       ]
     ]
   )
+
+
+# ---------------------------------------------------------------------------
+# Profitability calculation flow (Rapira style). A dedicated ``calc:*``
+# namespace so the catalog navigation can be reused without colliding with the
+# read-only ``cat:*`` browse flow (model pick leads into the flow, not a card).
+# ---------------------------------------------------------------------------
+
+
+def calc_start_kb() -> InlineKeyboardMarkup:
+  """Equipment source picker: catalog vs manual entry."""
+  builder = InlineKeyboardBuilder()
+  builder.button(text="📋 Выбрать из каталога", callback_data="calc:cat")
+  builder.button(text="✍️ Ввести вручную", callback_data="calc:manual")
+  builder.adjust(1)
+  builder.row(
+    InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home")
+  )
+  return builder.as_markup()
+
+
+def calc_brand_list_kb(brands: list[dict]) -> InlineKeyboardMarkup:
+  """Brand picker inside the calc flow (mirrors the catalog brand picker)."""
+  builder = InlineKeyboardBuilder()
+  for entry in brands:
+    brand = entry["brand"]
+    count = entry.get("model_count")
+    label = f"{brand} ({count})" if count is not None else brand
+    builder.button(text=label, callback_data=f"calc:b:{brand}:0")
+  builder.adjust(2)
+  builder.row(
+    InlineKeyboardButton(text="‹ Назад", callback_data="calc:start")
+  )
+  return builder.as_markup()
+
+
+def calc_model_page_kb(
+  *, brand: str, items: list[dict], page: int, last_page: int
+) -> InlineKeyboardMarkup:
+  """One page of models in the calc flow; picking leads into the flow."""
+  builder = InlineKeyboardBuilder()
+  for item in items:
+    variant = item.get("variant")
+    name = item["model_name"]
+    label = f"{name} {variant}" if variant else name
+    builder.button(text=label, callback_data=f"calc:m:{item['id']}")
+  builder.adjust(1)
+
+  nav: list[InlineKeyboardButton] = []
+  if page > 0:
+    nav.append(
+      InlineKeyboardButton(
+        text="‹ Назад", callback_data=f"calc:b:{brand}:{page - 1}"
+      )
+    )
+  nav.append(
+    InlineKeyboardButton(
+      text=f"{page + 1}/{last_page + 1}", callback_data="cat:noop"
+    )
+  )
+  if page < last_page:
+    nav.append(
+      InlineKeyboardButton(
+        text="Далее ›", callback_data=f"calc:b:{brand}:{page + 1}"
+      )
+    )
+  builder.row(*nav)
+  builder.row(
+    InlineKeyboardButton(text="‹ К брендам", callback_data="calc:cat")
+  )
+  return builder.as_markup()
+
+
+def calc_quantity_kb() -> InlineKeyboardMarkup:
+  """Quantity picker 1..5 (FREE hard cap is 5 of one model)."""
+  builder = InlineKeyboardBuilder()
+  for n in range(1, 6):
+    builder.button(text=str(n), callback_data=f"calc:qty:{n}")
+  builder.adjust(5)
+  builder.row(
+    InlineKeyboardButton(text="‹ Назад", callback_data="calc:start")
+  )
+  return builder.as_markup()
+
+
+def calc_price_kb(saved_price: str | None) -> InlineKeyboardMarkup:
+  """Power-price step: reuse saved price (if any) or enter a new one."""
+  builder = InlineKeyboardBuilder()
+  if saved_price is not None:
+    builder.button(
+      text=f"💾 Сохранённая: {saved_price} USDT/кВт·ч",
+      callback_data="calc:price:saved",
+    )
+  builder.button(text="✍️ Ввести цену", callback_data="calc:price:new")
+  builder.adjust(1)
+  builder.row(
+    InlineKeyboardButton(text="‹ Назад", callback_data="calc:start")
+  )
+  return builder.as_markup()
+
+
+def calc_result_kb(*, has_firmware: bool) -> InlineKeyboardMarkup:
+  """Buttons under the result screen."""
+  builder = InlineKeyboardBuilder()
+  builder.button(text="🔁 Пересчитать", callback_data="calc:restart")
+  if has_firmware:
+    builder.button(text="🔧 Сравнить с прошивкой", callback_data="calc:compare")
+  builder.adjust(1)
+  builder.row(
+    InlineKeyboardButton(text="📋 К каталогу", callback_data="menu:catalog"),
+    InlineKeyboardButton(text="🏠 Меню", callback_data="menu:home"),
+  )
+  return builder.as_markup()
+
+
+def calc_pro_stub_kb() -> InlineKeyboardMarkup:
+  """Soft PRO invite: a 'coming soon' stub button + back to menu."""
+  builder = InlineKeyboardBuilder()
+  builder.button(text="💎 Открыть PRO", callback_data="calc:pro")
+  builder.adjust(1)
+  builder.row(
+    InlineKeyboardButton(text="🏠 Меню", callback_data="menu:home")
+  )
+  return builder.as_markup()
 
 
 def qr_confirm() -> InlineKeyboardMarkup:

@@ -91,6 +91,31 @@ def update_user(db: Session, user: models.User, user_in: UserUpdate) -> models.U
     return user
 
 
+def get_or_create_settings(db: Session, user_id: int) -> models.UserSettings:
+    settings = db.scalar(
+        select(models.UserSettings).where(models.UserSettings.user_id == user_id)
+    )
+    if settings is not None:
+        return settings
+    settings = models.UserSettings(user_id=user_id)
+    db.add(settings)
+    db.commit()
+    db.refresh(settings)
+    return settings
+
+
+def set_default_power_price(
+    db: Session, user_id: int, power_price, currency: str = "USDT"
+) -> models.UserSettings:
+    settings = get_or_create_settings(db, user_id=user_id)
+    settings.default_power_price = power_price
+    settings.currency = currency
+    db.add(settings)
+    db.commit()
+    db.refresh(settings)
+    return settings
+
+
 def is_token_revoked(db: Session, jti: str) -> bool:
     return (
         db.scalar(

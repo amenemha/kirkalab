@@ -267,6 +267,52 @@ class UserFirmwareBuild(Base):
     )
 
 
+class CalculationRun(Base):
+    """One profitability calculation performed by a user.
+
+    Rows are the audit/counter backing the FREE funnel: the number of rows a
+    user has, plus how many fall on the current UTC day, drives the intro/daily
+    limits and the currency-blur stages (see ``app.services.calc.funnel``).
+
+    Money is ``Decimal``; specs use modest precision/scale so PostgreSQL's
+    NUMERIC enforcement never overflows (the SQLite test DB does not enforce,
+    so the bounds must be correct by construction)."""
+
+    __tablename__ = "calculation_runs"
+    __table_args__ = (
+        Index("ix_calculation_runs_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    device_model_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("device_models.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Echo of the inputs used (for history / "recalculate").
+    hashrate_ths: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    power_w: Mapped[int] = mapped_column(Integer, nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    power_price: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    currency: Mapped[str] = mapped_column(
+        String(8), default="USDT", server_default="USDT", nullable=False
+    )
+    # Snapshot of the headline result, USDT (Decimal money).
+    net_profit_day_usdt: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 8), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
 class MarketSnapshot(Base):
     """Point-in-time snapshot of external market data used by the calc core.
 

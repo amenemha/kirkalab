@@ -107,6 +107,96 @@ class CalcResponse(BaseModel):
     input: CalcRequest = Field(...)
 
 
+class FunnelMeta(BaseModel):
+    """Funnel/limits metadata returned alongside an internal calc result.
+
+    Mirrors :class:`app.services.calc.funnel.FunnelState` so the bot renders
+    the right currency-blur stage and progress without re-deriving the rules."""
+
+    is_pro: bool
+    stage: str  # local_full | local_blurred | usdt_only | pro
+    calc_index: int | None = None
+    intro_left: int = 0
+    daily_left: int | None = None
+    intro_spent: bool = False
+    pro_hint: str | None = None
+
+
+class InternalCalcRequest(BaseModel):
+    """Bot-facing calc request: identifies the user by telegram id and accepts
+    either a catalog ``device_model_id`` or explicit manual specs.
+
+    The user's PRO status and funnel position are resolved server-side, so the
+    bot never duplicates the business rules. ``currency`` is the local display
+    currency (FREE is restricted to USDT by the bot, but the field is accepted
+    so PRO can pass through other currencies)."""
+
+    telegram_user_id: int
+    device_model_id: int | None = None
+    hashrate_ths: Decimal | None = None
+    power_w: int | None = None
+    quantity: int = 1
+    power_price: Decimal
+    currency: str = "USDT"
+    pool_fee_pct: Decimal = Decimal("1.0")
+    uptime_pct: Decimal = Decimal("100")
+    hardware_cost: Decimal | None = None
+    save_power_price: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _validate(self) -> "InternalCalcRequest":
+        has_manual = self.hashrate_ths is not None and self.power_w is not None
+        if self.device_model_id is None and not has_manual:
+            raise ValueError(
+                "provide device_model_id or both hashrate_ths and power_w"
+            )
+        if self.quantity < 1:
+            raise ValueError("quantity: must be at least 1")
+        if self.power_price < 0:
+            raise ValueError("power_price: must not be negative")
+        return self
+
+
+class InternalCalcResponse(BaseModel):
+    """Calc result (USDT economics) plus the funnel metadata.
+
+    ``result`` is None when the FREE user has exhausted both the intro pool and
+    today's quota: the funnel meta then carries the paywall invite and the bot
+    shows it instead of a result screen."""
+
+    allowed: bool
+    funnel: FunnelMeta
+    result: CalcResponse | None = None
+    has_firmware: bool = False
+    device_model_id: int | None = None
+
+
+class InternalCalcStatus(BaseModel):
+    """Read-only funnel snapshot for the *next* calculation, no calc performed.
+
+    Also echoes the user's saved default power price so the bot can offer it."""
+
+    funnel: FunnelMeta
+    default_power_price: Decimal | None = None
+    currency: str = "USDT"
+
+
+class PowerPriceSaveRequest(BaseModel):
+    telegram_user_id: int
+    power_price: Decimal
+    currency: str = "USDT"
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _validate(self) -> "PowerPriceSaveRequest":
+        if self.power_price < 0:
+            raise ValueError("power_price: must not be negative")
+        return self
+
+
 class CompareRequest(BaseModel):
     """Stock-vs-custom comparison input.
 

@@ -110,6 +110,53 @@ class KirkalabApiClient:
       raise ApiError(self._detail(response, "Could not load firmware"), response.status_code)
     return response.json()
 
+  async def calc_status(
+    self, telegram_user_id: int, bot_secret: str
+  ) -> dict:
+    """Funnel snapshot for the user's next calc + their saved power price.
+
+    Performs no calculation server-side. Returns the InternalCalcStatus payload
+    ({funnel, default_power_price, currency})."""
+    headers = {"X-Bot-Secret": bot_secret}
+    params = {"telegram_user_id": telegram_user_id}
+    response = await self._request(
+      "GET", "/api/v1/internal/calc/status", params=params, headers=headers
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not load calc status"), response.status_code)
+    return response.json()
+
+  async def internal_calc(self, payload: dict, bot_secret: str) -> dict:
+    """Run a calculation for a Telegram user; returns the InternalCalcResponse
+    payload ({allowed, funnel, result, has_firmware, device_model_id}).
+
+    ``payload`` carries telegram_user_id + either device_model_id or manual
+    hashrate_ths/power_w, plus quantity, power_price, currency and flags."""
+    headers = {"X-Bot-Secret": bot_secret}
+    response = await self._request(
+      "POST", "/api/v1/internal/calc", json=payload, headers=headers
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Calculation failed"), response.status_code)
+    return response.json()
+
+  async def save_power_price(
+    self, telegram_user_id: int, power_price: str, bot_secret: str, currency: str = "USDT"
+  ) -> dict:
+    """Persist the user's default price per kWh (FREE and PRO)."""
+    headers = {"X-Bot-Secret": bot_secret}
+    payload = {
+      "telegram_user_id": telegram_user_id,
+      "power_price": power_price,
+      "currency": currency,
+    }
+    response = await self._request(
+      "POST", "/api/v1/internal/settings/power-price", json=payload, headers=headers
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not save price"), response.status_code)
+    return response.json()
+
   async def approve_qr(
     self, session_id: str, telegram_user_id: int, bot_secret: str
   ) -> dict:
