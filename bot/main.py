@@ -20,6 +20,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from bot.alerts import mask_secrets
 from bot.api_client import KirkalabApiClient
 from bot.config import get_settings
 from bot.handlers import routers
@@ -41,12 +42,17 @@ def build_storage(redis_url: str):
   """
   from aiogram.fsm.storage.redis import RedisStorage
 
+  safe_url = mask_secrets(redis_url)
   try:
     storage = RedisStorage.from_url(redis_url)
   except Exception as exc:  # noqa: BLE001 — surface a clear, actionable error
-    logger.error("Could not initialise Redis FSM storage at %s: %s", redis_url, exc)
+    # Mask the URL (it may carry credentials) and log only the error class so
+    # neither the connection string nor a credentialed traceback leaks.
+    logger.error(
+      "Could not initialise Redis FSM storage at %s: %s", safe_url, type(exc).__name__
+    )
     raise
-  logger.info("FSM storage: Redis (%s)", redis_url)
+  logger.info("FSM storage: Redis (%s)", safe_url)
   return storage
 
 

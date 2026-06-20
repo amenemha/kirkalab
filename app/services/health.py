@@ -28,8 +28,10 @@ def check_database(db: Session) -> str:
     try:
         db.execute(text("SELECT 1"))
         return OK
-    except Exception:  # noqa: BLE001 — readiness must never raise
-        logger.warning("Readiness DB check failed", exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — readiness must never raise
+        # Log only the exception class: DB error messages/tracebacks can embed
+        # the connection URL with credentials, so they are never logged raw.
+        logger.warning("Readiness DB check failed: %s", type(exc).__name__)
         return FAIL
 
 
@@ -50,8 +52,10 @@ def check_redis(redis_url: str) -> str:
             redis_url, socket_connect_timeout=2, socket_timeout=2
         )
         return OK if client.ping() else FAIL
-    except Exception:  # noqa: BLE001 — readiness must never raise
-        logger.warning("Readiness Redis check failed", exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — readiness must never raise
+        # Log only the exception class: the Redis URL (possibly credentialed)
+        # can appear in connection-error messages/tracebacks.
+        logger.warning("Readiness Redis check failed: %s", type(exc).__name__)
         return FAIL
     finally:
         if client is not None:

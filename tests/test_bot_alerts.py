@@ -91,6 +91,27 @@ def test_mask_email():
     assert "***EMAIL***" in masked
 
 
+def test_mask_redis_url_credentials():
+    masked = mask_secrets("connecting to redis://admin:s3cr3tpw@redis:6379/0")
+    assert "s3cr3tpw" not in masked
+    assert "admin" not in masked
+    # Scheme and host are kept for diagnostics.
+    assert "redis://" in masked
+    assert "redis:6379" in masked
+
+
+def test_mask_database_url_credentials():
+    url = "postgresql+psycopg://kirka:dbpass123@db:5432/kirkalab"
+    masked = mask_secrets(f"could not connect: {url}")
+    assert "dbpass123" not in masked
+    assert "kirka:" not in masked
+
+
+def test_mask_url_without_credentials_is_untouched():
+    masked = mask_secrets("API: http://app:8000")
+    assert masked == "API: http://app:8000"
+
+
 def test_mask_is_safe_on_empty_and_plain_text():
     assert mask_secrets("") == ""
     assert mask_secrets("nothing sensitive here") == "nothing sensitive here"

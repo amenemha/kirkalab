@@ -63,8 +63,10 @@ class AdminNotifier:
         try:
             await self._bot.send_message(self._admin_chat_id, safe_text)
             return True
-        except Exception:  # noqa: BLE001 — alerting must never break the bot
-            logger.warning("Failed to deliver admin alert", exc_info=True)
+        except Exception as exc:  # noqa: BLE001 — alerting must never break the bot
+            # Log only the failure's class, never exc_info: a send-failure
+            # traceback can embed the (sensitive) message payload being sent.
+            logger.warning("Failed to deliver admin alert: %s", type(exc).__name__)
             return False
 
     async def alert_backend_error(self, error_type: str, detail: str) -> bool:
@@ -79,15 +81,20 @@ def register_error_alerts(dispatcher: Dispatcher, notifier: AdminNotifier) -> No
     @dispatcher.errors()
     async def _on_error(event: ErrorEvent) -> bool:
         exc = event.exception
+        # Log only the non-sensitive exception class. The exception message and
+        # traceback can carry user-supplied data, tokens or credentialed URLs, so
+        # they are never written to the log in clear text. The masked traceback
+        # tail still reaches the operator via the admin alert below (which masks
+        # again inside AdminNotifier.alert).
+        exc_name = type(exc).__name__
+        logger.error("Unhandled bot exception: %s", exc_name)
         tb = "".join(
             traceback.format_exception(type(exc), exc, exc.__traceback__)
         )
-        # Log the full (masked) traceback for the operator, alert with a tail.
-        logger.error("Unhandled bot exception: %s", mask_secrets(tb))
-        tail = tb[-_MAX_TRACEBACK_CHARS:]
+        tail = mask_secrets(tb)[-_MAX_TRACEBACK_CHARS:]
         await notifier.alert(
-            f"🛑 Необработанное исключение в боте:\n{type(exc).__name__}: {exc}\n\n{tail}",
-            key=f"handler_exc:{type(exc).__name__}",
+            f"🛑 Необработанное исключение в боте:\n{exc_name}\n\n{tail}",
+            key=f"handler_exc:{exc_name}",
         )
         # Returning True marks the error as handled so polling continues.
         return True

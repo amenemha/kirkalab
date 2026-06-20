@@ -22,6 +22,12 @@ from dataclasses import dataclass, field
 # secret into a log line or an admin message. Each captures a label so the
 # replacement keeps the text readable ("token=***").
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # Credentials embedded in connection URLs (redis://user:pass@host,
+    # postgresql://user:pass@host). Redact the userinfo, keep scheme + host.
+    (
+        re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@"),
+        r"\1***:***@",
+    ),
     # bot:NNN:AAA... Telegram tokens.
     (re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b"), "***TELEGRAM_TOKEN***"),
     # Bearer tokens — matched before the generic key=value rule so the whole
