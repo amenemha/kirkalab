@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 # Patterns are intentionally broad: it is better to over-mask than to leak a
 # secret into a log line or an admin message. Each captures a label so the
@@ -47,6 +48,19 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "***EMAIL***",
     ),
 )
+
+
+def safe_endpoint(url: str) -> str:
+    """Return ``host:port`` from a connection URL, dropping any credentials.
+
+    Uses ``urllib.parse.urlsplit`` so the userinfo (``user:pass@``) is removed at
+    the parser level — the result is not derived from the secret part of the URL
+    and is safe to log. This is the *correct* way to log a connection target:
+    regex masking is not recognised as a sanitizer by static analysis, but
+    ``urlsplit().hostname/.port`` provably never contain the credentials.
+    """
+    parts = urlsplit(url)
+    return f"{parts.hostname or '?'}:{parts.port or '?'}"
 
 
 def mask_secrets(text: str) -> str:

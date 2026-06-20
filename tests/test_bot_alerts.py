@@ -5,7 +5,7 @@ without ``pytest.importorskip``.
 """
 from __future__ import annotations
 
-from bot.alerts import AlertThrottle, mask_secrets
+from bot.alerts import AlertThrottle, mask_secrets, safe_endpoint
 
 
 class _FakeClock:
@@ -110,6 +110,23 @@ def test_mask_database_url_credentials():
 def test_mask_url_without_credentials_is_untouched():
     masked = mask_secrets("API: http://app:8000")
     assert masked == "API: http://app:8000"
+
+
+def test_safe_endpoint_drops_credentials():
+    # This is the value logged for Redis startup — it must never carry user:pass.
+    endpoint = safe_endpoint("redis://admin:s3cr3tpw@redis:6379/0")
+    assert endpoint == "redis:6379"
+    assert "s3cr3tpw" not in endpoint
+    assert "admin" not in endpoint
+
+
+def test_safe_endpoint_without_credentials():
+    assert safe_endpoint("redis://redis:6379/0") == "redis:6379"
+
+
+def test_safe_endpoint_missing_parts():
+    # Degrades gracefully when host/port are absent rather than raising.
+    assert safe_endpoint("redis://") == "?:?"
 
 
 def test_mask_is_safe_on_empty_and_plain_text():
