@@ -41,14 +41,110 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # PRO tier flag. Gates the firmware economy delta and saving custom builds.
+    # Kept as the fast entitlement check; the authoritative expiry is
+    # ``premium_until`` (see ``subscriptions``). ``is_pro`` is the materialized
+    # view of "premium_until is in the future"; lazy expiration flips it back to
+    # False on read once the date has passed.
     is_pro: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
+    )
+    # When the active PRO subscription lapses (UTC). NULL = never been PRO /
+    # no current entitlement. The single source of truth for entitlement timing.
+    premium_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     # Bumped whenever every issued refresh token for this user must be
     # invalidated at once (e.g. on password change). The value is embedded in
     # refresh tokens and compared on use.
     token_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Plan(Base):
+    """A billable tariff. ``code`` is the stable key used everywhere else.
+
+    The FREE tier is seeded as a row too (price 0, no period) so the catalog is
+    a single source of truth, but only the PRO plans are sent as invoices. Prices
+    are stored here, never hardcoded in the bot/API (CALC_SPEC §4): Telegram
+    Stars are whole-number amounts, so ``price_stars`` is a plain Integer (no
+    NUMERIC — nothing for PostgreSQL precision to enforce)."""
+
+    __tablename__ = "plans"
+
+    # 'free' | 'pro_monthly' | 'pro_yearly'
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    # Length of the entitlement granted; NULL for the perpetual FREE plan.
+    period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Telegram Stars are integer amounts (XTR). 0 for the FREE plan.
+    price_stars: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    currency: Mapped[str] = mapped_column(
+        String(8), default="XTR", server_default="XTR", nullable=False
+    )
+    # PRO entitlements/limits as config (CALC_SPEC §5), e.g. unlimited_calcs.
+    features_json: Mapped[Any | None] = mapped_column(JsonB, nullable=True)
+    limits_json: Mapped[Any | None] = mapped_column(JsonB, nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Subscription(Base):
+    """One PRO purchase/renewal, paid with Telegram Stars.
+
+    Idempotency is enforced structurally: ``telegram_payment_charge_id`` is
+    UNIQUE, so re-delivering the same ``successful_payment`` (Telegram retries)
+    can never create a duplicate renewal. The activate flow looks the charge id
+    up first and returns the existing row unchanged on a repeat.
+
+    ``price_stars``/``total_amount`` are integer Stars (XTR) — no NUMERIC."""
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        Index("ix_subscriptions_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    plan_code: Mapped[str] = mapped_column(
+        String(32), ForeignKey("plans.code"), nullable=False
+    )
+    # active | expired | refunded
+    status: Mapped[str] = mapped_column(
+        String(16), default="active", server_default="active", nullable=False
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Telegram's charge id for the Stars payment; the idempotency key.
+    telegram_payment_charge_id: Mapped[str] = mapped_column(
+        String, unique=True, index=True, nullable=False
+    )
+    # Stars actually paid (XTR), echoed for audit/refund.
+    total_amount: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )
 

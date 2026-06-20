@@ -36,6 +36,7 @@ __all__ = [
   "calc_price_kb",
   "calc_result_kb",
   "calc_pro_stub_kb",
+  "plans_kb",
 ]
 
 # Models shown per page on the brand -> model screen. Kept small so the inline
@@ -292,6 +293,28 @@ def calc_pro_stub_kb() -> InlineKeyboardMarkup:
   builder.adjust(1)
   builder.row(
     InlineKeyboardButton(text="🏠 Меню", callback_data="menu:home")
+  )
+  return builder.as_markup()
+
+
+def plans_kb(plans: list[dict]) -> InlineKeyboardMarkup:
+  """PRO plan picker inside Profile: one button per purchasable plan.
+
+  ``plans`` are the API's PlanOut dicts; only plans with a real Stars price are
+  offered (the FREE plan is not purchasable). Prices come from the API."""
+  builder = InlineKeyboardBuilder()
+  for plan in plans:
+    price = plan.get("price_stars") or 0
+    if price <= 0:
+      continue
+    title = plan.get("title", plan.get("code", "PRO"))
+    builder.button(
+      text=f"{title} — {price} ⭐",
+      callback_data=f"plan:buy:{plan['code']}",
+    )
+  builder.adjust(1)
+  builder.row(
+    InlineKeyboardButton(text="‹ В профиль", callback_data="profile:open")
   )
   return builder.as_markup()
 

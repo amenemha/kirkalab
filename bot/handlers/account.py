@@ -144,17 +144,15 @@ async def cb_profile_help(callback: CallbackQuery, state: FSMContext) -> None:
   await callback.answer()
 
 
-@router.callback_query(F.data == "profile:plan")
-async def cb_profile_plan(callback: CallbackQuery, state: FSMContext) -> None:
-  await edit_live_screen(
-    callback.message,
-    state,
-    "💎 <b>PRO — скоро</b>\n\n"
-    "Безлимитные расчёты, все валюты (₽/$/¥), окупаемость и ROI без блюра, "
-    "сравнение прошивок и сохранение сборок.\n\n"
-    "Подписка скоро будет доступна — спасибо, что вы с нами! 🙌",
-  )
+@router.callback_query(F.data == "profile:open")
+async def cb_profile_open(callback: CallbackQuery, state: FSMContext) -> None:
+  """Re-render the profile screen (e.g. the 'back to profile' from plans)."""
+  await send_profile(callback.message, callback.from_user.id, state)
   await callback.answer()
+
+
+# Note: the "💎 Тариф" button (profile:plan) is handled in
+# ``bot.handlers.billing`` — it opens the live PRO plan picker.
 
 
 # --------------------------------------------------------------------------- #
