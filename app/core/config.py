@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     free_intro_calcs: int = 5
     free_calcs_per_day: int = 3
 
+    # History ("Мои отчёты") retention. On FREE the saved-calculation history is
+    # shown only for the last N days (older rows are filtered out of the view —
+    # never physically deleted here). PRO has unbounded history: a value of 0 (or
+    # any non-positive number) means "no retention limit". Tunable via env so the
+    # window can change without code edits.
+    free_history_retention_days: int = 3
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

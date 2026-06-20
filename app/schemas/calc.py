@@ -137,6 +137,10 @@ class InternalCalcRequest(BaseModel):
 
     telegram_user_id: int
     device_model_id: int | None = None
+    # Human-readable equipment name for the saved-history snapshot (e.g.
+    # "Antminer S19 Pro" or "Своё оборудование"). Optional: the server falls
+    # back to the catalog model name when omitted.
+    device_name: str | None = None
     hashrate_ths: Decimal | None = None
     power_w: int | None = None
     quantity: int = 1
@@ -200,6 +204,45 @@ class InternalProfile(BaseModel):
     is_pro: bool
     is_linked: bool
     created_at: str
+
+
+class HistoryRunOut(BaseModel):
+    """One saved calculation as shown in the history list/detail.
+
+    Carries the snapshot stored at calc time so the bot renders the screen
+    without re-running the calc. Money fields are serialized as strings (the bot
+    formats them) to avoid float drift."""
+
+    id: int
+    device_name: str | None = None
+    device_model_id: int | None = None
+    quantity: int
+    currency: str
+    hashrate_ths: Decimal | None = None
+    power_w: int | None = None
+    power_price: Decimal | None = None
+    net_profit_day_usdt: Decimal | None = None
+    net_profit_month_usdt: Decimal | None = None
+    created_at: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HistoryPage(BaseModel):
+    """A page of history plus the metadata the bot needs to paginate + upsell.
+
+    ``total`` counts only the rows visible under the retention window, so the
+    bot's pagination is consistent with what it can show. ``truncated`` is True
+    when older rows were hidden by the FREE retention filter (drives the soft PRO
+    hint). ``retention_days`` echoes the active window (0 = unlimited / PRO)."""
+
+    items: list[HistoryRunOut]
+    total: int
+    page: int
+    page_size: int
+    is_pro: bool
+    truncated: bool = False
+    retention_days: int = 0
 
 
 class PowerPriceSaveRequest(BaseModel):

@@ -37,6 +37,9 @@ __all__ = [
   "calc_result_kb",
   "calc_pro_stub_kb",
   "plans_kb",
+  "history_list_kb",
+  "history_detail_kb",
+  "history_empty_kb",
 ]
 
 # Models shown per page on the brand -> model screen. Kept small so the inline
@@ -317,6 +320,99 @@ def plans_kb(plans: list[dict]) -> InlineKeyboardMarkup:
     InlineKeyboardButton(text="‹ В профиль", callback_data="profile:open")
   )
   return builder.as_markup()
+
+
+# ---------------------------------------------------------------------------
+# "Мои отчёты / История" (Queue 2.3). Dedicated ``hist:*`` namespace.
+#   hist:open:<run_id>  open a saved calculation's detail screen
+#   hist:p:<page>       go to a history list page
+#   hist:list           return to the list from a detail screen
+# ---------------------------------------------------------------------------
+
+
+def history_list_kb(
+    items: list[dict],
+    *,
+    page: int,
+    last_page: int,
+    start_index: int = 1,
+    show_pro: bool = False,
+) -> InlineKeyboardMarkup:
+    """List screen: one numbered "open" button per item + pagination + back.
+
+    ``start_index`` is the 1-based number of the first item on the page so the
+    buttons line up with the numbered lines in the text. Pagination arrows are
+    only shown when there is more than one page. A soft PRO button is appended
+    when ``show_pro`` (FREE history truncated by retention)."""
+    builder = InlineKeyboardBuilder()
+    for offset, item in enumerate(items):
+        number = start_index + offset
+        builder.button(
+            text=f"🔎 Отчёт {number}", callback_data=f"hist:open:{item['id']}"
+        )
+    builder.adjust(1)
+
+    if last_page > 0:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="◀", callback_data=f"hist:p:{page - 1}"
+                )
+            )
+        nav.append(
+            InlineKeyboardButton(
+                text=f"{page + 1}/{last_page + 1}", callback_data="hist:noop"
+            )
+        )
+        if page < last_page:
+            nav.append(
+                InlineKeyboardButton(
+                    text="▶", callback_data=f"hist:p:{page + 1}"
+                )
+            )
+        builder.row(*nav)
+
+    if show_pro:
+        builder.row(
+            InlineKeyboardButton(
+                text="💎 Расширенная история — PRO", callback_data="profile:plan"
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home")
+    )
+    return builder.as_markup()
+
+
+def history_detail_kb() -> InlineKeyboardMarkup:
+    """Detail screen: back to the list + to the menu."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="‹ К списку", callback_data="hist:list"
+                ),
+                InlineKeyboardButton(
+                    text="🏠 Меню", callback_data="menu:home"
+                ),
+            ]
+        ]
+    )
+
+
+def history_empty_kb() -> InlineKeyboardMarkup:
+    """Empty-state screen: a CTA into the calculator + back to the menu."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🧮 Сделать расчёт", callback_data="menu:calculator"
+                )
+            ],
+            [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home")],
+        ]
+    )
 
 
 def qr_confirm() -> InlineKeyboardMarkup:

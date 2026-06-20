@@ -21,6 +21,8 @@ from app.schemas.billing import (
 from app.schemas.calc import (
     CalcRequest,
     FunnelMeta,
+    HistoryPage,
+    HistoryRunOut,
     InternalCalcRequest,
     InternalCalcResponse,
     InternalCalcStatus,
@@ -38,6 +40,27 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 
 settings = get_settings()
 
+# History rows per page. Matches the bot's ``history_format.PAGE_SIZE`` so the
+# inline keyboard (one open-button per item) stays well under Telegram limits.
+HISTORY_PAGE_SIZE = 5
+
+
+def _history_out(run: models.CalculationRun) -> HistoryRunOut:
+    """Serialize a CalculationRun row into the history payload."""
+    return HistoryRunOut(
+        id=run.id,
+        device_name=run.device_name,
+        device_model_id=run.device_model_id,
+        quantity=run.quantity,
+        currency=run.currency,
+        hashrate_ths=run.hashrate_ths,
+        power_w=run.power_w,
+        power_price=run.power_price,
+        net_profit_day_usdt=run.net_profit_day_usdt,
+        net_profit_month_usdt=run.net_profit_month_usdt,
+        created_at=run.created_at.isoformat() if run.created_at else "",
+    )
+
 
 def _require_bot_secret(x_bot_secret: str | None) -> None:
     expected = settings.bot_internal_secret
@@ -49,6 +72,18 @@ def _require_bot_secret(x_bot_secret: str | None) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Invalid bot secret"
         )
+
+
+def _model_display_name(db: Session, device_model_id: int) -> str | None:
+    """Build a human-readable catalog name ("Brand Model Variant") for history."""
+    model = db.get(models.DeviceModel, device_model_id)
+    if model is None:
+        return None
+    parts = [model.brand, model.model_name]
+    if model.variant:
+        parts.append(model.variant)
+    name = " ".join(p for p in parts if p).strip()
+    return name[:128] or None
 
 
 def _funnel_meta(state: funnel.FunnelState) -> FunnelMeta:
@@ -129,6 +164,100 @@ def calc_status(
     )
 
 
+def _retention_days_for(is_pro: bool) -> int:
+    """Active history retention window in days for this user (0 = unlimited).
+
+    PRO has unbounded history; FREE uses the configured window. Centralised so
+    the list and detail endpoints agree on the cutoff."""
+    if is_pro:
+        return 0
+    return settings.free_history_retention_days
+
+
+@router.get("/history", response_model=HistoryPage)
+def calc_history(
+    telegram_user_id: int,
+    page: int = 0,
+    db: Session = Depends(get_db),
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+) -> HistoryPage:
+    """A page of the user's saved calculations, newest first (Queue 2.3).
+
+    Retention is enforced at the query level: on FREE only the last
+    ``free_history_retention_days`` are returned; PRO sees everything. Nothing is
+    deleted — older rows are simply filtered out of the view. ``truncated``
+    reports whether older rows were hidden so the bot can surface the soft PRO
+    hint."""
+    _require_bot_secret(x_bot_secret)
+    user = crud_users.get_or_create_telegram_user(
+        db, telegram_user_id=telegram_user_id
+    )
+    user = reconcile_user(db, user)
+    user_is_pro = entitlement_is_pro(user)
+
+    retention_days = _retention_days_for(user_is_pro)
+    cutoff = crud_calc.history_cutoff(retention_days=retention_days)
+
+    page_size = HISTORY_PAGE_SIZE
+    visible_total = crud_calc.count_history(db, user_id=user.id, cutoff=cutoff)
+    page = max(page, 0)
+    last_page = max((visible_total - 1) // page_size, 0) if visible_total else 0
+    page = min(page, last_page)
+
+    rows = crud_calc.list_history(
+        db,
+        user_id=user.id,
+        cutoff=cutoff,
+        offset=page * page_size,
+        limit=page_size,
+    )
+
+    truncated = False
+    if cutoff is not None:
+        overall_total = crud_calc.count_history(db, user_id=user.id, cutoff=None)
+        truncated = overall_total > visible_total
+
+    return HistoryPage(
+        items=[_history_out(r) for r in rows],
+        total=visible_total,
+        page=page,
+        page_size=page_size,
+        is_pro=user_is_pro,
+        truncated=truncated,
+        retention_days=retention_days,
+    )
+
+
+@router.get("/history/{run_id}", response_model=HistoryRunOut)
+def calc_history_detail(
+    run_id: int,
+    telegram_user_id: int,
+    db: Session = Depends(get_db),
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+) -> HistoryRunOut:
+    """One saved calculation for the detail screen, scoped to the user.
+
+    Honours the same retention window as the list: a run that has fallen outside
+    the FREE window cannot be opened (404), matching what the list shows."""
+    _require_bot_secret(x_bot_secret)
+    user = crud_users.get_or_create_telegram_user(
+        db, telegram_user_id=telegram_user_id
+    )
+    user = reconcile_user(db, user)
+    cutoff = crud_calc.history_cutoff(
+        retention_days=_retention_days_for(entitlement_is_pro(user))
+    )
+    run = crud_calc.get_history_run(
+        db, user_id=user.id, run_id=run_id, cutoff=cutoff
+    )
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="calculation not found or expired",
+        )
+    return _history_out(run)
+
+
 @router.get("/profile", response_model=InternalProfile)
 def internal_profile(
     telegram_user_id: int,
@@ -187,6 +316,7 @@ def internal_calc(
 
     # Resolve specs: catalog model wins over manual input.
     has_firmware = False
+    device_name = req.device_name
     if req.device_model_id is not None:
         try:
             hashrate_ths, power_w = resolve_model_specs(db, req.device_model_id)
@@ -199,6 +329,8 @@ def internal_calc(
                 db, device_model_id=req.device_model_id, limit=1
             )
         )
+        if not device_name:
+            device_name = _model_display_name(db, req.device_model_id)
     else:
         hashrate_ths, power_w = req.hashrate_ths, int(req.power_w)
 
@@ -230,12 +362,14 @@ def internal_calc(
         db,
         user_id=user.id,
         device_model_id=req.device_model_id,
+        device_name=device_name,
         hashrate_ths=hashrate_ths,
         power_w=power_w,
         quantity=req.quantity,
         power_price=req.power_price,
         currency=req.currency,
         net_profit_day_usdt=result.net_profit_day,
+        net_profit_month_usdt=result.net_profit_month,
     )
 
     if req.save_power_price:

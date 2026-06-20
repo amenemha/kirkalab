@@ -19,7 +19,7 @@ MAIN_MENU_ITEMS: list[tuple[str, str]] = [
 ]
 
 # Actions that are not implemented yet — handled by a "coming soon" stub.
-STUB_ACTIONS: frozenset[str] = frozenset({"reports", "plan"})
+STUB_ACTIONS: frozenset[str] = frozenset({"plan"})
 
 # --------------------------------------------------------------------------- #
 # Reply-keyboard main menu (CALC_SPEC §3.2): the persistent "прибитая"

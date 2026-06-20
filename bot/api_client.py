@@ -156,6 +156,38 @@ class KirkalabApiClient:
       raise ApiError(self._detail(response, "Calculation failed"), response.status_code)
     return response.json()
 
+  async def list_history(
+    self, telegram_user_id: int, bot_secret: str, page: int = 0
+  ) -> dict:
+    """A page of the user's saved calculations (history screen).
+
+    Returns the HistoryPage payload ({items, total, page, page_size, is_pro,
+    truncated, retention_days}). Retention is applied server-side."""
+    headers = {"X-Bot-Secret": bot_secret}
+    params = {"telegram_user_id": telegram_user_id, "page": page}
+    response = await self._request(
+      "GET", "/api/v1/internal/history", params=params, headers=headers
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not load history"), response.status_code)
+    return response.json()
+
+  async def get_history_run(
+    self, telegram_user_id: int, run_id: int, bot_secret: str
+  ) -> dict:
+    """One saved calculation for the detail screen (HistoryRunOut payload).
+
+    Raises ApiError(404) when the run is missing or has expired out of the
+    retention window."""
+    headers = {"X-Bot-Secret": bot_secret}
+    params = {"telegram_user_id": telegram_user_id}
+    response = await self._request(
+      "GET", f"/api/v1/internal/history/{run_id}", params=params, headers=headers
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not load calculation"), response.status_code)
+    return response.json()
+
   async def save_power_price(
     self, telegram_user_id: int, power_price: str, bot_secret: str, currency: str = "USDT"
   ) -> dict:

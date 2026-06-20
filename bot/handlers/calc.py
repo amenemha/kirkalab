@@ -352,6 +352,7 @@ async def _run_and_render(
     "power_price": str(data.get("power_price", "0")),
     "currency": "USDT",
     "save_power_price": bool(data.get("save_power_price", False)),
+    "device_name": data.get("title"),
   }
   if data.get("device_model_id") is not None:
     payload["device_model_id"] = int(data["device_model_id"])
