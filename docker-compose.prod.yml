@@ -32,6 +32,19 @@ services:
       retries: 5
     logging: *default-logging
 
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+
   app:
     build: .
     restart: always
@@ -39,11 +52,20 @@ services:
       - .env.prod
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-kirkalab}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kirkalab}
+      REDIS_URL: redis://redis:6379/0
     expose:
       - "8000"
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     logging: *default-logging
 
   bot:
@@ -59,8 +81,15 @@ services:
       BOT_INTERNAL_SECRET: ${BOT_INTERNAL_SECRET:?set BOT_INTERNAL_SECRET in .env.prod}
       # Reach the backend over the internal compose network, never the public domain.
       API_BASE_URL: http://app:8000
+      REDIS_URL: redis://redis:6379/0
+      # Optional: Telegram chat id that receives operational alerts.
+      ADMIN_CHAT_ID: ${ADMIN_CHAT_ID:-}
+      ALERT_THROTTLE_SECONDS: ${ALERT_THROTTLE_SECONDS:-300}
     depends_on:
-      - app
+      app:
+        condition: service_started
+      redis:
+        condition: service_healthy
     logging: *default-logging
 
   caddy:
@@ -101,6 +130,7 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   caddy_data:
   caddy_config:
   caddy_logs:
