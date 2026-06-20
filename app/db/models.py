@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
@@ -7,6 +8,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -14,9 +16,14 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import JSON
 
 from app.db.session import Base
+
+# JSONB on PostgreSQL, plain JSON elsewhere (e.g. SQLite in tests).
+JsonB = JSON().with_variant(JSONB(), "postgresql")
 
 
 class User(Base):
@@ -342,3 +349,188 @@ class UserSettings(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Queue 3 groundwork: neutral schema for the RU tax module + mining-pool
+# integration. These tables carry only PK/FK and technical columns; every
+# logical field is nullable because the business logic (pool parsers, wallet
+# scanning, FX-rate lookups, report generation) is not implemented yet.
+# ---------------------------------------------------------------------------
+
+
+class PoolConnection(Base):
+    """Read-only link to a user's mining-pool account (observer access)."""
+
+    __tablename__ = "pool_connections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # viabtc / f2pool / antpool / binance / luxor
+    pool_code: Mapped[str] = mapped_column(String, nullable=False)
+    observer_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Stored encrypted once the integration lands; plaintext never persisted.
+    access_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    coin: Mapped[str | None] = mapped_column(String, nullable=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PoolEarning(Base):
+    """Normalized daily earnings pulled from a pool connection."""
+
+    __tablename__ = "pool_earnings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    pool_connection_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("pool_connections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    coin: Mapped[str | None] = mapped_column(String, nullable=True)
+    amount_crypto: Mapped[Decimal | None] = mapped_column(Numeric(30, 12), nullable=True)
+    source: Mapped[str] = mapped_column(
+        String, default="pool", server_default="pool", nullable=False
+    )
+    raw_json: Mapped[Any | None] = mapped_column(JsonB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class WalletSource(Base):
+    """On-chain wallet a user wants included in the RU tax report."""
+
+    __tablename__ = "wallet_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    chain: Mapped[str | None] = mapped_column(String, nullable=True)
+    address: Mapped[str | None] = mapped_column(String, nullable=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class WalletEarning(Base):
+    """Incoming on-chain transaction credited to a wallet source."""
+
+    __tablename__ = "wallet_earnings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    wallet_source_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("wallet_sources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tx_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    coin: Mapped[str | None] = mapped_column(String, nullable=True)
+    amount_crypto: Mapped[Decimal | None] = mapped_column(Numeric(30, 12), nullable=True)
+    raw_json: Mapped[Any | None] = mapped_column(JsonB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TaxRate(Base):
+    """FX/asset rate on the crediting date, used to value crypto income."""
+
+    __tablename__ = "tax_rates"
+    __table_args__ = (
+        Index(
+            "ix_tax_rates_date_coin_currency_source",
+            "date",
+            "coin",
+            "currency",
+            "source",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    coin: Mapped[str | None] = mapped_column(String, nullable=True)
+    currency: Mapped[str | None] = mapped_column(String, nullable=True)
+    rate: Mapped[Decimal | None] = mapped_column(Numeric(30, 12), nullable=True)
+    # cbr / coingecko
+    source: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class TaxReport(Base):
+    """A generated tax report for a user over a period."""
+
+    __tablename__ = "tax_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # month / year
+    period_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    jurisdiction: Mapped[str] = mapped_column(
+        String, default="RU", server_default="RU", nullable=False
+    )
+    # draft / generated
+    status: Mapped[str | None] = mapped_column(String, nullable=True)
+    file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    totals_json: Mapped[Any | None] = mapped_column(JsonB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TaxDeduction(Base):
+    """A deductible expense applied against taxable mining income."""
+
+    __tablename__ = "tax_deductions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tax_report_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("tax_reports.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # electricity / amortization / rent
+    type: Mapped[str | None] = mapped_column(String, nullable=True)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
