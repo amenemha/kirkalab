@@ -1,4 +1,5 @@
 import secrets
+from decimal import Decimal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
@@ -20,6 +21,7 @@ from app.schemas.billing import (
     SubscriptionState,
 )
 from app.schemas.calc import (
+    CalcLocalView,
     CalcRequest,
     FunnelMeta,
     HistoryPage,
@@ -29,6 +31,12 @@ from app.schemas.calc import (
     InternalCalcStatus,
     InternalProfile,
     PowerPriceSaveRequest,
+)
+from app.schemas.fx import (
+    CurrencyOut,
+    FxConvertRequest,
+    FxConvertResponse,
+    FxRatesResponse,
 )
 from app.services.billing import service as billing_service
 from app.services.billing.entitlement import is_pro as entitlement_is_pro
@@ -40,6 +48,9 @@ from app.services.calc.export import (
     export_filename,
 )
 from app.services.calc.service import resolve_model_specs, run_calc
+from app.crud import fx as crud_fx
+from app.services.fx import service as fx_service
+from app.services.fx.service import RateUnavailableError
 from app.services.market.service import MarketUnavailableError, refresh_market_data
 
 router = APIRouter(prefix="/internal", tags=["internal"])
@@ -106,6 +117,37 @@ def _funnel_meta(state: funnel.FunnelState) -> FunnelMeta:
     )
 
 
+def _local_view(db: Session, result, currency: str) -> CalcLocalView | None:
+    """Build the local-currency presentation layer over a USDT result.
+
+    Additive only: returns None for USDT (the bot shows the USDT result as-is) or
+    when no FX rate can be resolved (graceful degradation — bot falls back to
+    USDT). The USDT headline figures are converted at the current anchor rate and
+    rounded to the target currency's display ``decimals``."""
+    code = (currency or "USDT").upper()
+    cur = crud_fx.get_currency(db, code)
+    if cur is None or not cur.is_active or not cur.is_fiat or code == "USDT":
+        return None
+    try:
+        rate = fx_service.get_anchor_rate(db, code)
+    except RateUnavailableError:
+        return None
+
+    def conv(amount: Decimal) -> Decimal:
+        return fx_service.convert(db, amount, from_code="USDT", to_code=code)
+
+    return CalcLocalView(
+        currency=code,
+        symbol=cur.symbol,
+        rate=rate,
+        net_profit_day=conv(result.net_profit_day),
+        net_profit_month=conv(result.net_profit_month),
+        net_profit_year=conv(result.net_profit_year),
+        power_cost_day=conv(result.power_cost_day),
+        stale=False,
+    )
+
+
 def _evaluate_funnel(
     *, is_pro: bool, total_runs: int, runs_today: int
 ) -> funnel.FunnelState:
@@ -140,6 +182,83 @@ def refresh_market(
         "network_difficulty": str(data.network_difficulty),
         "block_reward_btc": str(data.block_reward_btc),
     }
+
+
+@router.get("/fx/rates", response_model=FxRatesResponse)
+def fx_rates(
+    db: Session = Depends(get_db),
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+) -> FxRatesResponse:
+    """Current anchor rates (1 USDT = ? fiat) plus the currency catalog.
+
+    Rates are served from the Redis cache when warm, refreshed from CoinGecko on
+    a miss, and fall back to the latest persisted ``fx_rates`` snapshot when the
+    source is down (``stale=true``). The bot uses this to render the currency
+    picker and to convert results client-side when it prefers to."""
+    _require_bot_secret(x_bot_secret)
+    currencies = crud_fx.list_currencies(db, active_only=True)
+    try:
+        rates = fx_service.get_anchor_rates(db)
+        stale = False
+    except RateUnavailableError:
+        # No fresh and no persisted rates at all: return an empty map rather than
+        # erroring, so the bot can still show the catalog and fall back to USDT.
+        rates = {}
+        stale = True
+    return FxRatesResponse(
+        base="USDT",
+        rates=rates,
+        currencies=[CurrencyOut.model_validate(c) for c in currencies],
+        stale=stale,
+    )
+
+
+@router.post("/fx/convert", response_model=FxConvertResponse)
+def fx_convert(
+    req: FxConvertRequest,
+    db: Session = Depends(get_db),
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+) -> FxConvertResponse:
+    """Convert a Decimal amount between two currencies at the current rate.
+
+    Unknown/inactive target currency or a missing rate yields 422 so the caller
+    can fall back to USDT. The math is Decimal end-to-end and rounded to the
+    target currency's configured ``decimals``."""
+    _require_bot_secret(x_bot_secret)
+    to_cur = crud_fx.get_currency(db, req.to_currency.upper())
+    if to_cur is None or not to_cur.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"unknown currency: {req.to_currency}",
+        )
+    from_cur = crud_fx.get_currency(db, req.from_currency.upper())
+    if from_cur is None or not from_cur.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"unknown currency: {req.from_currency}",
+        )
+    try:
+        converted = fx_service.convert(
+            db,
+            req.amount,
+            from_code=req.from_currency,
+            to_code=req.to_currency,
+        )
+    except RateUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    # Echo the effective rate (1 from = rate to) for transparency.
+    rate = fx_service.convert(
+        db, Decimal(1), from_code=req.from_currency, to_code=req.to_currency
+    )
+    return FxConvertResponse(
+        amount=req.amount,
+        from_currency=req.from_currency.upper(),
+        to_currency=req.to_currency.upper(),
+        converted=converted,
+        rate=rate,
+    )
 
 
 @router.get("/calc/status", response_model=InternalCalcStatus)
@@ -464,6 +583,8 @@ def internal_calc(
     calc_response = _calc_response(result, calc_req)
     calc_response.market_captured_at = captured_at.isoformat()
 
+    local = _local_view(db, result, req.currency)
+
     return InternalCalcResponse(
         allowed=True,
         funnel=_funnel_meta(state),
@@ -471,6 +592,7 @@ def internal_calc(
         has_firmware=has_firmware,
         device_model_id=req.device_model_id,
         run_id=run.id,
+        local=local,
     )
 
 

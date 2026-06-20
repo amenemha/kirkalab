@@ -167,6 +167,25 @@ class InternalCalcRequest(BaseModel):
         return self
 
 
+class CalcLocalView(BaseModel):
+    """Local-currency presentation layer over the USDT calc result (Queue 3).
+
+    Additive only: the authoritative economics stay in ``result`` (USDT). This
+    block carries the same headline figures converted into ``currency`` at the
+    current FX rate, rounded to that currency's display ``decimals``. ``stale``
+    is True when the rate came from the persisted fallback (source was down).
+    Absent/None when the requested currency is USDT or no rate was available."""
+
+    currency: str
+    symbol: str
+    rate: Decimal  # 1 USDT = rate <currency>
+    net_profit_day: Decimal
+    net_profit_month: Decimal
+    net_profit_year: Decimal
+    power_cost_day: Decimal
+    stale: bool = False
+
+
 class InternalCalcResponse(BaseModel):
     """Calc result (USDT economics) plus the funnel metadata.
 
@@ -183,6 +202,10 @@ class InternalCalcResponse(BaseModel):
     # "Экспорт в Excel" action on the just-computed result screen (Queue 2.2).
     # None when no run was recorded (e.g. the FREE user was blocked).
     run_id: int | None = None
+    # Local-currency view of the headline figures (Queue 3). None when the
+    # requested currency is USDT or no FX rate could be resolved — the bot then
+    # falls back to the USDT ``result`` unchanged.
+    local: CalcLocalView | None = None
 
 
 class InternalCalcStatus(BaseModel):

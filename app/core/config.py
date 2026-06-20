@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     market_http_retries: int = 2
     market_default_block_reward_btc: str = "3.125"
 
+    # FX / currency layer (Queue 3). Fiat rates are sourced from CoinGecko
+    # (USDT→fiat via the same public endpoint the market layer uses) and cached
+    # in Redis with a TTL, with a durable fallback to the latest persisted
+    # ``fx_rates`` row when the source is down. The HTTP knobs mirror the market
+    # provider's so both integrations time out/retry consistently.
+    fx_cache_ttl_seconds: int = 3600
+    fx_http_timeout_seconds: float = 5.0
+    fx_http_retries: int = 2
+
     # FREE-tier calculation limits (see CALC_SPEC §3). Kept in config so the
     # numbers are tunable without code changes; the funnel logic and the bot's
     # progress line both read them. Defaults match the spec: 5 intro calcs on
