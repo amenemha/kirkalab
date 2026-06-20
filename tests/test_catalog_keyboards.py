@@ -1,5 +1,9 @@
 """Tests for the catalog inline keyboards: callback-data stays within
 Telegram's 64-byte limit and pagination buttons appear only when needed."""
+import pytest
+
+pytest.importorskip("aiogram")  # bot.keyboards builds aiogram InlineKeyboardMarkup
+
 from bot.keyboards import (
     PAGE_SIZE,
     brand_list_kb,
