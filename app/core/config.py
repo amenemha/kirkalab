@@ -8,9 +8,13 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     app_name: str = "kirkalab"
+    app_version: str = "0.1.0"
     environment: str = "development"
     debug: bool = False
     database_url: str = "sqlite:///./kirkalab.db"
+    # Redis is used by the bot for FSM persistence; the backend only pings it in
+    # the readiness probe. Default targets the compose `redis` service.
+    redis_url: str = "redis://redis:6379/0"
     secret_key: str = "CHANGE_ME"
     # Allowed CORS origins, parsed from the comma-separated CORS_ORIGINS env var.
     cors_origins: list[str] = []

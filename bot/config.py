@@ -22,6 +22,15 @@ class BotSettings(BaseSettings):
   api_base_url: str = "http://app:8000"
   # Request timeout for API calls, seconds.
   request_timeout: float = 10.0
+  # Redis connection for FSM persistence. Defaults to the compose `redis`
+  # service so a container restart no longer drops in-flight user state.
+  redis_url: str = "redis://redis:6379/0"
+  # Telegram chat id that receives operational alerts. Optional: when unset,
+  # alerting is disabled and the bot still runs normally.
+  admin_chat_id: int | None = None
+  # Minimum interval (seconds) between repeated alerts of the same type, so a
+  # flapping backend can not spam the admin chat.
+  alert_throttle_seconds: float = 300.0
 
 
 @lru_cache

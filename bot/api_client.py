@@ -19,17 +19,38 @@ class ApiError(Exception):
 
 
 class KirkalabApiClient:
-  def __init__(self, base_url: str, timeout: float = 10.0) -> None:
+  def __init__(
+    self, base_url: str, timeout: float = 10.0, notifier=None
+  ) -> None:
     self._base_url = base_url.rstrip("/")
     self._timeout = timeout
+    # Optional AdminNotifier; when set, backend 5xx/timeout failures raise an
+    # alert (throttled per error type). Kept duck-typed so this module stays
+    # free of an aiogram import.
+    self._notifier = notifier
+
+  async def _alert_backend(self, error_type: str, detail: str) -> None:
+    if self._notifier is None:
+      return
+    try:
+      await self._notifier.alert_backend_error(error_type, detail)
+    except Exception:  # noqa: BLE001 — alerting must never break a request
+      pass
 
   async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
     url = f"{self._base_url}{path}"
     try:
       async with httpx.AsyncClient(timeout=self._timeout) as client:
-        return await client.request(method, url, **kwargs)
-    except httpx.RequestError as exc:
+        response = await client.request(method, url, **kwargs)
+    except httpx.TimeoutException as exc:
+      await self._alert_backend("timeout", f"{method} {path}")
       raise ApiError(f"API is unreachable: {exc}") from exc
+    except httpx.RequestError as exc:
+      await self._alert_backend("unreachable", f"{method} {path}")
+      raise ApiError(f"API is unreachable: {exc}") from exc
+    if response.status_code >= 500:
+      await self._alert_backend("5xx", f"{method} {path} -> {response.status_code}")
+    return response
 
   @staticmethod
   def _detail(response: httpx.Response, fallback: str) -> str:
