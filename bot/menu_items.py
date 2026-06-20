@@ -10,7 +10,7 @@ from __future__ import annotations
 # (callback action, button label). Order defines on-screen layout.
 MAIN_MENU_ITEMS: list[tuple[str, str]] = [
   ("profile", "👤 Профиль"),
-  ("calculator", "🧮 Калькулятор ASIC"),
+  ("calculator", "🧮 Рассчитать доходность"),
   ("catalog", "📋 Каталог ASIC"),
   ("reports", "📊 Мои отчёты"),
   ("plan", "💎 Тариф"),
@@ -18,4 +18,4 @@ MAIN_MENU_ITEMS: list[tuple[str, str]] = [
 ]
 
 # Actions that are not implemented yet — handled by a "coming soon" stub.
-STUB_ACTIONS: frozenset[str] = frozenset({"calculator", "reports", "plan"})
+STUB_ACTIONS: frozenset[str] = frozenset({"reports", "plan"})

@@ -24,6 +24,17 @@ from app.services.calc.core import (
 from app.services.market.service import get_market_data
 
 
+def resolve_model_specs(db: Session, device_model_id: int) -> tuple[Decimal, int]:
+    """Resolve a catalog model's (hashrate_ths, power_w) for the calc core.
+
+    Raises ``ValueError`` if the model does not exist so the API/internal layer
+    can surface a 404/422 rather than a 500."""
+    model = db.get(models.DeviceModel, device_model_id)
+    if model is None:
+        raise ValueError("device_model not found")
+    return Decimal(model.default_hashrate_ths), int(model.default_power_w)
+
+
 def run_calc(db: Session, req: CalcRequest) -> tuple[MiningResult, datetime]:
     market, captured_at = get_market_data(db, coin_code="BTC")
     inp = MiningInput(
