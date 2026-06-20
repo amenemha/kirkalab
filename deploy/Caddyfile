@@ -9,10 +9,13 @@
 
 	root * /srv
 
-	# API and health check go to the FastAPI app.
+	# API and health checks go to the FastAPI app.
 	# handle with a matcher has explicit priority over file_server/try_files,
 	# which would otherwise be sorted ahead by Caddy's built-in directive order.
-	@backend path /api/* /health
+	# /health* (not just /health) must match, иначе readiness-подпуть
+	# /health/ready не дойдёт до бэкенда и уйдёт в SPA-fallback ниже
+	# (отдавался index.html с 200 вместо JSON readiness).
+	@backend path /api/* /health /health/*
 	handle @backend {
 		reverse_proxy app:8000 {
 			# Caddy sets these by default; declared explicitly so the backend
