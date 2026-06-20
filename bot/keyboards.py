@@ -36,6 +36,7 @@ __all__ = [
   "calc_price_kb",
   "calc_result_kb",
   "calc_pro_stub_kb",
+  "export_upsell_kb",
   "plans_kb",
   "history_list_kb",
   "history_detail_kb",
@@ -275,12 +276,22 @@ def calc_price_kb(saved_price: str | None) -> InlineKeyboardMarkup:
   return builder.as_markup()
 
 
-def calc_result_kb(*, has_firmware: bool) -> InlineKeyboardMarkup:
-  """Buttons under the result screen."""
+def calc_result_kb(
+  *, has_firmware: bool, run_id: int | None = None
+) -> InlineKeyboardMarkup:
+  """Buttons under the result screen.
+
+  When ``run_id`` is known (the calc was persisted) an "Экспорт в Excel" button
+  is offered (Queue 2.2). It's a PRO feature, but the button is shown to everyone
+  — the gate (PRO export vs. soft upsell) is decided server-side on tap."""
   builder = InlineKeyboardBuilder()
   builder.button(text="🔁 Пересчитать", callback_data="calc:restart")
   if has_firmware:
     builder.button(text="🔧 Сравнить с прошивкой", callback_data="calc:compare")
+  if run_id is not None:
+    builder.button(
+      text="📥 Экспорт в Excel", callback_data=f"calc:xlsx:{run_id}"
+    )
   builder.adjust(1)
   builder.row(
     InlineKeyboardButton(text="📋 К каталогу", callback_data="menu:catalog"),
@@ -296,6 +307,20 @@ def calc_pro_stub_kb() -> InlineKeyboardMarkup:
   builder.adjust(1)
   builder.row(
     InlineKeyboardButton(text="🏠 Меню", callback_data="menu:home")
+  )
+  return builder.as_markup()
+
+
+def export_upsell_kb(back_callback: str) -> InlineKeyboardMarkup:
+  """Soft upsell shown when a FREE user taps "Экспорт в Excel" (Queue 2.2).
+
+  Leads to the PRO tariff screen, with a "back" button returning to whichever
+  screen invoked the export (result or history detail)."""
+  builder = InlineKeyboardBuilder()
+  builder.button(text="💎 Перейти к тарифу PRO", callback_data="profile:plan")
+  builder.adjust(1)
+  builder.row(
+    InlineKeyboardButton(text="‹ Назад", callback_data=back_callback)
   )
   return builder.as_markup()
 
@@ -385,20 +410,22 @@ def history_list_kb(
     return builder.as_markup()
 
 
-def history_detail_kb() -> InlineKeyboardMarkup:
-    """Detail screen: back to the list + to the menu."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="‹ К списку", callback_data="hist:list"
-                ),
-                InlineKeyboardButton(
-                    text="🏠 Меню", callback_data="menu:home"
-                ),
-            ]
-        ]
+def history_detail_kb(run_id: int | None = None) -> InlineKeyboardMarkup:
+    """Detail screen: Excel export (PRO, gated on tap) + back to list/menu.
+
+    The "📥 Экспорт в Excel" button is shown whenever the run id is known; the
+    PRO gate / soft upsell is decided server-side when tapped (Queue 2.2)."""
+    builder = InlineKeyboardBuilder()
+    if run_id is not None:
+        builder.button(
+            text="📥 Экспорт в Excel", callback_data=f"hist:xlsx:{run_id}"
+        )
+        builder.adjust(1)
+    builder.row(
+        InlineKeyboardButton(text="‹ К списку", callback_data="hist:list"),
+        InlineKeyboardButton(text="🏠 Меню", callback_data="menu:home"),
     )
+    return builder.as_markup()
 
 
 def history_empty_kb() -> InlineKeyboardMarkup:

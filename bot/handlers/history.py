@@ -23,6 +23,7 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.api_client import ApiError, KirkalabApiClient
 from bot.config import get_settings
+from bot.handlers.export import handle_export
 from bot.history_format import (
     PAGE_SIZE,
     format_detail_screen,
@@ -163,6 +164,14 @@ async def cb_open(callback: CallbackQuery, state: FSMContext) -> None:
         callback.message,
         state,
         format_detail_screen(item),
-        reply_markup=history_detail_kb(),
+        reply_markup=history_detail_kb(item.get("id")),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("hist:xlsx:"))
+async def cb_export(callback: CallbackQuery, state: FSMContext) -> None:
+    # Excel export from the history detail screen. PRO gate + ownership are
+    # enforced server-side; a FREE user gets a soft upsell whose "back" returns
+    # to the history list.
+    await handle_export(callback, state, back_callback="hist:list")

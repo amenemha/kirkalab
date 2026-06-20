@@ -1,6 +1,7 @@
 import secrets
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -33,6 +34,11 @@ from app.services.billing import service as billing_service
 from app.services.billing.entitlement import is_pro as entitlement_is_pro
 from app.services.billing.entitlement import reconcile_user
 from app.services.calc import funnel
+from app.services.calc.export import (
+    CalcExportData,
+    build_calc_workbook,
+    export_filename,
+)
 from app.services.calc.service import resolve_model_specs, run_calc
 from app.services.market.service import MarketUnavailableError, refresh_market_data
 
@@ -258,6 +264,84 @@ def calc_history_detail(
     return _history_out(run)
 
 
+XLSX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+
+@router.get("/calc/{run_id}/export.xlsx")
+def export_calc_xlsx(
+    run_id: int,
+    telegram_user_id: int,
+    db: Session = Depends(get_db),
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+) -> Response:
+    """Export one saved calculation as an .xlsx document (Queue 2.2, PRO-only).
+
+    Gating + scoping mirror the history detail endpoint:
+
+    * Ownership/retention: the run must belong to ``telegram_user_id`` and still
+      be inside the retention window, otherwise 404 — a user can never export
+      someone else's (or an expired) calculation.
+    * PRO gate: Excel export is a PRO feature. A FREE user (resolved with the
+      same lazy-expiration entitlement as everywhere else) gets 403 so the bot
+      can show the soft upsell. The ownership check runs first so a FREE user
+      probing other people's ids still only ever sees 404.
+
+    The body is the workbook bytes with a ``Content-Disposition`` attachment so
+    Telegram's ``sendDocument`` (or a browser) downloads it with a sane name."""
+    _require_bot_secret(x_bot_secret)
+    user = crud_users.get_or_create_telegram_user(
+        db, telegram_user_id=telegram_user_id
+    )
+    user = reconcile_user(db, user)
+    user_is_pro = entitlement_is_pro(user)
+
+    cutoff = crud_calc.history_cutoff(
+        retention_days=_retention_days_for(user_is_pro)
+    )
+    run = crud_calc.get_history_run(
+        db, user_id=user.id, run_id=run_id, cutoff=cutoff
+    )
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="calculation not found or expired",
+        )
+
+    if not user_is_pro:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Excel export is a PRO feature",
+        )
+
+    payload = build_calc_workbook(
+        CalcExportData(
+            run_id=run.id,
+            device_name=run.device_name or "Оборудование",
+            quantity=run.quantity,
+            currency=run.currency or "USDT",
+            created_at=run.created_at,
+            hashrate_ths=run.hashrate_ths,
+            power_w=run.power_w,
+            power_price=run.power_price,
+            net_profit_day=run.net_profit_day_usdt,
+            net_profit_month=run.net_profit_month_usdt,
+        )
+    )
+    filename = export_filename(run.id, run.created_at)
+    # RFC 5987 filename* keeps the ASCII-safe name while allowing UTF-8 clients.
+    disposition = (
+        f"attachment; filename=\"{filename}\"; "
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    return Response(
+        content=payload,
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": disposition},
+    )
+
+
 @router.get("/profile", response_model=InternalProfile)
 def internal_profile(
     telegram_user_id: int,
@@ -358,7 +442,7 @@ def internal_calc(
 
     # Record the run only after a successful calc, so a rejected/invalid request
     # never consumes a funnel slot.
-    crud_calc.record_run(
+    run = crud_calc.record_run(
         db,
         user_id=user.id,
         device_model_id=req.device_model_id,
@@ -386,6 +470,7 @@ def internal_calc(
         result=calc_response,
         has_firmware=has_firmware,
         device_model_id=req.device_model_id,
+        run_id=run.id,
     )
 
 

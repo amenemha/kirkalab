@@ -43,6 +43,7 @@ from bot.calc_format import (
     format_result_screen,
 )
 from bot.config import get_settings
+from bot.handlers.export import handle_export
 from bot.keyboards import (
     PAGE_SIZE,
     calc_brand_list_kb,
@@ -381,10 +382,14 @@ async def _run_and_render(
     quantity=int(data.get("quantity", 1)),
     currency="USDT",
   )
+  run_id = resp.get("run_id")
   await state.update_data(has_firmware=bool(resp.get("has_firmware")))
   await message.edit_text(
     text,
-    reply_markup=calc_result_kb(has_firmware=bool(resp.get("has_firmware"))),
+    reply_markup=calc_result_kb(
+      has_firmware=bool(resp.get("has_firmware")),
+      run_id=int(run_id) if run_id is not None else None,
+    ),
     disable_web_page_preview=True,
   )
 
@@ -402,6 +407,14 @@ async def cb_compare(callback: CallbackQuery, state: FSMContext) -> None:
     "🔧 Сравнение с кастомной прошивкой и экономия — в PRO 💎",
     show_alert=True,
   )
+
+
+@router.callback_query(F.data.startswith("calc:xlsx:"))
+async def cb_export(callback: CallbackQuery, state: FSMContext) -> None:
+  # Excel export of the just-computed run. PRO gate + ownership are enforced
+  # server-side; a FREE user sees a soft upsell whose "back" returns to a fresh
+  # calculation (the result screen state may be gone after the document send).
+  await handle_export(callback, state, back_callback="calc:restart")
 
 
 @router.callback_query(F.data == "calc:pro")

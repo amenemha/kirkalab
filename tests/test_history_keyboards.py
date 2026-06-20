@@ -68,6 +68,14 @@ def test_detail_kb_has_back_to_list_and_menu():
     assert "menu:home" in cbs
 
 
+def test_detail_kb_export_button_when_run_id():
+    cbs = _callbacks(history_detail_kb(7))
+    assert "hist:xlsx:7" in cbs
+    assert "hist:list" in cbs
+    # No run id -> no export button.
+    assert not any(c.startswith("hist:xlsx:") for c in _callbacks(history_detail_kb()))
+
+
 def test_empty_kb_has_calculator_cta():
     cbs = _callbacks(history_empty_kb())
     assert "menu:calculator" in cbs

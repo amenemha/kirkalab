@@ -11,6 +11,7 @@ from bot.keyboards import (
     calc_quantity_kb,
     calc_result_kb,
     calc_start_kb,
+    export_upsell_kb,
 )
 
 
@@ -58,6 +59,19 @@ def test_result_kb_firmware_toggle():
     assert "calc:compare" not in _all_callbacks(
         calc_result_kb(has_firmware=False)
     )
+
+
+def test_result_kb_export_button_when_run_id():
+    with_run = _all_callbacks(calc_result_kb(has_firmware=False, run_id=42))
+    assert "calc:xlsx:42" in with_run
+    without = _all_callbacks(calc_result_kb(has_firmware=False))
+    assert not any(c.startswith("calc:xlsx:") for c in without)
+
+
+def test_export_upsell_kb_links_to_plan_and_back():
+    cbs = _all_callbacks(export_upsell_kb("calc:restart"))
+    assert "profile:plan" in cbs
+    assert "calc:restart" in cbs
 
 
 def test_brand_list_kb_back_to_start():
