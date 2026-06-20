@@ -16,6 +16,7 @@ Alembic migration ``0005`` (which passes a live connection).
 from __future__ import annotations
 
 import json
+import logging
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -25,9 +26,23 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 
+logger = logging.getLogger(__name__)
+
 CATALOG_PATH = (
     Path(__file__).resolve().parent.parent / "data" / "asic_catalog.json"
 )
+
+# Hard limits of the NUMERIC columns on ``device_models`` (precision, scale).
+# Postgres rejects any value whose absolute integral part is >= 10**(p-s),
+# while SQLite silently accepts it — which is exactly why a bad row passed CI
+# but crashed the production migration. We sanitize before insert so a single
+# malformed record can never abort the whole catalog import (and prod startup).
+_NUMERIC_LIMITS: dict[str, tuple[int, int]] = {
+    "default_hashrate_ths": (12, 2),
+    "efficiency_j_per_th": (12, 4),
+    "noise_db": (6, 2),
+    "weight_kg": (8, 3),
+}
 
 # JSON keys copied verbatim into same-named columns.
 _PASSPORT_STRING_FIELDS = (
@@ -70,8 +85,48 @@ def _to_int(value: object) -> int | None:
         return None
 
 
+def _fits_numeric(value: Decimal, precision: int, scale: int) -> bool:
+    """Whether ``value`` rounds into a NUMERIC(precision, scale) column.
+
+    Mirrors Postgres' check: the absolute value rounded to ``scale`` decimals
+    must be strictly less than ``10**(precision - scale)``.
+    """
+    limit = Decimal(10) ** (precision - scale)
+    return abs(value.quantize(Decimal(1).scaleb(-scale))) < limit
+
+
+def _is_ths(unit: object) -> bool:
+    return str(unit or "").strip().lower() == "th/s"
+
+
+def _sanitize_numeric(
+    field: str, value: Decimal | None, entry: dict
+) -> Decimal | None:
+    """Drop a NUMERIC value that would overflow its column, logging a warning.
+
+    Returns ``None`` for out-of-range values so the row still imports instead
+    of aborting the whole transaction (the bug that took prod down)."""
+    if value is None:
+        return None
+    precision, scale = _NUMERIC_LIMITS[field]
+    if not _fits_numeric(value, precision, scale):
+        logger.warning(
+            "catalog seed: dropping out-of-range %s=%s for %s / %s "
+            "(exceeds NUMERIC(%d,%d))",
+            field,
+            value,
+            entry.get("brand"),
+            entry.get("model_name"),
+            precision,
+            scale,
+        )
+        return None
+    return value
+
+
 def _row_values(entry: dict) -> dict:
     """Map a catalog JSON object onto DeviceModel column values."""
+    hashrate_unit = entry.get("hashrate_unit") or "TH/s"
     values: dict[str, object] = {
         "brand": entry["brand"],
         "model_name": entry["model_name"],
@@ -89,6 +144,32 @@ def _row_values(entry: dict) -> dict:
         values[key] = _to_decimal(entry.get(key))
     if not values.get("hashrate_unit"):
         values["hashrate_unit"] = "TH/s"
+
+    # efficiency_j_per_th (J per TH/s) is only meaningful for TH/s devices.
+    # For any other unit the figure is garbage and frequently astronomical
+    # (e.g. Innosilicon A8 CryptoMaster = 2.19e9), overflowing NUMERIC(12,4).
+    eff = values.get("efficiency_j_per_th")
+    if eff is not None and not _is_ths(hashrate_unit):
+        logger.warning(
+            "catalog seed: clearing efficiency_j_per_th=%s for non-TH/s "
+            "device %s / %s (unit=%s)",
+            eff,
+            entry.get("brand"),
+            entry.get("model_name"),
+            hashrate_unit,
+        )
+        values["efficiency_j_per_th"] = None
+
+    # Clamp every NUMERIC column to its column limits as a last-resort guard,
+    # so a single bad record never aborts the import / prod startup.
+    for field in _NUMERIC_LIMITS:
+        current = values.get(field)
+        if isinstance(current, Decimal):
+            sanitized = _sanitize_numeric(field, current, entry)
+            # default_hashrate_ths is NOT NULL — never drop it to None.
+            if sanitized is None and field == "default_hashrate_ths":
+                sanitized = Decimal("0")
+            values[field] = sanitized
     return values
 
 
