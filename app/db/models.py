@@ -391,6 +391,11 @@ class CalculationRun(Base):
         ForeignKey("device_models.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Human-readable snapshot of the equipment name at calc time, e.g.
+    # "Antminer S19 Pro" or "Своё оборудование". Stored so the history screen
+    # renders correctly even if the catalog model is later renamed/removed or the
+    # calc was a manual entry (device_model_id is NULL). Added in migration 0015.
+    device_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Echo of the inputs used (for history / "recalculate").
     hashrate_ths: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     power_w: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -401,6 +406,14 @@ class CalculationRun(Base):
     )
     # Snapshot of the headline result, USDT (Decimal money).
     net_profit_day_usdt: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 8), nullable=True
+    )
+    # Monthly headline snapshot, USDT (Decimal money). Added in migration 0015 so
+    # the history detail screen can show the monthly result without re-running the
+    # calc (market data changes over time). Same modest 18,8 scale as the daily
+    # figure — net_profit_day × ~30, well within range, so PostgreSQL NUMERIC
+    # never overflows (the SQLite test DB does not enforce precision).
+    net_profit_month_usdt: Mapped[Decimal | None] = mapped_column(
         Numeric(18, 8), nullable=True
     )
 

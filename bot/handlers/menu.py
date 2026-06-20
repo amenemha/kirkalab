@@ -21,6 +21,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.handlers.account import send_profile
+from bot.handlers.history import open_history
 from bot.keyboards import (
   STUB_ACTIONS,
   back_to_menu,
@@ -87,7 +88,7 @@ async def cb_reply_menu(message: Message, state: FSMContext) -> None:
   elif action == "catalog":
     await _open_catalog(message, state)
   elif action == "reports":
-    await edit_live_screen(message, state, STUB_TEXT, reply_markup=back_to_menu())
+    await open_history(message, message.from_user.id, state)
   elif action == "profile":
     await send_profile(message, message.from_user.id, state)
 
@@ -98,6 +99,13 @@ async def cb_reply_menu(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data == "menu:home")
 async def cb_home(callback: CallbackQuery, state: FSMContext) -> None:
   await edit_live_screen(callback.message, state, WELCOME_TEXT)
+  await callback.answer()
+
+
+@router.callback_query(F.data == "menu:reports")
+async def cb_reports(callback: CallbackQuery, state: FSMContext) -> None:
+  await set_screen_id(state, callback.message.message_id)
+  await open_history(callback.message, callback.from_user.id, state)
   await callback.answer()
 
 
