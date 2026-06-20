@@ -1,6 +1,6 @@
 # Kirkalab Telegram bot dependencies
 aiogram>=3.7,<4.0
 httpx>=0.27,<0.29
-pydantic-settings>=2.0,<3.0
+pydantic-settings>=2.14.2,<3.0
 # Redis-backed FSM storage (RedisStorage) — persists user flows across restarts.
 redis>=5.0,<6.0
