@@ -71,6 +71,45 @@ class KirkalabApiClient:
       raise ApiError(self._detail(response, "Could not fetch profile"), response.status_code)
     return response.json()
 
+  async def list_brands(self) -> list[dict]:
+    """Catalog brands with model counts (public read endpoint)."""
+    response = await self._request("GET", "/api/v1/devices/brands")
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not load brands"), response.status_code)
+    return response.json()
+
+  async def list_models_by_brand(
+    self, brand: str, skip: int = 0, limit: int = 8
+  ) -> dict:
+    """One page of models for a brand. Returns the DeviceModelPage payload
+    ({brand, total, skip, limit, items})."""
+    params = {"skip": skip, "limit": limit}
+    response = await self._request(
+      "GET", f"/api/v1/devices/brands/{brand}/models", params=params
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not load models"), response.status_code)
+    return response.json()
+
+  async def get_model(self, model_id: int) -> dict:
+    """Full passport card for a single device model."""
+    response = await self._request(
+      "GET", f"/api/v1/devices/models/{model_id}"
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not load device"), response.status_code)
+    return response.json()
+
+  async def list_firmware_presets(self, model_id: int) -> list[dict]:
+    """Firmware tuning presets for a device model (may be empty)."""
+    params = {"device_model_id": model_id, "limit": 100}
+    response = await self._request(
+      "GET", "/api/v1/firmware/presets", params=params
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not load firmware"), response.status_code)
+    return response.json()
+
   async def approve_qr(
     self, session_id: str, telegram_user_id: int, bot_secret: str
   ) -> dict:
