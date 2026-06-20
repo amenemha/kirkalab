@@ -35,6 +35,11 @@ def override_get_db() -> Generator:
 @pytest.fixture(autouse=True)
 def _setup_database() -> Generator:
     Base.metadata.create_all(bind=engine)
+    # Seed billing plans so the migration's seed is mirrored for the in-memory
+    # test DB (create_all does not run data migrations).
+    from app.db.seed_plans import seed_plans
+
+    seed_plans(engine)
     app.dependency_overrides[get_db] = override_get_db
     yield
     app.dependency_overrides.clear()

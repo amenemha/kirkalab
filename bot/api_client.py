@@ -173,6 +173,44 @@ class KirkalabApiClient:
       raise ApiError(self._detail(response, "Could not save price"), response.status_code)
     return response.json()
 
+  async def list_plans(self, bot_secret: str) -> list[dict]:
+    """Active billing plans for the PRO screen (prices come from the API).
+
+    Returns the list under the PlansResponse ``plans`` key."""
+    headers = {"X-Bot-Secret": bot_secret}
+    response = await self._request(
+      "GET", "/api/v1/internal/plans", headers=headers
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not load plans"), response.status_code)
+    return response.json().get("plans", [])
+
+  async def billing_activate(
+    self,
+    telegram_id: int,
+    plan_code: str,
+    telegram_payment_charge_id: str,
+    total_amount: int,
+    bot_secret: str,
+  ) -> dict:
+    """Apply a completed Telegram Stars payment; idempotent on the charge id.
+
+    Returns the SubscriptionState payload ({is_pro, plan_code, status,
+    started_at, expires_at, premium_until, already_applied})."""
+    headers = {"X-Bot-Secret": bot_secret}
+    payload = {
+      "telegram_id": telegram_id,
+      "plan_code": plan_code,
+      "telegram_payment_charge_id": telegram_payment_charge_id,
+      "total_amount": total_amount,
+    }
+    response = await self._request(
+      "POST", "/api/v1/internal/billing/activate", json=payload, headers=headers
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not activate PRO"), response.status_code)
+    return response.json()
+
   async def approve_qr(
     self, session_id: str, telegram_user_id: int, bot_secret: str
   ) -> dict:

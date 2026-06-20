@@ -2,6 +2,7 @@ import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.v1.calc import _calc_response
@@ -9,7 +10,14 @@ from app.core.config import get_settings
 from app.crud import calc as crud_calc
 from app.crud import firmware as crud_firmware
 from app.crud import users as crud_users
+from app.db import models
 from app.db.session import get_db
+from app.schemas.billing import (
+    BillingActivateRequest,
+    PlanOut,
+    PlansResponse,
+    SubscriptionState,
+)
 from app.schemas.calc import (
     CalcRequest,
     FunnelMeta,
@@ -19,6 +27,9 @@ from app.schemas.calc import (
     InternalProfile,
     PowerPriceSaveRequest,
 )
+from app.services.billing import service as billing_service
+from app.services.billing.entitlement import is_pro as entitlement_is_pro
+from app.services.billing.entitlement import reconcile_user
 from app.services.calc import funnel
 from app.services.calc.service import resolve_model_specs, run_calc
 from app.services.market.service import MarketUnavailableError, refresh_market_data
@@ -104,9 +115,10 @@ def calc_status(
     user = crud_users.get_or_create_telegram_user(
         db, telegram_user_id=telegram_user_id
     )
+    user = reconcile_user(db, user)
     settings_row = crud_users.get_or_create_settings(db, user_id=user.id)
     state = _evaluate_funnel(
-        is_pro=bool(user.is_pro),
+        is_pro=entitlement_is_pro(user),
         total_runs=crud_calc.count_runs(db, user_id=user.id),
         runs_today=crud_calc.count_runs_today(db, user_id=user.id),
     )
@@ -132,11 +144,12 @@ def internal_profile(
     user = crud_users.get_or_create_telegram_user(
         db, telegram_user_id=telegram_user_id
     )
+    user = reconcile_user(db, user)
     placeholder_email = f"tg_{telegram_user_id}@telegram.bot"
     return InternalProfile(
         id=user.id,
         handle=user.handle,
-        is_pro=bool(user.is_pro),
+        is_pro=entitlement_is_pro(user),
         is_linked=user.email != placeholder_email,
         created_at=user.created_at.isoformat() if user.created_at else "",
     )
@@ -159,9 +172,11 @@ def internal_calc(
     user = crud_users.get_or_create_telegram_user(
         db, telegram_user_id=req.telegram_user_id
     )
+    user = reconcile_user(db, user)
+    user_is_pro = entitlement_is_pro(user)
 
     state = _evaluate_funnel(
-        is_pro=bool(user.is_pro),
+        is_pro=user_is_pro,
         total_runs=crud_calc.count_runs(db, user_id=user.id),
         runs_today=crud_calc.count_runs_today(db, user_id=user.id),
     )
@@ -197,7 +212,7 @@ def internal_calc(
             pool_fee_pct=req.pool_fee_pct,
             uptime_pct=req.uptime_pct,
             hardware_cost=req.hardware_cost,
-            premium=bool(user.is_pro),
+            premium=user_is_pro,
         )
         result, captured_at = run_calc(db, calc_req)
     except MarketUnavailableError as exc:
@@ -259,3 +274,67 @@ def save_power_price(
         "default_power_price": str(row.default_power_price),
         "currency": row.currency,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Billing (Telegram Stars PRO).
+# --------------------------------------------------------------------------- #
+@router.get("/plans", response_model=PlansResponse)
+def list_plans(
+    db: Session = Depends(get_db),
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+) -> PlansResponse:
+    """Active plans for the bot's PRO screen. Prices come from the table."""
+    _require_bot_secret(x_bot_secret)
+    plans = billing_service.get_active_plans(db)
+    return PlansResponse(plans=[PlanOut.model_validate(p) for p in plans])
+
+
+@router.post("/billing/activate", response_model=SubscriptionState)
+def billing_activate(
+    req: BillingActivateRequest,
+    db: Session = Depends(get_db),
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+) -> SubscriptionState:
+    """Apply a completed Telegram Stars payment: create/renew the subscription
+    and set the user's PRO entitlement. Idempotent on the charge id."""
+    _require_bot_secret(x_bot_secret)
+    user = crud_users.get_or_create_telegram_user(
+        db, telegram_user_id=req.telegram_id
+    )
+
+    # Detect an idempotent repeat so we can report it to the bot without
+    # re-extending the period.
+    already = (
+        db.scalar(
+            select(models.Subscription.id).where(
+                models.Subscription.telegram_payment_charge_id
+                == req.telegram_payment_charge_id
+            )
+        )
+        is not None
+    )
+
+    try:
+        sub = billing_service.activate_subscription(
+            db,
+            user=user,
+            plan_code=req.plan_code,
+            telegram_payment_charge_id=req.telegram_payment_charge_id,
+            total_amount=req.total_amount,
+        )
+    except billing_service.BillingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    db.refresh(user)
+    return SubscriptionState(
+        is_pro=entitlement_is_pro(user),
+        plan_code=sub.plan_code,
+        status=sub.status,
+        started_at=sub.started_at,
+        expires_at=sub.expires_at,
+        premium_until=user.premium_until,
+        already_applied=already,
+    )
