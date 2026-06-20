@@ -2,9 +2,12 @@ from decimal import Decimal
 
 from app.db import models
 from app.db.seed_asic import STARTER_ASICS, seed_device_models
-from app.db.seed_catalog import load_catalog, seed_catalog
+from app.db.seed_catalog import _row_values, load_catalog, seed_catalog
 
 CATALOG_SIZE = 184
+
+# Max absolute value that fits in efficiency_j_per_th = NUMERIC(12, 4).
+_EFFICIENCY_LIMIT = Decimal("1e8")
 
 
 def test_catalog_file_has_expected_size():
@@ -91,3 +94,103 @@ def test_passport_fields_are_populated(db):
     assert s19.weight_kg == Decimal("14.200")
     assert int(s19.default_power_w) == 3250
     assert s19.default_hashrate_ths == Decimal("95.00")
+
+
+# --- Regression: efficiency_j_per_th overflow on non-TH/s devices (prod 502) ---
+
+
+def test_catalog_data_has_no_non_ths_efficiency():
+    """Sanity-check the source data file itself: efficiency_j_per_th is only
+    populated for TH/s devices, and never exceeds NUMERIC(12,4)."""
+    for entry in load_catalog():
+        eff = entry.get("efficiency_j_per_th")
+        if eff in (None, ""):
+            continue
+        unit = (entry.get("hashrate_unit") or "TH/s").strip().lower()
+        assert unit == "th/s", (
+            f"{entry['brand']} / {entry['model_name']} has efficiency on "
+            f"unit {entry.get('hashrate_unit')!r}"
+        )
+        assert abs(Decimal(str(eff))) < _EFFICIENCY_LIMIT
+
+
+def test_row_values_clears_efficiency_for_non_ths():
+    # Mimics Innosilicon A8 CryptoMaster: KH/s unit, astronomical efficiency.
+    entry = {
+        "brand": "Innosilicon",
+        "model_name": "A8 CryptoMaster",
+        "hashrate": 280,
+        "hashrate_unit": "KH/s",
+        "power_w": 1200,
+        "efficiency_j_per_th": "2187500000.0",
+    }
+    values = _row_values(entry)
+    assert values["efficiency_j_per_th"] is None
+
+
+def test_row_values_clamps_overflow_even_for_ths():
+    # A TH/s row whose efficiency would still overflow NUMERIC(12,4) is dropped
+    # to None rather than allowed to abort the transaction.
+    entry = {
+        "brand": "Bogus",
+        "model_name": "Overflow Unit",
+        "hashrate": 100,
+        "hashrate_unit": "TH/s",
+        "power_w": 3000,
+        "efficiency_j_per_th": "999999999.9999",
+    }
+    values = _row_values(entry)
+    assert values["efficiency_j_per_th"] is None
+
+
+def test_row_values_keeps_valid_ths_efficiency():
+    entry = {
+        "brand": "Bitmain",
+        "model_name": "Antminer S19",
+        "hashrate": 95,
+        "hashrate_unit": "TH/s",
+        "power_w": 3250,
+        "efficiency_j_per_th": "34.5",
+    }
+    values = _row_values(entry)
+    assert values["efficiency_j_per_th"] == Decimal("34.5")
+
+
+def test_seed_catalog_survives_bad_record(db, caplog):
+    """A single malformed (overflowing, non-TH/s) record must not raise; the
+    row imports with efficiency_j_per_th nulled out."""
+    import app.db.seed_catalog as seed_module
+
+    bad_entry = {
+        "brand": "Innosilicon",
+        "model_name": "A8C CryptoMaster",
+        "hashrate": 320,
+        "hashrate_unit": "KH/s",
+        "power_w": 1400,
+        "efficiency_j_per_th": "2187500000.0",
+    }
+    original = seed_module.load_catalog
+    seed_module.load_catalog = lambda: [bad_entry]
+    try:
+        counts = seed_catalog(db)  # must not raise
+    finally:
+        seed_module.load_catalog = original
+
+    assert counts["inserted"] == 1
+    row = (
+        db.query(models.DeviceModel)
+        .filter_by(brand="Innosilicon", model_name="A8C CryptoMaster")
+        .one()
+    )
+    assert row.efficiency_j_per_th is None
+
+
+def test_seeded_catalog_has_no_overflow_or_non_ths_efficiency(db):
+    """After a real seed, no row violates the efficiency invariant."""
+    seed_catalog(db)
+    rows = db.query(models.DeviceModel).all()
+    for row in rows:
+        if row.efficiency_j_per_th is None:
+            continue
+        assert (row.hashrate_unit or "TH/s").strip().lower() == "th/s"
+        assert abs(row.efficiency_j_per_th) < _EFFICIENCY_LIMIT
