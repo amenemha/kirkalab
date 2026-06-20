@@ -5,16 +5,24 @@ can be added without touching unrelated handlers.
 """
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import (
+  InlineKeyboardButton,
+  InlineKeyboardMarkup,
+  KeyboardButton,
+  ReplyKeyboardMarkup,
+)
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
-from bot.menu_items import MAIN_MENU_ITEMS, STUB_ACTIONS
+from bot.menu_items import MAIN_MENU_ITEMS, REPLY_MENU_ITEMS, STUB_ACTIONS
 
 __all__ = [
   "MAIN_MENU_ITEMS",
+  "REPLY_MENU_ITEMS",
   "STUB_ACTIONS",
   "PAGE_SIZE",
   "main_menu",
+  "main_reply_menu",
+  "profile_menu",
   "back_to_menu",
   "qr_confirm",
   "brand_list_kb",
@@ -41,6 +49,33 @@ def main_menu() -> InlineKeyboardMarkup:
   for action, label in MAIN_MENU_ITEMS:
     builder.button(text=label, callback_data=f"menu:{action}")
   builder.adjust(2)
+  return builder.as_markup()
+
+
+def main_reply_menu() -> ReplyKeyboardMarkup:
+  """Persistent reply keyboard, 4 buttons laid out 2×2 (CALC_SPEC §3.2).
+
+  Tariff/PRO and Help are intentionally absent — they live inside Profile."""
+  builder = ReplyKeyboardBuilder()
+  for _action, text in REPLY_MENU_ITEMS:
+    builder.add(KeyboardButton(text=text))
+  builder.adjust(2, 2)
+  return builder.as_markup(resize_keyboard=True, is_persistent=True)
+
+
+def profile_menu(*, is_pro: bool) -> InlineKeyboardMarkup:
+  """Inline menu inside Profile: the home for the rare/personal stuff.
+
+  Tariff/PRO and Help live here (not in the main menu). A non-PRO user is
+  offered the optional email/password link to an existing PRO/web account."""
+  builder = InlineKeyboardBuilder()
+  if not is_pro:
+    builder.button(
+      text="🔗 Связать PRO-аккаунт", callback_data="profile:link"
+    )
+  builder.button(text="💎 Тариф", callback_data="profile:plan")
+  builder.button(text="ℹ️ Помощь", callback_data="profile:help")
+  builder.adjust(1)
   return builder.as_markup()
 
 

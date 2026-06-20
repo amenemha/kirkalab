@@ -60,6 +60,9 @@ def test_calc_returns_result_and_funnel(client):
     assert f["stage"] == "local_full"
     assert f["calc_index"] == 1
     assert f["intro_left"] == 5
+    # FunnelMeta now exposes the configured limits so the bot can render "из N".
+    assert f["intro_calcs"] == 5
+    assert f["daily_limit"] == 3
 
 
 def test_requires_specs(client):
@@ -208,3 +211,63 @@ def test_unknown_device_model_404(client):
         headers=_headers(),
     )
     assert resp.status_code == 404, resp.text
+
+
+# --------------------------------------------------------------------------- #
+# /internal/profile — Telegram-id auto-auth cabinet.
+# --------------------------------------------------------------------------- #
+def test_profile_requires_bot_secret(client):
+    resp = client.get(
+        "/api/v1/internal/profile", params={"telegram_user_id": TG_ID}
+    )
+    assert resp.status_code == 403
+
+
+def test_profile_auto_creates_free_cabinet(client):
+    resp = client.get(
+        "/api/v1/internal/profile",
+        params={"telegram_user_id": 770001},
+        headers=_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert isinstance(body["id"], int)
+    assert body["is_pro"] is False
+    # A freshly auto-bound telegram cabinet is not linked to a web account yet.
+    assert body["is_linked"] is False
+    assert body["handle"]
+
+
+def test_profile_is_stable_for_same_telegram_id(client):
+    first = client.get(
+        "/api/v1/internal/profile",
+        params={"telegram_user_id": 770002},
+        headers=_headers(),
+    ).json()
+    second = client.get(
+        "/api/v1/internal/profile",
+        params={"telegram_user_id": 770002},
+        headers=_headers(),
+    ).json()
+    assert first["id"] == second["id"]
+
+
+def test_profile_reports_pro_and_linked(client, db):
+    user = models.User(
+        email="real-user@kirkalab.ru",
+        handle="real-user",
+        hashed_password="x",
+        telegram_user_id=770003,
+        is_pro=True,
+    )
+    db.add(user)
+    db.commit()
+
+    body = client.get(
+        "/api/v1/internal/profile",
+        params={"telegram_user_id": 770003},
+        headers=_headers(),
+    ).json()
+    assert body["is_pro"] is True
+    # Email differs from the tg_<id>@telegram.bot placeholder -> linked.
+    assert body["is_linked"] is True

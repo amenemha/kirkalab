@@ -53,6 +53,7 @@ from bot.keyboards import (
     calc_result_kb,
     calc_start_kb,
 )
+from bot.live_screen import edit_live_screen, safe_delete, set_screen_id
 
 router = Router()
 
@@ -86,6 +87,7 @@ START_TEXT = (
 @router.callback_query(F.data == "calc:restart")
 async def cb_start(callback: CallbackQuery, state: FSMContext) -> None:
   await state.clear()
+  await set_screen_id(state, callback.message.message_id)
   await callback.message.edit_text(START_TEXT, reply_markup=calc_start_kb())
   await callback.answer()
 
@@ -159,7 +161,8 @@ async def cb_model_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     hashrate_ths=None,
     power_w=None,
   )
-  await _ask_quantity(callback.message, title)
+  await set_screen_id(state, callback.message.message_id)
+  await _ask_quantity(callback.message, state, title)
   await callback.answer()
 
 
@@ -180,31 +183,50 @@ async def cb_manual(callback: CallbackQuery, state: FSMContext) -> None:
 @router.message(CalcStates.manual_hashrate, F.text)
 async def manual_hashrate(message: Message, state: FSMContext) -> None:
   value = _parse_decimal(message.text)
+  await safe_delete(message)
   if value is None or value <= 0:
-    await message.answer("Введите положительное число, например 110.")
+    await edit_live_screen(
+      message,
+      state,
+      "✍️ <b>Ручной ввод</b>\n\n"
+      "Введите положительное число, например <code>110</code>:",
+    )
     return
   await state.update_data(hashrate_ths=str(value))
   await state.set_state(CalcStates.manual_power)
-  await message.answer("Теперь введите потребление в Вт (например, 3250):")
+  await edit_live_screen(
+    message,
+    state,
+    "✍️ <b>Ручной ввод</b>\n\n"
+    "Теперь введите потребление в Вт (например, <code>3250</code>):",
+  )
 
 
 @router.message(CalcStates.manual_power, F.text)
 async def manual_power(message: Message, state: FSMContext) -> None:
   value = _parse_decimal(message.text)
+  await safe_delete(message)
   if value is None or value < 1:
-    await message.answer("Введите потребление в Вт, например 3250.")
+    await edit_live_screen(
+      message,
+      state,
+      "✍️ <b>Ручной ввод</b>\n\n"
+      "Введите потребление в Вт, например <code>3250</code>:",
+    )
     return
   await state.update_data(power_w=int(value))
   await state.set_state(None)
   data = await state.get_data()
-  await _ask_quantity(message, data.get("title", "Своё оборудование"))
+  await _ask_quantity(message, state, data.get("title", "Своё оборудование"))
 
 
 # --------------------------------------------------------------------------- #
 # Quantity.
 # --------------------------------------------------------------------------- #
-async def _ask_quantity(message: Message, title: str) -> None:
-  await message.answer(
+async def _ask_quantity(message: Message, state: FSMContext, title: str) -> None:
+  await edit_live_screen(
+    message,
+    state,
     f"🧮 <b>{title}</b>\n\nСколько устройств? (1–5)",
     reply_markup=calc_quantity_kb(),
   )
@@ -275,8 +297,13 @@ async def cb_price_new(callback: CallbackQuery, state: FSMContext) -> None:
 @router.message(CalcStates.price, F.text)
 async def price_entered(message: Message, state: FSMContext) -> None:
   value = _parse_decimal(message.text)
+  await safe_delete(message)
   if value is None or value < 0:
-    await message.answer("Введите неотрицательное число, например 0.05.")
+    await edit_live_screen(
+      message,
+      state,
+      "💡 Введите неотрицательное число, например <code>0.05</code>:",
+    )
     return
   await state.update_data(power_price=str(value))
   await state.set_state(CalcStates.save_price)
@@ -288,7 +315,12 @@ async def price_entered(message: Message, state: FSMContext) -> None:
       ]
     ]
   )
-  await message.answer("Сохранить эту цену для будущих расчётов?", reply_markup=kb)
+  await edit_live_screen(
+    message,
+    state,
+    "Сохранить эту цену для будущих расчётов?",
+    reply_markup=kb,
+  )
 
 
 @router.callback_query(CalcStates.save_price, F.data.startswith("calc:save:"))

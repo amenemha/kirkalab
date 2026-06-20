@@ -47,10 +47,10 @@ async def qr_deep_link(
   """
   session_id = parse_qr_payload(command.args)
   if session_id is None:
-    # Not a QR deep link — defer to the regular menu handler.
-    from bot.handlers.menu import show_welcome
+    # Not a QR deep link — defer to the regular menu greeting.
+    from bot.handlers.menu import cmd_start
 
-    await show_welcome(message)
+    await cmd_start(message, state)
     return
 
   await state.set_state(QrStates.confirm)

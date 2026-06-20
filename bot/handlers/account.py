@@ -1,16 +1,23 @@
-"""Account command handlers for the Kirkalab bot.
+"""Profile + optional PRO account linking for the Kirkalab bot.
 
-Classic command-based flows backed by the Kirkalab API:
+Auth model (changed per customer 20.06.2026):
+
+* FREE users are authenticated **automatically by Telegram id** — there is no
+  email login or registration to use the bot. The base cabinet is resolved
+  server-side (``/internal/profile``) the first time it is needed.
+* Email/password is an **optional** way to link this Telegram account to an
+  existing PRO/web account on kirkalab.ru. It lives *inside Profile*, not as a
+  gate in front of calculations or the catalog.
+
+Commands:
   /health   - check API availability
-  /register - guided registration (email -> handle -> password)
-  /login    - guided login (email -> password), stores a JWT in memory
-  /me       - show the authenticated user's profile
-  /logout   - drop the in-memory token
-  /cancel   - abort the current flow
+  /me       - show the profile
+  /cancel   - abort the current flow (e.g. the PRO link)
+  /logout   - drop the in-memory PRO-link token
 
-The greeting and inline navigation live in ``menu``; the QR deep-link
-login lives in ``qr``. Tokens are kept only in process memory (never
-persisted), keyed by the Telegram user id and shared via ``token_store``.
+The PRO-link flow is a clean-chat FSM: prompts edit the single live screen and
+the user's email/password messages are deleted right after they are read (so
+secrets never linger). Tokens are kept only in process memory.
 """
 from __future__ import annotations
 
@@ -18,39 +25,57 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from bot.api_client import ApiError, KirkalabApiClient
+from bot.config import get_settings
 from bot.handlers.tokens import token_store
+from bot.keyboards import profile_menu
+from bot.live_screen import edit_live_screen, safe_delete, set_screen_id
+from bot.validation import EMAIL_HINT, looks_like_email
 
 router = Router()
 
 # Shared in-memory JWT storage: {telegram_user_id: access_token}.
 _tokens = token_store
 
+HELP_TEXT = (
+  "ℹ️ <b>Помощь</b>\n\n"
+  "Kirkalab помогает считать доходность ASIC, хранить отчёты и управлять "
+  "тарифом.\n\n"
+  "<b>Меню (кнопки внизу):</b>\n"
+  "🧮 Калькулятор — расчёт доходности\n"
+  "📋 Каталог ASIC — характеристики оборудования\n"
+  "📊 Мои отчёты — сохранённые расчёты\n"
+  "👤 Профиль — аккаунт, тариф и помощь\n\n"
+  "Бесплатный доступ включается автоматически — ничего настраивать не нужно."
+)
 
-class RegisterStates(StatesGroup):
+
+class LinkStates(StatesGroup):
+  """Optional PRO-account linking by email + password."""
+
   email = State()
-  handle = State()
   password = State()
 
 
-class LoginStates(StatesGroup):
-  email = State()
-  password = State()
+def _client(event: Message | CallbackQuery) -> KirkalabApiClient:
+  return event.bot.kirkalab_client
 
 
-def _client(message: Message) -> KirkalabApiClient:
-  return message.bot.kirkalab_client
+def _secret() -> str | None:
+  return get_settings().bot_internal_secret
 
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
+  await safe_delete(message)
   if await state.get_state() is None:
-    await message.answer("Отменять нечего.")
     return
-  await state.clear()
-  await message.answer("Действие отменено.")
+  await state.set_state(None)
+  await edit_live_screen(
+    message, state, "Действие отменено. Откройте меню кнопками внизу."
+  )
 
 
 @router.message(Command("health"))
@@ -64,104 +89,143 @@ async def cmd_health(message: Message) -> None:
   await message.answer(f"✅ API работает (статус: {status}).")
 
 
-@router.message(Command("register"))
-async def cmd_register(message: Message, state: FSMContext) -> None:
-  await state.set_state(RegisterStates.email)
-  await message.answer("Регистрация. Отправьте ваш email (или /cancel):")
+@router.message(Command("me"))
+async def cmd_me(message: Message, state: FSMContext) -> None:
+  await send_profile(message, message.from_user.id, state)
 
 
-@router.message(RegisterStates.email, F.text)
-async def reg_email(message: Message, state: FSMContext) -> None:
-  await state.update_data(email=message.text.strip())
-  await state.set_state(RegisterStates.handle)
-  await message.answer("Теперь отправьте логин (3–50 символов):")
+async def send_profile(
+  message: Message, user_id: int, state: FSMContext
+) -> None:
+  """Render the Telegram-authenticated cabinet.
 
-
-@router.message(RegisterStates.handle, F.text)
-async def reg_handle(message: Message, state: FSMContext) -> None:
-  await state.update_data(handle=message.text.strip())
-  await state.set_state(RegisterStates.password)
-  await message.answer("Теперь отправьте пароль (минимум 8 символов):")
-
-
-@router.message(RegisterStates.password, F.text)
-async def reg_password(message: Message, state: FSMContext) -> None:
-  data = await state.update_data(password=message.text)
-  await state.clear()
+  FREE users are always "authorized" (auto-bound by telegram id), so this never
+  shows a "not authorized" wall. Tariff/PRO and Help are offered as inline
+  buttons here, keeping them out of the main menu."""
+  secret = _secret()
+  if not secret:
+    await edit_live_screen(
+      message,
+      state,
+      "⚠️ Бот не настроен. Обратитесь в поддержку.",
+    )
+    return
   try:
-    user = await _client(message).register(
-      email=data["email"], handle=data["handle"], password=data["password"]
+    profile = await _client(message).internal_profile(
+      telegram_user_id=user_id, bot_secret=secret
     )
   except ApiError as exc:
-    await message.answer(f"❌ Регистрация не удалась: {exc.message}")
+    await edit_live_screen(
+      message, state, f"❌ Не удалось открыть профиль: {exc.message}"
+    )
     return
-  await message.answer(
-    f"✅ Аккаунт создан: {user.get('email')} (id {user.get('id')}).\n"
-    "Войдите командой /login."
+
+  is_pro = bool(profile.get("is_pro"))
+  is_linked = bool(profile.get("is_linked"))
+  plan = "💎 PRO" if is_pro else "🆓 Free"
+  link_line = (
+    "🔗 Аккаунт связан с PRO/веб-кабинетом"
+    if is_linked
+    else "🔗 PRO-аккаунт не привязан"
+  )
+  text = (
+    "👤 <b>Ваш профиль</b>\n\n"
+    f"🆔 Кабинет: #{profile.get('id')}\n"
+    f"🏷 Тариф: {plan}\n"
+    f"{link_line}\n\n"
+    "Доступ к расчётам и каталогу включён автоматически."
+  )
+  await edit_live_screen(message, state, text, reply_markup=profile_menu(is_pro=is_pro))
+
+
+@router.callback_query(F.data == "profile:help")
+async def cb_profile_help(callback: CallbackQuery, state: FSMContext) -> None:
+  await edit_live_screen(callback.message, state, HELP_TEXT)
+  await callback.answer()
+
+
+@router.callback_query(F.data == "profile:plan")
+async def cb_profile_plan(callback: CallbackQuery, state: FSMContext) -> None:
+  await edit_live_screen(
+    callback.message,
+    state,
+    "💎 <b>PRO — скоро</b>\n\n"
+    "Безлимитные расчёты, все валюты (₽/$/¥), окупаемость и ROI без блюра, "
+    "сравнение прошивок и сохранение сборок.\n\n"
+    "Подписка скоро будет доступна — спасибо, что вы с нами! 🙌",
+  )
+  await callback.answer()
+
+
+# --------------------------------------------------------------------------- #
+# Optional PRO-account link (email + password). Clean-chat FSM.
+# --------------------------------------------------------------------------- #
+@router.callback_query(F.data == "profile:link")
+async def cb_profile_link(callback: CallbackQuery, state: FSMContext) -> None:
+  await set_screen_id(state, callback.message.message_id)
+  await state.set_state(LinkStates.email)
+  await edit_live_screen(
+    callback.message,
+    state,
+    "🔗 <b>Связать PRO-аккаунт</b>\n\n"
+    "Введите email вашего аккаунта на kirkalab.ru (или /cancel):",
+  )
+  await callback.answer()
+
+
+@router.message(LinkStates.email, F.text)
+async def link_email(message: Message, state: FSMContext) -> None:
+  email = (message.text or "").strip()
+  await safe_delete(message)
+  if not looks_like_email(email):
+    await edit_live_screen(
+      message,
+      state,
+      f"🔗 <b>Связать PRO-аккаунт</b>\n\n{EMAIL_HINT}\n\n"
+      "Введите email ещё раз (или /cancel):",
+    )
+    return
+  await state.update_data(link_email=email)
+  await state.set_state(LinkStates.password)
+  await edit_live_screen(
+    message,
+    state,
+    "🔗 <b>Связать PRO-аккаунт</b>\n\nТеперь введите пароль (или /cancel):",
   )
 
 
-@router.message(Command("login"))
-async def cmd_login(message: Message, state: FSMContext) -> None:
-  await state.set_state(LoginStates.email)
-  await message.answer("Вход. Отправьте ваш email (или /cancel):")
-
-
-@router.message(LoginStates.email, F.text)
-async def login_email(message: Message, state: FSMContext) -> None:
-  await state.update_data(email=message.text.strip())
-  await state.set_state(LoginStates.password)
-  await message.answer("Теперь отправьте пароль:")
-
-
-@router.message(LoginStates.password, F.text)
-async def login_password(message: Message, state: FSMContext) -> None:
-  data = await state.update_data(password=message.text)
-  await state.clear()
+@router.message(LinkStates.password, F.text)
+async def link_password(message: Message, state: FSMContext) -> None:
+  password = message.text or ""
+  # Delete the password message immediately — never leave it in the chat.
+  await safe_delete(message)
+  data = await state.get_data()
+  email = data.get("link_email", "")
+  await state.set_state(None)
   try:
-    token = await _client(message).login(
-      email=data["email"], password=data["password"]
-    )
+    token = await _client(message).login(email=email, password=password)
   except ApiError as exc:
-    await message.answer(f"❌ Вход не удался: {exc.message}")
+    await edit_live_screen(
+      message,
+      state,
+      "🔗 <b>Связать PRO-аккаунт</b>\n\n"
+      f"❌ Не удалось войти: {exc.message}\n\n"
+      "Проверьте email и пароль и попробуйте снова через Профиль.",
+    )
     return
   _tokens[message.from_user.id] = token
-  await message.answer("✅ Вы вошли. Профиль — командой /me или через меню.")
-
-
-@router.message(Command("me"))
-async def cmd_me(message: Message) -> None:
-  await send_profile(message, message.from_user.id)
-
-
-async def send_profile(message: Message, user_id: int) -> None:
-  """Render the authenticated user's profile, or a hint to sign in.
-
-  Shared between the /me command and the inline-menu "Профиль" button.
-  """
-  token = _tokens.get(user_id)
-  if token is None:
-    await message.answer(
-      "Вы не авторизованы. Войдите командой /login."
-    )
-    return
-  try:
-    user = await _client(message).me(token)
-  except ApiError as exc:
-    await message.answer(f"❌ Не удалось получить профиль: {exc.message}")
-    return
-  await message.answer(
-    "👤 <b>Ваш профиль</b>\n\n"
-    f"🆔 ID: {user.get('id')}\n"
-    f"✉️ Email: {user.get('email')}\n"
-    f"🔖 Логин: {user.get('handle')}\n"
-    f"⭐ Админ: {'да' if user.get('is_admin') else 'нет'}"
+  await edit_live_screen(
+    message,
+    state,
+    "✅ <b>Аккаунт связан</b>\n\n"
+    "Ваш Telegram привязан к аккаунту kirkalab.ru. "
+    "PRO-возможности подключатся автоматически.",
   )
 
 
 @router.message(Command("logout"))
 async def cmd_logout(message: Message) -> None:
   if _tokens.pop(message.from_user.id, None) is None:
-    await message.answer("Вы не были авторизованы.")
+    await message.answer("PRO-аккаунт не был привязан.")
     return
-  await message.answer("👋 Вы вышли из аккаунта.")
+  await message.answer("👋 Привязка PRO-аккаунта снята.")
