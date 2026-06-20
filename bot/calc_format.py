@@ -82,16 +82,21 @@ def _roi(value: Any) -> str | None:
 
 
 def _progress_line(funnel: dict) -> str | None:
-    """Explicit progress: 'Расчёт N из 5' or 'Сегодня осталось N из 3'."""
+    """Explicit progress: 'Расчёт N из 5' or 'Сегодня осталось N из 3'.
+
+    The limit numbers come from the funnel meta (``intro_calcs``/``daily_limit``)
+    so they track the server-side config, not a hardcoded value here."""
     if funnel.get("is_pro"):
         return None
+    intro_calcs = funnel.get("intro_calcs", 5)
+    daily_limit = funnel.get("daily_limit", 3)
     if not funnel.get("intro_spent"):
         idx = funnel.get("calc_index")
         if idx is not None:
-            return f"🧮 Ознакомительный расчёт {idx} из 5"
+            return f"🧮 Ознакомительный расчёт {idx} из {intro_calcs}"
     daily_left = funnel.get("daily_left")
     if daily_left is not None:
-        return f"🧮 Сегодня осталось расчётов: {daily_left} из 3"
+        return f"🧮 Сегодня осталось расчётов: {daily_left} из {daily_limit}"
     return None
 
 

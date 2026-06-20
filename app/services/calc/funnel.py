@@ -23,8 +23,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+# Spec defaults (CALC_SPEC §3). These are the fallbacks; the API passes the
+# configured values from ``Settings`` so the numbers are tunable without code
+# changes. Tests call ``evaluate`` without overrides and rely on these.
 INTRO_CALCS = 5
 DAILY_LIMIT = 3
+
+# Currency-blur boundary inside the intro pool (CALC_SPEC §3.1): the first
+# ``LOCAL_FULL_CALCS`` intro calcs show the local currency in full, the rest of
+# the intro pool blurs it. This is a presentation rule, independent of the
+# limit counts above.
+LOCAL_FULL_CALCS = 3
 
 
 class FunnelStage(str, Enum):
@@ -64,6 +73,10 @@ class FunnelState:
     intro_spent: bool
     # Soft, warm PRO invite to surface (None when nothing to nudge).
     pro_hint: str | None
+    # The limits in force for this evaluation, echoed so the bot can render the
+    # progress line ("из N") from the configured numbers rather than guessing.
+    intro_calcs: int
+    daily_limit: int
 
 
 _HINT_PAYBACK = "🔒 Окупаемость и ROI в локальной валюте — в PRO"
@@ -80,12 +93,17 @@ def evaluate(
     is_pro: bool,
     total_runs: int,
     runs_today: int,
+    intro_calcs: int = INTRO_CALCS,
+    daily_limit: int = DAILY_LIMIT,
 ) -> FunnelState:
     """Compute the funnel state for the *next* calculation.
 
     ``total_runs`` / ``runs_today`` are the counts of calculations the user has
     already performed (all-time and within the current UTC day). This call
     describes the calculation that is about to run, not one that already did.
+
+    ``intro_calcs`` / ``daily_limit`` default to the spec values but are passed
+    from ``Settings`` by the API so the limits stay configurable.
     """
     if is_pro:
         return FunnelState(
@@ -97,18 +115,20 @@ def evaluate(
             daily_left=None,
             intro_spent=True,
             pro_hint=None,
+            intro_calcs=intro_calcs,
+            daily_limit=daily_limit,
         )
 
-    intro_spent = total_runs >= INTRO_CALCS
+    intro_spent = total_runs >= intro_calcs
 
     if not intro_spent:
         # Inside the introductory pool.
         calc_index = total_runs + 1  # 1-based position of this calc
-        intro_left = INTRO_CALCS - total_runs  # before this one runs
-        if calc_index <= 3:
+        intro_left = intro_calcs - total_runs  # before this one runs
+        if calc_index <= LOCAL_FULL_CALCS:
             stage = FunnelStage.LOCAL_FULL
             pro_hint = _HINT_PAYBACK
-        else:  # 4 or 5
+        else:  # remaining intro calcs: local currency blurred
             stage = FunnelStage.LOCAL_BLURRED
             pro_hint = _HINT_BLUR
         return FunnelState(
@@ -120,6 +140,8 @@ def evaluate(
             daily_left=None,
             intro_spent=False,
             pro_hint=pro_hint,
+            intro_calcs=intro_calcs,
+            daily_limit=daily_limit,
         )
 
     # Intro spent: daily-quota regime, always USDT-only.
@@ -127,14 +149,14 @@ def evaluate(
     # ``runs_today`` counts *all* runs made today, which can include some of the
     # introductory runs (they happened earlier the same day). The daily cap only
     # governs post-intro runs, so we subtract the intro runs that fall on today.
-    # Intro runs are the user's first INTRO_CALCS runs chronologically; the ones
-    # that are "today" are those not before today's window:
+    # Intro runs are the user's first ``intro_calcs`` runs chronologically; the
+    # ones that are "today" are those not before today's window:
     runs_before_today = total_runs - runs_today
     intro_runs_today = min(
-        runs_today, max(INTRO_CALCS - runs_before_today, 0)
+        runs_today, max(intro_calcs - runs_before_today, 0)
     )
     post_intro_today = runs_today - intro_runs_today
-    daily_left = DAILY_LIMIT - post_intro_today
+    daily_left = daily_limit - post_intro_today
     allowed = daily_left > 0
     hint = _HINT_USDT_ONLY
     if allowed and daily_left == 1:
@@ -143,9 +165,11 @@ def evaluate(
         is_pro=False,
         allowed=allowed,
         stage=FunnelStage.USDT_ONLY,
-        calc_index=INTRO_CALCS + 1,
+        calc_index=intro_calcs + 1,
         intro_left=0,
         daily_left=max(daily_left, 0),
         intro_spent=True,
         pro_hint=hint,
+        intro_calcs=intro_calcs,
+        daily_limit=daily_limit,
     )

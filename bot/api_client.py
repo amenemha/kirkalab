@@ -110,6 +110,22 @@ class KirkalabApiClient:
       raise ApiError(self._detail(response, "Could not load firmware"), response.status_code)
     return response.json()
 
+  async def internal_profile(
+    self, telegram_user_id: int, bot_secret: str
+  ) -> dict:
+    """Base cabinet for a Telegram user (auto-created on first access).
+
+    Returns the InternalProfile payload ({id, handle, is_pro, is_linked,
+    created_at}). FREE users are authenticated automatically by telegram id."""
+    headers = {"X-Bot-Secret": bot_secret}
+    params = {"telegram_user_id": telegram_user_id}
+    response = await self._request(
+      "GET", "/api/v1/internal/profile", params=params, headers=headers
+    )
+    if response.status_code != 200:
+      raise ApiError(self._detail(response, "Could not load profile"), response.status_code)
+    return response.json()
+
   async def calc_status(
     self, telegram_user_id: int, bot_secret: str
   ) -> dict:

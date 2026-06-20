@@ -120,6 +120,10 @@ class FunnelMeta(BaseModel):
     daily_left: int | None = None
     intro_spent: bool = False
     pro_hint: str | None = None
+    # The configured limits in force, so the bot's progress line reads "из N"
+    # from these rather than hardcoding 5/3.
+    intro_calcs: int = 5
+    daily_limit: int = 3
 
 
 class InternalCalcRequest(BaseModel):
@@ -181,6 +185,21 @@ class InternalCalcStatus(BaseModel):
     funnel: FunnelMeta
     default_power_price: Decimal | None = None
     currency: str = "USDT"
+
+
+class InternalProfile(BaseModel):
+    """Base cabinet for a Telegram user, resolved by telegram id.
+
+    FREE users are authenticated automatically by their Telegram id (no email
+    login required), so the bot reads the cabinet from here. ``is_linked`` is
+    True once the account is tied to a real email (PRO/web-app link), as opposed
+    to the auto-created Telegram placeholder address."""
+
+    id: int
+    handle: str
+    is_pro: bool
+    is_linked: bool
+    created_at: str
 
 
 class PowerPriceSaveRequest(BaseModel):

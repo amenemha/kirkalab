@@ -313,6 +313,37 @@ class CalculationRun(Base):
     )
 
 
+class ManualImportFile(Base):
+    """An uploaded Excel/CSV file queued for manual earnings import (Queue 4).
+
+    Neutral groundwork: the row records the upload and its parse status; the
+    parsing/normalization logic (into ``pool_earnings`` with source
+    ``'manual_xlsx'``) is a later queue. Only schema + FK here, no logic. No
+    NUMERIC columns, so there is nothing for PostgreSQL precision to enforce."""
+
+    __tablename__ = "manual_import_files"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    original_filename: Mapped[str | None] = mapped_column(String, nullable=True)
+    # pending | parsed | failed
+    status: Mapped[str] = mapped_column(
+        String, default="pending", server_default="pending", nullable=False
+    )
+    rows_parsed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_log: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class MarketSnapshot(Base):
     """Point-in-time snapshot of external market data used by the calc core.
 

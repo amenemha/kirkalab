@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     market_http_retries: int = 2
     market_default_block_reward_btc: str = "3.125"
 
+    # FREE-tier calculation limits (see CALC_SPEC §3). Kept in config so the
+    # numbers are tunable without code changes; the funnel logic and the bot's
+    # progress line both read them. Defaults match the spec: 5 intro calcs on
+    # day one, then 3/day (reset 00:00 UTC).
+    free_intro_calcs: int = 5
+    free_calcs_per_day: int = 3
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -120,6 +120,43 @@ def test_pro_has_no_locks_or_blur():
     assert "▒▒▒" not in text
 
 
+def test_progress_line_honors_configured_intro_calcs():
+    text = format_result_screen(
+        result=_result(),
+        funnel=_funnel("local_full", calc_index=2, intro_calcs=7),
+        title="X",
+        quantity=1,
+    )
+    assert "Ознакомительный расчёт 2 из 7" in text
+
+
+def test_progress_line_honors_configured_daily_limit():
+    text = format_result_screen(
+        result=_result(),
+        funnel=_funnel(
+            "usdt_only",
+            intro_spent=True,
+            calc_index=8,
+            daily_left=4,
+            daily_limit=10,
+            pro_hint="invite",
+        ),
+        title="X",
+        quantity=1,
+    )
+    assert "Сегодня осталось расчётов: 4 из 10" in text
+
+
+def test_progress_line_falls_back_when_limits_absent():
+    funnel = _funnel("local_full", calc_index=1)
+    funnel.pop("intro_calcs", None)
+    funnel.pop("daily_limit", None)
+    text = format_result_screen(
+        result=_result(), funnel=funnel, title="X", quantity=1
+    )
+    assert "Ознакомительный расчёт 1 из 5" in text
+
+
 def test_limit_reached_is_warm():
     text = format_limit_reached({"pro_hint": "приходите завтра"})
     assert "Лимит" in text

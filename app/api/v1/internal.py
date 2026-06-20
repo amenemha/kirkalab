@@ -16,6 +16,7 @@ from app.schemas.calc import (
     InternalCalcRequest,
     InternalCalcResponse,
     InternalCalcStatus,
+    InternalProfile,
     PowerPriceSaveRequest,
 )
 from app.services.calc import funnel
@@ -48,6 +49,21 @@ def _funnel_meta(state: funnel.FunnelState) -> FunnelMeta:
         daily_left=state.daily_left,
         intro_spent=state.intro_spent,
         pro_hint=state.pro_hint,
+        intro_calcs=state.intro_calcs,
+        daily_limit=state.daily_limit,
+    )
+
+
+def _evaluate_funnel(
+    *, is_pro: bool, total_runs: int, runs_today: int
+) -> funnel.FunnelState:
+    """Evaluate the FREE funnel with the configured (not hardcoded) limits."""
+    return funnel.evaluate(
+        is_pro=is_pro,
+        total_runs=total_runs,
+        runs_today=runs_today,
+        intro_calcs=settings.free_intro_calcs,
+        daily_limit=settings.free_calcs_per_day,
     )
 
 
@@ -89,7 +105,7 @@ def calc_status(
         db, telegram_user_id=telegram_user_id
     )
     settings_row = crud_users.get_or_create_settings(db, user_id=user.id)
-    state = funnel.evaluate(
+    state = _evaluate_funnel(
         is_pro=bool(user.is_pro),
         total_runs=crud_calc.count_runs(db, user_id=user.id),
         runs_today=crud_calc.count_runs_today(db, user_id=user.id),
@@ -98,6 +114,31 @@ def calc_status(
         funnel=_funnel_meta(state),
         default_power_price=settings_row.default_power_price,
         currency=settings_row.currency or "USDT",
+    )
+
+
+@router.get("/profile", response_model=InternalProfile)
+def internal_profile(
+    telegram_user_id: int,
+    db: Session = Depends(get_db),
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+) -> InternalProfile:
+    """Base cabinet for a Telegram user, creating it on first access.
+
+    FREE auth is automatic: the user is found/created by telegram id, with no
+    email login. ``is_linked`` reports whether the cabinet has been tied to a
+    real email account (PRO/web-app), as opposed to the auto placeholder."""
+    _require_bot_secret(x_bot_secret)
+    user = crud_users.get_or_create_telegram_user(
+        db, telegram_user_id=telegram_user_id
+    )
+    placeholder_email = f"tg_{telegram_user_id}@telegram.bot"
+    return InternalProfile(
+        id=user.id,
+        handle=user.handle,
+        is_pro=bool(user.is_pro),
+        is_linked=user.email != placeholder_email,
+        created_at=user.created_at.isoformat() if user.created_at else "",
     )
 
 
@@ -119,7 +160,7 @@ def internal_calc(
         db, telegram_user_id=req.telegram_user_id
     )
 
-    state = funnel.evaluate(
+    state = _evaluate_funnel(
         is_pro=bool(user.is_pro),
         total_runs=crud_calc.count_runs(db, user_id=user.id),
         runs_today=crud_calc.count_runs_today(db, user_id=user.id),
