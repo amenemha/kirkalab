@@ -179,6 +179,10 @@ class InternalCalcResponse(BaseModel):
     result: CalcResponse | None = None
     has_firmware: bool = False
     device_model_id: int | None = None
+    # Id of the persisted ``calculation_runs`` row, so the bot can offer the
+    # "Экспорт в Excel" action on the just-computed result screen (Queue 2.2).
+    # None when no run was recorded (e.g. the FREE user was blocked).
+    run_id: int | None = None
 
 
 class InternalCalcStatus(BaseModel):

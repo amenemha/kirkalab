@@ -188,6 +188,43 @@ class KirkalabApiClient:
       raise ApiError(self._detail(response, "Could not load calculation"), response.status_code)
     return response.json()
 
+  async def export_calc_xlsx(
+    self, telegram_user_id: int, run_id: int, bot_secret: str
+  ) -> tuple[bytes, str]:
+    """Download a saved calculation as an .xlsx document (PRO-only, Queue 2.2).
+
+    Returns ``(content, filename)`` on success. Raises ApiError with
+    ``status_code`` set so the caller can branch:
+      * 403 — FREE user, show the soft PRO upsell;
+      * 404 — run is missing/expired or not owned by this user.
+    The filename is taken from the response's Content-Disposition, falling back
+    to a stable ``kirkalab_calc_<id>.xlsx`` if the header is absent."""
+    headers = {"X-Bot-Secret": bot_secret}
+    params = {"telegram_user_id": telegram_user_id}
+    response = await self._request(
+      "GET",
+      f"/api/v1/internal/calc/{run_id}/export.xlsx",
+      params=params,
+      headers=headers,
+    )
+    if response.status_code != 200:
+      raise ApiError(
+        self._detail(response, "Could not export calculation"),
+        response.status_code,
+      )
+    return response.content, self._filename(response, run_id)
+
+  @staticmethod
+  def _filename(response: httpx.Response, run_id: int) -> str:
+    disposition = response.headers.get("content-disposition", "")
+    for part in disposition.split(";"):
+      part = part.strip()
+      if part.startswith("filename=") and "filename*=" not in part:
+        name = part.split("=", 1)[1].strip().strip('"')
+        if name:
+          return name
+    return f"kirkalab_calc_{run_id}.xlsx"
+
   async def save_power_price(
     self, telegram_user_id: int, power_price: str, bot_secret: str, currency: str = "USDT"
   ) -> dict:
