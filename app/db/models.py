@@ -474,6 +474,90 @@ class MarketSnapshot(Base):
     )
 
 
+class Currency(Base):
+    """A currency the calc result can be presented in (Queue 3 currency layer).
+
+    ``USDT`` is the anchor/base every fx rate is expressed against (USDT→quote).
+    ``decimals`` is the display scale used when rounding a converted amount, so
+    fiat shows 2 places and crypto/anchor shows its native precision. The set is
+    seeded from a fixed catalog (see ``app.db.seed_currencies``) and is the single
+    source of truth for the symbol/decimals the bot renders.
+    """
+
+    __tablename__ = "currencies"
+
+    # ISO-4217 alpha code, plus the pseudo-code USDT for the crypto anchor.
+    code: Mapped[str] = mapped_column(String(8), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(8), nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    # How many fractional digits to round/display for this currency.
+    decimals: Mapped[int] = mapped_column(
+        Integer, default=2, server_default="2", nullable=False
+    )
+    is_fiat: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class FxRate(Base):
+    """One observed FX rate ``1 base_currency = rate quote_currency``.
+
+    Rows are append-only: each fetch inserts a fresh snapshot, and the
+    conversion service reads the most recent row per (base, quote) pair. Keeping
+    the history (rather than upserting one "current" row) doubles as the durable
+    fallback cache — if the upstream source is down the last persisted rate is
+    still usable (graceful degradation), and it gives an audit trail of how rates
+    moved over time.
+
+    ``rate`` is ``NUMERIC(18, 8)``: high enough precision for both strong fiats
+    (USDT→EUR ≈ 0.92) and weak ones (USDT→UAH ≈ 41). USDT is always the base in
+    seeded fetches; fiat↔fiat is derived by the service via the USDT cross-rate,
+    not stored, so there is no precision blow-up to overflow PostgreSQL NUMERIC
+    (the SQLite test DB does not enforce precision — bounds correct by
+    construction)."""
+
+    __tablename__ = "fx_rates"
+    __table_args__ = (
+        UniqueConstraint(
+            "base_currency",
+            "quote_currency",
+            "fetched_at",
+            name="uq_fx_rates_base_quote_fetched",
+        ),
+        Index(
+            "ix_fx_rates_pair_fetched",
+            "base_currency",
+            "quote_currency",
+            "fetched_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    base_currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    quote_currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    rate: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    # coingecko | manual | ecb
+    source: Mapped[str] = mapped_column(
+        String(32), default="coingecko", server_default="coingecko", nullable=False
+    )
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+
 class RevokedToken(Base):
     """Blacklist of refresh-token ``jti`` values that may no longer be used.
 
