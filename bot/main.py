@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from bot.session import RetrySession
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -64,6 +65,7 @@ async def main() -> None:
 
   bot = Bot(
     token=settings.bot_token,
+    session=RetrySession(),
     default=DefaultBotProperties(parse_mode=ParseMode.HTML),
   )
 

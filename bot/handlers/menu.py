@@ -79,9 +79,11 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
     with suppress(Exception):
       await message.bot.delete_message(message.chat.id, data["welcome_id"])
+  from bot.live_screen import drop_screen
+
+  await drop_screen(message, state)
   sent = await message.answer(WELCOME_TEXT, reply_markup=main_reply_menu())
   await state.update_data(welcome_id=sent.message_id)
-  await set_screen_id(state, None)
   await show_hub(message, state, message.from_user.id)
 
 
@@ -93,8 +95,10 @@ async def cb_reply_menu(message: Message, state: FSMContext) -> None:
   action = REPLY_MENU_BY_TEXT[message.text]
   await safe_delete(message)
   await state.set_state(None)
-  # Reply buttons always open a fresh screen at the bottom of the chat.
-  await set_screen_id(state, None)
+  # Кнопки снизу: прошлый экран убираем, новый — один внизу чата.
+  from bot.live_screen import drop_screen
+
+  await drop_screen(message, state)
   uid = message.from_user.id
   if action == "farm":
     await show_farm(message, state, uid)
