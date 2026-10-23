@@ -80,7 +80,7 @@ async function go(p, keep) {
   $$(".nav[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === p));
   $("#pageTitle").textContent = TITLES[p];
   history.replaceState(null, "", "#" + p);
-  try { await PAGES[p](); } catch (e) { if (e.message === "auth") return showLogin(e.status === 403 ? "Ферма доступна администраторам. Войдите под нужным Telegram." : ""); $("#main").innerHTML = `<div class="empty">Не удалось загрузить: ${esc(e.message)}</div>`; }
+  try { await PAGES[p](); } catch (e) { if (S.page !== p) return; if (e.message === "auth") return showLogin(e.status === 403 ? "Ферма доступна администраторам. Войдите под нужным Telegram." : ""); $("#main").innerHTML = `<div class="empty">Не удалось загрузить: ${esc(e.message)}</div>`; }
 }
 
 function filtSum() {
@@ -100,6 +100,7 @@ async function pageToday() {
   const cls = s.classes.filter((c) => c.count);
   const maxc = Math.max(1, ...cls.map((c) => c.count));
   const worst = conts.filter((c) => c.total).sort((a, b) => b.offline / b.total - a.offline / a.total).slice(0, 8);
+  if (S.page !== "today") return;
   $("#main").innerHTML = `
   <div class="grid">
     <div class="kpis">
@@ -139,10 +140,13 @@ function lineChart(pts, unit) {
   const pad = (y1 - y0) * 0.15 || 1; y0 = Math.max(0, y0 - pad); y1 += pad;
   const X = (x) => P.l + (x - x0) / (x1 - x0 || 1) * (W - P.l - P.r), Y = (y) => H - P.b - (y - y0) / (y1 - y0 || 1) * (H - P.t - P.b);
   const d = pts.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1)).join("");
-  const grid = [0, 0.5, 1].map((f) => { const v = y0 + (y1 - y0) * f; return `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${P.l - 6}" y="${Y(v) + 3}" text-anchor="end">${nf(v, v < 10 ? 2 : 0)}</text>`; }).join("");
+  const grid = [0, 0.5, 1].map((f) => { const v = y0 + (y1 - y0) * f; return `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${P.l - 6}" y="${Y(v) + 3}" text-anchor="end">${nf(v, (y1 - y0) < 3 ? 2 : (y1 - y0) < 30 ? 1 : 0)}</text>`; }).join("");
   const tx = [x0, (x0 + x1) / 2, x1].map((t, i) => `<text x="${X(t)}" y="${H - 5}" text-anchor="${["start", "middle", "end"][i]}">${new Date(t).toLocaleString("ru-RU", Object.assign({ hour: "2-digit", minute: "2-digit" }, MSK))}</text>`).join("");
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${tx}<path class="a" d="${d}L${X(x1)} ${H - P.b}L${X(x0)} ${H - P.b}Z"/><path class="l" d="${d}"/><text x="${W - P.r}" y="12" text-anchor="end">${unit}</text></svg>`;
 }
+
+const MODES = { normal: "обычный", low: "тихий", high: "разгон", sleep: "сон", eco: "эко", unknown: "—" };
+function modeRu(m) { return m ? (MODES[String(m).toLowerCase()] || m) : "—"; }
 
 // ---------- map ----------
 let mapMode = "status";
@@ -164,6 +168,7 @@ async function pageMap() {
       <div class="meta"><span class="ok num">${w}</span>/<span class="num">${list.length}</span><span class="${off ? "bad" : ""}">офлайн ${off}</span><span class="num">${nf(ths, 0)} TH/s</span>${tmax > -99 ? `<span class="num ${tmax >= 75 ? "warn" : ""}">${nf(tmax, 0)}°</span>` : ""}</div>
       <div class="cells">${cells}</div></div>`;
   }).join("");
+  if (S.page !== "map") return;
   $("#main").innerHTML = `<div class="fbar"><div class="legend"><span><i style="background:var(--ok)"></i>работает</span><span><i style="background:var(--bad)"></i>офлайн</span><span><i style="background:var(--susp)"></i>пауза</span><span><i style="background:var(--ok);box-shadow:inset 0 0 0 3px var(--ok),inset 0 0 0 6px var(--warn)"></i>есть ошибка</span></div>
     <span class="sp"></span><span class="hint">Клик — карточка · Ctrl/⌘ — добавить к выбору · Shift — диапазон</span>
     <span class="seg" id="mapMode"><button data-m="status" class="${mapMode === "status" ? "on" : ""}">Статус</button><button data-m="temp" class="${mapMode === "temp" ? "on" : ""}">Температура</button><button data-m="eff" class="${mapMode === "eff" ? "on" : ""}">% паспорта</button></span></div>
@@ -242,6 +247,7 @@ async function pageAsics() {
   const conts = filtSum().conts;
   const show = list.slice(0, 1500);
   const th = (k, t, r) => `<th class="${r ? "r" : ""}" data-sort="${k}">${t}${key === k ? (desc ? " ↓" : " ↑") : ""}</th>`;
+  if (S.page !== "asics") return;
   $("#main").innerHTML = `
    <div class="fbar"><input type="search" id="q" placeholder="IP, MAC, серийник, воркер, номер…" value="${esc(f.q)}">
     <div class="chips">${[["", "Все", devs.length], ["working", "Работают", cnt((d) => d.status === "working")], ["offline", "Офлайн", cnt((d) => d.status === "offline")], ["suspended", "Пауза", cnt((d) => d.status === "suspended")]].map(([v, t, n]) => `<button class="chip ${f.status === v ? "on" : ""}" data-st="${v}">${t} <b>${nf(n)}</b></button>`).join("")}
@@ -294,6 +300,7 @@ async function pageErrors() {
   const maxg = Math.max(1, ...r.groups.map((g) => g.count));
   const show = r.items.slice(0, 1500);
   S.order = [...new Set(show.map((x) => x.id))];
+  if (S.page !== "errors") return;
   $("#main").innerHTML = `
   <div class="fbar"><input type="search" id="eq" placeholder="IP, воркер, серийник…" value="${esc(ef.q)}">
    <div class="chips"><button class="chip ${!ef.cls ? "on" : ""}" data-cls="">Все классы</button>${all.filter((c) => c.count).map((c) => `<button class="chip ${ef.cls === c.key ? "on" : ""}" data-cls="${c.key}">${esc(c.label)} <b>${nf(c.count)}</b></button>`).join("")}</div>
@@ -334,6 +341,7 @@ async function pageErrors() {
 async function pageClients() {
   await loadSummary();
   const cl = S.sum.clients;
+  if (S.page !== "clients") return;
   $("#main").innerHTML = `<div class="w"><div class="wh">Клиенты хостинга · ${cl.length}<span class="sp"></span><span class="mini">Вид клиента — как в CROFT «человечек»: только его асики</span></div><div class="scroll"><table class="tbl"><thead><tr><th>Клиент</th><th class="r">Асиков</th><th class="r">Работают</th><th class="r">Офлайн</th><th class="r">Хешрейт, TH/s</th><th class="r">Доля работающих</th></tr></thead><tbody>
    ${cl.map((c) => `<tr><td class="lnk" data-client="${c.id || ""}">${esc((c.name || "").trim())}</td><td class="r num">${nf(c.total)}</td><td class="r num ok">${nf(c.working)}</td><td class="r num ${c.offline ? "bad" : ""}">${nf(c.offline)}</td><td class="r num">${nf(c.ths, 0)}</td><td class="r num">${c.total ? nf(c.working / c.total * 100, 0) + "%" : "—"}</td></tr>`).join("")}
    </tbody></table></div></div>`;
@@ -357,9 +365,9 @@ async function openCard(id) {
    </div>
    <div class="sec"><h4>Паспорт</h4><dl class="kv">
     <dt>IP</dt><dd class="num">${esc(d.ip || "—")}</dd><dt>MAC</dt><dd class="num">${esc(d.mac || "—")}</dd><dt>Серийный номер</dt><dd class="num">${esc(d.serial || "—")}</dd>
-    <dt>Клиент</dt><dd>${esc(d.client || "—")}</dd><dt>Режим</dt><dd>${esc(d.mode || "—")}</dd><dt>Мощность</dt><dd class="num">${nf(d.w, 0)} Вт</dd><dt>Температура</dt><dd class="num">${nf(d.temp, 0)}°</dd>
+    <dt>Клиент</dt><dd>${esc(d.client || "—")}</dd><dt>Режим</dt><dd>${esc(modeRu(d.mode))}</dd><dt>Мощность</dt><dd class="num">${nf(d.w, 0)} Вт</dd><dt>Температура</dt><dd class="num">${nf(d.temp, 0)}°</dd>
     <dt>Теги</dt><dd>${d.tags.map((t) => `<span class="pill">${esc(t)}</span>`).join(" ") || "—"}</dd></dl></div>
-   <div class="sec"><h4>Воркер и пулы</h4><dl class="kv"><dt>Воркер</dt><dd class="num">${esc(d.worker || "—")}</dd>${d.pools.map((p, i) => `<dt>Пул ${i + 1}</dt><dd class="num"><span class="${p.alive ? "ok" : "bad"}">●</span> ${esc(shortPool(p.url))}</dd>`).join("")}</dl></div>
+   <div class="sec"><h4>Воркер и пулы</h4><dl class="kv"><dt>Воркер</dt><dd class="num">${esc(d.worker || "—")}</dd>${d.pools.filter((p) => p.url).map((p, i) => `<dt>Пул ${i + 1}</dt><dd class="num"><span class="${p.alive ? "ok" : "bad"}">●</span> ${esc(shortPool(p.url))}</dd>`).join("")}</dl></div>
    <div class="sec"><h4>Ошибки сейчас</h4>${d.alarms.length ? `<ul class="tl">${d.alarms.map((a) => `<li><span class="d">${tfmt(a.since)}</span><span class="dot" style="background:var(--bad)"></span><span><span class="lv${a.level}">${esc(a.msg)}</span> <span class="faint">${esc(a.code)} · ${CLS[a.cls] || ""} · ${LV[a.level] || ""}</span></span></li>`).join("")}</ul>` : '<div class="hint">Ошибок нет</div>'}</div>
    <div class="sec"><h4>Хешрейт по часам, 72 ч</h4>${d.hourly.length > 1 ? lineChart(d.hourly.map((h) => [new Date(h.h).getTime(), h.ths]), "TH/s") : '<div class="hint">История копится с момента подключения Kirka.</div>'}</div>
    <div class="sec"><h4>История болезни</h4>${d.events.length ? `<ul class="tl">${d.events.map((e) => `<li><span class="d">${tfmt(e.at)}</span><span class="dot" style="background:${evCol[e.kind] || "var(--mut)"}"></span><span><b>${evName[e.kind] || e.kind}</b> · ${evTxt(e)}</span></li>`).join("")}</ul>` : '<div class="hint">Пока событий нет</div>'}</div>`;
