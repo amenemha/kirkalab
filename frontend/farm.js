@@ -81,6 +81,7 @@ async function go(p, keep) {
   S.page = p; $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; if (!keep) { S.sel.clear(); updSel(); }
   $$(".nav[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === p));
   $("#pageTitle").textContent = TITLES[p];
+  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools";
   history.replaceState(null, "", "#" + p);
   try { await PAGES[p](); } catch (e) { if (S.page !== p) return; if (e.message === "auth") return showLogin(e.status === 403 ? "Ферма доступна администраторам. Войдите под нужным Telegram." : ""); $("#main").innerHTML = `<div class="empty">Не удалось загрузить: ${esc(e.message)}</div>`; }
 }
@@ -383,15 +384,21 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") { $("#draw
 // ---------- pools ----------
 const mskToday = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400e3).toISOString().slice(0, 10);
-S.pf = { from: null, to: null, group: "", q: "" };
-function fh(ths) { if (ths == null) return "—"; if (ths >= 1e6) return nf(ths / 1e6, 2) + " EH"; if (ths >= 1000) return nf(ths / 1000, 2) + " PH"; if (ths >= 1) return nf(ths, 1) + " TH"; return nf(ths * 1000, 0) + " GH"; }
+S.pf = { from: null, to: null, group: "", q: "", empty: false };
+function fh(ths) { if (ths == null) return "—"; if (ths === 0) return "0"; if (ths >= 1e6) return nf(ths / 1e6, 2) + " EH"; if (ths >= 1000) return nf(ths / 1000, 2) + " PH"; if (ths >= 1) return nf(ths, 1) + " TH"; return nf(ths * 1000, 0) + " GH"; }
 const dm = (iso) => iso.slice(8, 10) + "." + iso.slice(5, 7);
 async function pagePools() {
   const pf = S.pf; pf.to = pf.to || mskToday(); pf.from = pf.from || addDays(pf.to, -6);
   const [acc, daily] = await Promise.all([api("/pools/accounts"), api("/pools/daily?" + qs({ d_from: pf.from, d_to: pf.to, group: pf.group }))]);
   const groups = [...new Set(acc.items.map((a) => a.group || "Без группы"))];
   const q = pf.q.toLowerCase();
-  const items = daily.items.filter((it) => !q || [it.account.account, it.account.user, it.account.group].some((x) => x && x.toLowerCase().includes(q)));
+  const alive = (it) => (it.account.ths_1d || 0) > 0 || (it.account.ths_10m || 0) > 0 || it.days.some((d) => d.ths);
+  const found = daily.items.filter((it) => !q || [it.account.account, it.account.user, it.account.group].some((x) => x && x.toLowerCase().includes(q)));
+  const hidden = found.filter((it) => !alive(it)).length;
+  const gi = {}; found.forEach((it, i) => { const g = it.account.group || ""; if (!(g in gi)) gi[g] = i; });
+  const items = found.filter((it) => pf.empty || alive(it)).sort((x, y) => gi[x.account.group || ""] - gi[y.account.group || ""] || (y.account.ths_1d || 0) - (x.account.ths_1d || 0));
+  const byCoin = {}; found.forEach((it) => { const c = byCoin[it.account.coin] = byCoin[it.account.coin] || { h10: 0, h24: 0, n: 0 }; c.h10 += it.account.ths_10m || 0; c.h24 += it.account.ths_1d || 0; if (alive(it)) c.n++; });
+  const coinLine = (k) => Object.entries(byCoin).filter(([, v]) => v[k] > 0).sort((a, b) => b[1][k] - a[1][k]).map(([c, v]) => `<span class="num">${esc(c)} ${fh(v[k])}</span>`).join(" · ") || "—";
   const days = items.length ? items[0].days.map((d) => d.day) : [];
   const tot = items.reduce((a, it) => { a.h10 += it.account.ths_10m || 0; a.h24 += it.account.ths_1d || 0; a.wa += it.account.w_active || 0; a.wi += it.account.w_inactive || 0; return a; }, { h10: 0, h24: 0, wa: 0, wi: 0 });
   const errs = acc.items.filter((a) => a.error).length;
@@ -412,14 +419,15 @@ async function pagePools() {
   $("#main").innerHTML = `
   <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
    <div class="k"><div class="l">Ссылок пулов</div><div class="v">${nf(acc.items.length)}</div><div class="s">${errs ? `<span class="bad">${errs} не отвечают</span>` : "все отвечают"} · других пулов ${acc.other.length}</div></div>
-   <div class="k"><div class="l">Хешрейт сейчас, 10 мин</div><div class="v">${fh(tot.h10)}<small>/s</small></div><div class="s">по выбранным ссылкам</div></div>
-   <div class="k"><div class="l">Хешрейт за 24 ч</div><div class="v">${fh(tot.h24)}<small>/s</small></div><div class="s">среднее по данным пула</div></div>
+   <div class="k"><div class="l">Хешрейт сейчас, 10 мин</div><div class="v" style="font-size:14px;white-space:normal;overflow:visible;line-height:1.4">${coinLine("h10")}</div><div class="s">по монетам, H/s</div></div>
+   <div class="k"><div class="l">Хешрейт за 24 ч</div><div class="v" style="font-size:14px;white-space:normal;overflow:visible;line-height:1.4">${coinLine("h24")}</div><div class="s">ссылок с хешрейтом ${nf(found.filter(alive).length)}</div></div>
    <div class="k"><div class="l">Воркеры в пуле</div><div class="v"><span class="ok">${nf(tot.wa)}</span></div><div class="s">неактивны ${nf(tot.wi)}</div></div>
   </div>
   <div class="fbar" style="margin-top:10px"><input type="search" id="pq" placeholder="Аккаунт, группа…" value="${esc(pf.q)}">
    <select class="sel" id="pGrp"><option value="">Все группы</option>${groups.map((g) => `<option ${g === pf.group ? "selected" : ""}>${esc(g)}</option>`).join("")}</select>
    <label class="mini">с <input type="date" id="pFrom" class="sel" value="${pf.from}"></label><label class="mini">по <input type="date" id="pTo" class="sel" value="${pf.to}"></label>
    <span class="seg" id="pQuick"><button data-n="7">7 дн</button><button data-n="30">30 дн</button><button data-n="m">месяц</button></span>
+   <label class="mini"><input type="checkbox" id="pEmpty" ${pf.empty ? "checked" : ""}> пустые (${hidden})</label>
    <span class="sp"></span><button class="btn" id="pImp">Загрузить таблицу</button><button class="btn pri" id="pXls">Выгрузить Excel</button></div>
   <div class="w" style="margin-top:10px"><div class="wh">Средний хешрейт по суткам МСК (00:00–24:00)<span class="sp"></span><span class="mini">Kirka сама копит часы — пул хранит только 72 ч. Жёлтым — сутки собраны не полностью.</span></div>
    <div class="scroll"><table class="tbl" id="tP"><thead><tr><th>Аккаунт</th><th>Монета</th><th class="r">10 мин</th><th class="r">24 ч</th><th class="r">Воркеры</th>${days.map((d) => `<th class="r">${dm(d)}</th>`).join("")}<th class="r">Среднее</th><th class="r">Начислено</th></tr></thead>
@@ -427,6 +435,7 @@ async function pagePools() {
   ${acc.other.length ? `<div class="w" style="margin-top:10px"><div class="wh">Другие пулы · ${acc.other.length}<span class="sp"></span><span class="mini">Ссылки сохранены, чтение подключаю по очереди</span></div><div class="wb"><div class="hl">${acc.other.map((o) => `<div class="row"><span class="nm">${esc(o.group || "")} · <b>${esc(o.provider)}</b> <span class="faint">${esc((o.url || "").replace(/^https?:\/\//, "").slice(0, 70))}</span></span><span class="mini">ждёт</span></div>`).join("")}</div></div></div>` : ""}`;
   let qt; $("#pq").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { pf.q = e.target.value; pagePools().then(() => { const i = $("#pq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300); };
   $("#pGrp").onchange = (e) => { pf.group = e.target.value; pagePools(); };
+  $("#pEmpty").onchange = (e) => { pf.empty = e.target.checked; pagePools(); };
   $("#pFrom").onchange = (e) => { pf.from = e.target.value; pagePools(); };
   $("#pTo").onchange = (e) => { pf.to = e.target.value; pagePools(); };
   $$("#pQuick button").forEach((b) => b.onclick = () => { const t = mskToday(); pf.to = t; pf.from = b.dataset.n === "m" ? t.slice(0, 8) + "01" : addDays(t, -(+b.dataset.n - 1)); pagePools(); });

@@ -31,13 +31,16 @@ def day_table(db: Session, account_id: int, d_from: date, d_to: date, tz_hours: 
         if expected == 0:
             row["source"] = "сутки ещё не начались"
         elif len(vals) == 24:
-            s = sum(vals); row.update(avg_hs=s / 24, sum_hs=s, source="24 часа")
+            s = sum(vals)
+            row.update(avg_hs=s / 24, sum_hs=s, source="24 часа")
         elif expected < 24 and len(vals) == expected:
-            s = sum(vals); row.update(avg_hs=s / len(vals), sum_hs=s, source=f"идут сутки: {len(vals)} из 24 ч")
-        elif vals:
-            s = sum(vals); row.update(avg_hs=s / len(vals), sum_hs=s, source=f"в архиве {len(vals)} из 24 ч")
-        elif pdx and pdx.hs:
+            s = sum(vals)
+            row.update(avg_hs=s / len(vals), sum_hs=s, source=f"идут сутки: {len(vals)} из 24 ч")
+        elif pdx and pdx.hs:  # archive is incomplete — the pool's own day is a better whole-day figure
             row.update(avg_hs=pdx.hs, sum_hs=pdx.hs * 24, source="суточное значение пула")
+        elif vals:
+            s = sum(vals)
+            row.update(avg_hs=s / len(vals), sum_hs=s, source=f"в архиве {len(vals)} из 24 ч")
         else:
             row["source"] = "нет данных"
         rows.append(row)
