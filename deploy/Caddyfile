@@ -30,6 +30,9 @@
 
 	# Everything else is the static SPA; fall back to index.html.
 	handle {
+		# Всегда сверять с сервером (ETag → 304), чтобы после обновления
+		# браузер не показывал старую версию страницы.
+		header Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}

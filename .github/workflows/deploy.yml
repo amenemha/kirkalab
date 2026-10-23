@@ -29,3 +29,6 @@ jobs:
             docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T app alembic upgrade head
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --force-recreate caddy
             docker image prune -f
+            # Самопроверка бота: каждая кнопка и команда должны отвечать.
+            sleep 8
+            docker exec -i kirkalab-bot-1 python - < tools/bot_crawl.py

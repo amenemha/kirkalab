@@ -4,8 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 
 from bot.api_client import KirkalabApiClient as ApiClient
 from bot.config import get_settings
