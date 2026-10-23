@@ -48,7 +48,7 @@ PLANS_INTRO = (
     "• Точная окупаемость и ROI\n"
     "• Сравнение прошивок и сохранение сборок\n"
     "• Смешанные фермы, стойки и контейнеры\n\n"
-    "Оплата — звёздами Telegram ⭐. Выберите план:"
+    "Подключение — звёздами Telegram ⭐. Выберите вариант:"
 )
 
 
@@ -72,7 +72,7 @@ async def cb_show_plans(callback: CallbackQuery, state) -> None:
     secret = _secret()
     if not secret:
         await edit_live_screen(
-            callback.message, state, "⚠️ Оплата временно недоступна."
+            callback.message, state, "⚠️ Подключение PRO временно недоступно."
         )
         await callback.answer()
         return
@@ -80,7 +80,7 @@ async def cb_show_plans(callback: CallbackQuery, state) -> None:
         plans = await _client(callback).list_plans(bot_secret=secret)
     except ApiError as exc:
         await edit_live_screen(
-            callback.message, state, f"❌ Не удалось загрузить тарифы: {exc.message}"
+            callback.message, state, f"❌ Не удалось загрузить варианты PRO: {exc.message}"
         )
         await callback.answer()
         return
@@ -107,7 +107,7 @@ async def cb_buy_plan(callback: CallbackQuery) -> None:
     secret = _secret()
     plan_code = callback.data.rsplit(":", 1)[1]
     if not secret:
-        await callback.answer("Оплата недоступна.", show_alert=True)
+        await callback.answer("Подключение недоступно.", show_alert=True)
         return
     try:
         plans = await _client(callback).list_plans(bot_secret=secret)
@@ -117,7 +117,7 @@ async def cb_buy_plan(callback: CallbackQuery) -> None:
 
     plan = next((p for p in plans if p.get("code") == plan_code), None)
     if plan is None or (plan.get("price_stars") or 0) <= 0:
-        await callback.answer("Этот тариф недоступен.", show_alert=True)
+        await callback.answer("Этот вариант недоступен.", show_alert=True)
         return
 
     price = int(plan["price_stars"])
@@ -164,7 +164,7 @@ async def on_pre_checkout(pre_checkout: PreCheckoutQuery) -> None:
     )
     if not valid:
         await pre_checkout.answer(
-            ok=False, error_message="Тариф больше не доступен."
+            ok=False, error_message="Этот вариант больше не доступен."
         )
         return
     await pre_checkout.answer(ok=True)
@@ -178,7 +178,7 @@ async def on_successful_payment(message: Message) -> None:
     plan_code = _plan_code_from_payload(sp.invoice_payload or "")
     if not secret or plan_code is None:
         await message.answer(
-            "✅ Оплата получена. Если PRO не подключился, напишите в поддержку."
+            "✅ Звёзды получены. Если PRO не подключился, напишите в поддержку."
         )
         return
     try:
@@ -192,7 +192,7 @@ async def on_successful_payment(message: Message) -> None:
     except ApiError as exc:
         logger.error("billing activate failed: %s", exc.message)
         await message.answer(
-            "✅ Оплата получена, но активация задерживается. "
+            "✅ Звёзды получены, но активация задерживается. "
             "Мы подключим PRO в ближайшее время — спасибо за терпение!"
         )
         return

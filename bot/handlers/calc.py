@@ -238,7 +238,7 @@ async def cb_quantity(callback: CallbackQuery, state: FSMContext) -> None:
   qty = _parse_id(callback.data)
   if qty is None or not (1 <= qty <= 5):
     await callback.answer(
-      "На бесплатном тарифе — до 5 устройств одного типа. "
+      "В бесплатной версии — до 5 устройств одного типа. "
       "Больше и разное оборудование — в PRO 💎",
       show_alert=True,
     )
@@ -266,8 +266,8 @@ async def _ask_price(callback: CallbackQuery, state: FSMContext) -> None:
     except ApiError:
       saved_price = None
   await callback.message.edit_text(
-    "💡 <b>Цена электроэнергии</b>\n\n"
-    "Укажите тариф в USDT за кВт·ч.\n"
+    "💡 <b>Стоимость электроэнергии</b>\n\n"
+    "Укажите, сколько стоит кВт·ч в USDT.\n"
     "<i>Другие валюты (₽/$/¥) — в PRO.</i>",
     reply_markup=calc_price_kb(saved_price),
   )
@@ -278,7 +278,7 @@ async def cb_price_saved(callback: CallbackQuery, state: FSMContext) -> None:
   data = await state.get_data()
   price = data.get("saved_price")
   if price is None:
-    await callback.answer("Сохранённая цена не найдена.", show_alert=True)
+    await callback.answer("Сохранённая стоимость не найдена.", show_alert=True)
     return
   await state.update_data(power_price=str(price), save_power_price=False)
   await _run_and_render(callback.message, callback.from_user.id, state)
@@ -289,7 +289,7 @@ async def cb_price_saved(callback: CallbackQuery, state: FSMContext) -> None:
 async def cb_price_new(callback: CallbackQuery, state: FSMContext) -> None:
   await state.set_state(CalcStates.price)
   await callback.message.edit_text(
-    "💡 Введите цену электроэнергии в USDT за кВт·ч "
+    "💡 Введите стоимость электроэнергии в USDT за кВт·ч "
     "(например, <code>0.05</code>):"
   )
   await callback.answer()
@@ -319,7 +319,7 @@ async def price_entered(message: Message, state: FSMContext) -> None:
   await edit_live_screen(
     message,
     state,
-    "Сохранить эту цену для будущих расчётов?",
+    "Сохранить эту стоимость для будущих расчётов?",
     reply_markup=kb,
   )
 

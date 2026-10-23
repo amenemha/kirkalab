@@ -34,9 +34,8 @@ from bot.menu_items import REPLY_MENU_BY_TEXT
 router = Router()
 
 WELCOME_TEXT = (
-  "👋 <b>Kirkalab</b> — ваш помощник по ASIC-майнингу.\n\n"
-  "Бесплатный доступ включён автоматически. "
-  "Выберите раздел кнопками внизу."
+  "👋 <b>Kirka</b> — ферма, пулы и расчёты ASIC.\n"
+  "Главные кнопки всегда внизу, все разделы — в меню ниже."
 )
 
 CALC_START_TEXT = (
@@ -69,19 +68,41 @@ async def _open_catalog(message: Message, state: FSMContext) -> None:
 @router.message(Command("start"))
 @router.message(Command("menu"))
 async def cmd_start(message: Message, state: FSMContext) -> None:
+  from bot.handlers.hub import show_hub
+
   await state.set_state(None)
-  # A new live screen is created here; remember its id for in-place edits.
+  await safe_delete(message)
+  data = await state.get_data()
+  # Remove the previous greeting so repeated /start does not pile up.
+  if data.get("welcome_id"):
+    from contextlib import suppress
+
+    with suppress(Exception):
+      await message.bot.delete_message(message.chat.id, data["welcome_id"])
   sent = await message.answer(WELCOME_TEXT, reply_markup=main_reply_menu())
-  await set_screen_id(state, sent.message_id)
+  await state.update_data(welcome_id=sent.message_id)
+  await set_screen_id(state, None)
+  await show_hub(message, state, message.from_user.id)
 
 
 @router.message(F.text.func(lambda t: t in REPLY_MENU_BY_TEXT))
 async def cb_reply_menu(message: Message, state: FSMContext) -> None:
   """Route the 4 persistent reply-keyboard buttons into their flows."""
+  from bot.handlers.hub import show_farm, show_hub, show_problems
+
   action = REPLY_MENU_BY_TEXT[message.text]
   await safe_delete(message)
   await state.set_state(None)
-  if action == "calculator":
+  # Reply buttons always open a fresh screen at the bottom of the chat.
+  await set_screen_id(state, None)
+  uid = message.from_user.id
+  if action == "farm":
+    await show_farm(message, state, uid)
+  elif action == "problems":
+    await show_problems(message, state, uid)
+  elif action == "menu":
+    await show_hub(message, state, uid)
+  elif action == "calculator":
     await edit_live_screen(
       message, state, CALC_START_TEXT, reply_markup=calc_start_kb()
     )
@@ -98,7 +119,20 @@ async def cb_reply_menu(message: Message, state: FSMContext) -> None:
 # --------------------------------------------------------------------------- #
 @router.callback_query(F.data == "menu:home")
 async def cb_home(callback: CallbackQuery, state: FSMContext) -> None:
-  await edit_live_screen(callback.message, state, WELCOME_TEXT)
+  from bot.handlers.hub import show_hub
+
+  await set_screen_id(state, callback.message.message_id)
+  await show_hub(callback.message, state, callback.from_user.id)
+  await callback.answer()
+
+
+@router.callback_query(F.data == "menu:help")
+async def cb_help(callback: CallbackQuery, state: FSMContext) -> None:
+  from bot.handlers.hub import HELP_TEXT, btn
+  from aiogram.types import InlineKeyboardMarkup
+
+  await set_screen_id(state, callback.message.message_id)
+  await edit_live_screen(callback.message, state, HELP_TEXT, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[btn("☰ Меню", "hub:menu")]]))
   await callback.answer()
 
 

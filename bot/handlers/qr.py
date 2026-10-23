@@ -21,6 +21,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
+from contextlib import suppress
+
+from aiogram.types import InlineKeyboardMarkup
+
 from bot.api_client import ApiError, KirkalabApiClient
 from bot.config import get_settings
 from bot.deep_link import parse_qr_payload
@@ -54,7 +58,7 @@ async def qr_deep_link(
     return
 
   await state.set_state(QrStates.confirm)
-  await state.update_data(qr_session_id=session_id)
+  await state.update_data(qr_session_id=session_id, qr_start_id=message.message_id)
   await message.answer(
     "🔐 <b>Запрос на вход через QR</b>\n\n"
     "Кто-то (вероятно, вы) пытается войти на сайт Kirkalab "
@@ -68,7 +72,9 @@ async def qr_deep_link(
 async def qr_approve(callback: CallbackQuery, state: FSMContext) -> None:
   data = await state.get_data()
   session_id = data.get("qr_session_id")
-  await state.clear()
+  start_id, prev_ok = data.get("qr_start_id"), data.get("qr_ok_id")
+  await state.set_state(None)
+  await state.update_data(qr_session_id=None, qr_start_id=None)
 
   if not session_id:
     await callback.message.edit_text(
@@ -104,15 +110,32 @@ async def qr_approve(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     return
 
+  from bot.handlers.hub import SITE, btn
+
+  chat = callback.message.chat.id
+  # Keep the chat clean: drop the /start message and the previous confirmation.
+  for mid in (start_id, prev_ok):
+    if mid and mid != callback.message.message_id:
+      with suppress(Exception):
+        await callback.bot.delete_message(chat, mid)
   await callback.message.edit_text(
-    "✅ <b>Вход подтверждён</b>\n\nВернитесь на сайт — вы уже авторизованы."
+    "✅ <b>Вход подтверждён</b>\n\nСайт уже открыт — вернитесь во вкладку браузера.",
+    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+      [btn("↩️ Вернуться на сайт", url=SITE, style="success")],
+      [btn("☰ Меню бота", "hub:menu")],
+    ]),
   )
+  await state.update_data(qr_ok_id=callback.message.message_id)
   await callback.answer("Готово")
 
 
 @router.callback_query(QrStates.confirm, F.data == "qr:reject")
 async def qr_reject(callback: CallbackQuery, state: FSMContext) -> None:
-  await state.clear()
+  data = await state.get_data()
+  await state.set_state(None)
+  if data.get("qr_start_id"):
+    with suppress(Exception):
+      await callback.bot.delete_message(callback.message.chat.id, data["qr_start_id"])
   await callback.message.edit_text(
     "❌ Вход отклонён. Если это были не вы — всё в порядке, "
     "никаких действий не требуется."

@@ -14,12 +14,11 @@ MAIN_MENU_ITEMS: list[tuple[str, str]] = [
   ("calculator", "🧮 Рассчитать доходность"),
   ("catalog", "📋 Каталог ASIC"),
   ("reports", "📊 Мои отчёты"),
-  ("plan", "💎 Тариф"),
   ("help", "ℹ️ Помощь"),
 ]
 
 # Actions that are not implemented yet — handled by a "coming soon" stub.
-STUB_ACTIONS: frozenset[str] = frozenset({"plan"})
+STUB_ACTIONS: frozenset[str] = frozenset()
 
 # --------------------------------------------------------------------------- #
 # Reply-keyboard main menu (CALC_SPEC §3.2): the persistent "прибитая"
@@ -29,10 +28,10 @@ STUB_ACTIONS: frozenset[str] = frozenset({"plan"})
 # user taps, matched verbatim by the menu router.
 # --------------------------------------------------------------------------- #
 REPLY_MENU_ITEMS: list[tuple[str, str]] = [
+  ("farm", "🏭 Ферма"),
+  ("problems", "⚠️ Проблемы"),
   ("calculator", "🧮 Калькулятор"),
-  ("catalog", "📋 Каталог ASIC"),
-  ("reports", "📊 Мои отчёты"),
-  ("profile", "👤 Профиль"),
+  ("menu", "☰ Все разделы"),
 ]
 
 # Fast text -> action lookup for the reply-keyboard handler.

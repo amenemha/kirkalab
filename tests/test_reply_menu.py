@@ -11,7 +11,7 @@ def test_reply_menu_has_exactly_four_buttons():
 
 def test_reply_menu_actions_and_texts():
     actions = [a for a, _ in REPLY_MENU_ITEMS]
-    assert actions == ["calculator", "catalog", "reports", "profile"]
+    assert actions == ["farm", "problems", "calculator", "menu"]
 
 
 def test_reply_menu_excludes_tariff_and_help():

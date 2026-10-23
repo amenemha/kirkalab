@@ -120,7 +120,7 @@ const isLow = (d) => d.status === "working" && d.nominal && d.ths != null && d.t
 const isHot = (d) => d.temp != null && d.temp >= 80;
 async function pageToday() {
   await loadSummary();
-  const [devs] = await Promise.all([loadDevices(true), loadLayouts()]);
+  const [devs] = await Promise.all([loadDevices(), loadLayouts()]);
   const s = S.sum, agg = aggregate(devs);
   const eff = agg.nom ? agg.ths / agg.nom * 100 : null;
   const pw = (x) => (agg.total ? (x || 0) / agg.total * 100 : 0);
@@ -247,7 +247,7 @@ function miniLayout(L, devsById, layer) {
 }
 async function pageMap() {
   await loadSummary();
-  const [devs] = await Promise.all([loadDevices(true), loadLayouts(true)]);
+  const [devs] = await Promise.all([loadDevices(), loadLayouts(true)]);
   const mf = S.mf; const by = {};
   devs.forEach((d) => { (by[d.container_id || 0] = by[d.container_id || 0] || []).push(d); });
   let conts = filtConts().filter((c) => by[c.id || 0] && c.id);
@@ -261,7 +261,7 @@ async function pageMap() {
     return `<button class="cbox" data-c="${c.id}"><div class="cb-h"><span class="kind k-${L ? L.layout.kind : "air"}">${L ? KIND[L.layout.kind] : ""}</span><span class="nm" title="${esc(c.name)}">${esc(c.name)}</span></div>
       <div class="cb-m"><span><b class="num ok">${nf(x.w)}</b><span class="faint"> / ${nf(x.n)}</span></span>${x.off ? `<span class="bad num">✕ ${nf(x.off)}</span>` : '<span class="faint">все в работе</span>'}${x.al ? `<span class="warn num">⚠ ${nf(x.al)}</span>` : ""}<span class="sp"></span><span class="num">${nf(x.ths / 1000, 2)} PH</span><span class="num faint">${nf(x.kw, 0)} кВт</span>${x.tmax > -99 ? `<span class="num ${x.tmax >= 80 ? "warn" : "faint"}">${nf(x.tmax, 0)}°</span>` : ""}</div>
       ${miniLayout(L, S.devMap, mf.layer)}
-      <div class="cb-f faint">${L ? `${L.layout.sections.length} ${L.layout.kind === "hydro" ? "секц." : L.layout.kind === "bath" ? "ванн" : "подсети"} · мест ${nf(L.capacity)} · свободно ${nf(Math.max(0, L.capacity - Object.keys(L.placed).length))}${L.unplaced.length ? ` · без места ${L.unplaced.length}` : ""}` : ""}<span class="sp"></span>открыть →</div></button>`; }).join("");
+      <div class="cb-f faint">${L ? `${L.layout.kind === "hydro" ? "секций" : L.layout.kind === "bath" ? "ванн" : "подсетей"}: ${L.layout.sections.length} · мест ${nf(L.capacity)} · свободно ${nf(Math.max(0, L.capacity - Object.keys(L.placed).length))}${L.unplaced.length ? ` · без места ${L.unplaced.length}` : ""}` : ""}<span class="sp"></span><span class="go">открыть →</span></div></button>`; }).join("");
   if (S.page !== "map") return;
   $("#pageAside").innerHTML = `<span class="seg" id="mKind"><button data-k="" class="${!mf.kind ? "on" : ""}">Все</button>${Object.entries(kinds).map(([k, n]) => `<button data-k="${k}" class="${mf.kind === k ? "on" : ""}">${KIND[k]} ${n}</button>`).join("")}</span>
     <span class="seg" id="mSort"><button data-s="problems" class="${mf.sort === "problems" ? "on" : ""}">Сначала проблемные</button><button data-s="name" class="${mf.sort === "name" ? "on" : ""}">По номеру</button></span>`;
@@ -278,7 +278,7 @@ async function pageCont() {
   const cid = +S.arg;
   await loadSummary();
   const [devs, L] = await Promise.all([loadDevices(), api(`/farm/containers/${cid}/layout`)]);
-  if (S.lay) S.lay[cid] = L;
+  S.lay = S.lay || {}; S.lay[cid] = L;
   const list = devs.filter((d) => d.container_id === cid);
   const cl = S.cl; const layer = cl.layer;
   const agg = aggregate(list); const tl = list.map((d) => d.temp).filter((t) => t != null);
@@ -406,7 +406,7 @@ const QUICK = { low: ["Ниже 85% заводского", isLow], hot: ["Гор
 function resetF() { Object.assign(S.f, { q: "", status: "", cls: "", container: "", model: "", alarms: false, quick: "", ids: null }); }
 async function pageAsics() {
   await loadSummary();
-  const [devs] = await Promise.all([loadDevices(true), loadLayouts()]);
+  const [devs] = await Promise.all([loadDevices(), loadLayouts()]);
   const f = S.f; const q = f.q.trim().toLowerCase();
   const idset = f.ids ? new Set(f.ids) : null;
   const base = (d, skip) => (!idset || idset.has(d.id)) && (skip === "c" || !f.container || String(d.container_id) === f.container) && (skip === "m" || !f.model || d.model === f.model) && (!f.cls || d.alarms.some((a) => a.cls === f.cls))
@@ -421,7 +421,8 @@ async function pageAsics() {
   const cnt = (fn) => pre.filter(fn).length;
   const models = [...new Set(devs.filter((d) => base(d, "m")).map((d) => d.model).filter(Boolean))].sort();
   const conts = filtConts().filter((c) => c.id).sort((a, b) => a.name.localeCompare(b.name, "ru", { numeric: true }));
-  const show = list.slice(0, 1500);
+  const show = list;
+  const rowA = (d) => `<tr data-id="${d.id}"><td class="cb"><input type="checkbox" aria-label="выбрать"></td><td class="lnk">${esc(d.model)}</td><td title="${esc(d.container)}"><span class="cn">${esc((d.container || "—").split(" ").slice(0, 2).join(" "))}</span> <span class="faint">${esc(placeTxt(d, true))}</span></td><td>${stPill(d.status)}</td><td class="r num">${d.status === "working" ? nf(d.ths, 1) : "—"}${isLow(d) ? ' <span class="warn" title="ниже 85% заводского">↓</span>' : ""}</td><td class="r num ${d.temp >= 80 ? "warn" : ""}">${nf(d.temp, 0)}</td><td class="r num">${nf(d.w, 0)}</td><td class="num">${esc(d.ip || "—")}</td><td>${esc(d.client || "—")}</td><td class="num" title="${esc(d.worker)}">${esc(d.worker || "—")}</td><td class="r num">${d.status === "working" ? dur(d.uptime) : "—"}</td><td>${d.alarms.map((a) => `<span class="lv${a.level}" title="${esc(a.code)}">${esc(a.msg)}</span>`).join(", ")}</td></tr>`;
   const th = (k, t, r) => `<th class="${r ? "r" : ""}" data-sort="${k}">${t}${key === k ? (desc ? " ↓" : " ↑") : ""}</th>`;
   const cname = f.container && (conts.find((c) => String(c.id) === f.container) || {}).name;
   const why = !list.length ? (pre.length ? `Под этот фильтр ничего: ${f.status ? `в выборке нет асиков со статусом «${ST[f.status]}»` : "нет асиков с ошибками"}${cname ? ` в контейнере «${cname}»` : ""}. Всего в выборке ${nf(pre.length)}: работают ${nf(cnt((d) => d.status === "working"))}, не работают ${nf(cnt((d) => d.status === "offline"))}.` : "Ничего не нашлось по поиску и фильтрам.") : "";
@@ -436,9 +437,9 @@ async function pageAsics() {
     ${f.ids ? `<span class="pill">только выделенные ${nf(f.ids.length)} <button class="x" id="idsX" aria-label="убрать">✕</button></span>` : ""}
     ${f.q || f.status || f.container || f.model || f.alarms || f.quick || f.ids ? '<button class="btn ghost" id="fReset">Сбросить фильтры</button>' : ""}
     <span class="sp"></span><span class="hint">${nf(list.length)} асиков</span><button class="btn" id="csv">Выгрузить в Excel</button></div>
-   <div class="w"><div class="scroll"><table class="tbl" id="tA"><thead><tr><th class="cb"><input type="checkbox" id="cbAll" aria-label="Выделить все на экране"></th>${th("model", "Модель")}${th("place", "Контейнер и место")}${th("status", "Статус")}${th("ths", "TH/s", 1)}${th("temp", "t°", 1)}${th("w", "Вт", 1)}${th("ip", "IP")}${th("client", "Клиент")}${th("worker", "Воркер")}${th("uptime", "Без перезагрузки", 1)}${th("alarms", "Ошибки")}</tr></thead><tbody>
-   ${show.map((d) => `<tr data-id="${d.id}"><td class="cb"><input type="checkbox" aria-label="выбрать"></td><td class="lnk">${esc(d.model)}</td><td title="${esc(d.container)}"><span class="cn">${esc((d.container || "—").split(" ").slice(0, 2).join(" "))}</span> <span class="faint">${esc(placeTxt(d, true))}</span></td><td>${stPill(d.status)}</td><td class="r num">${d.status === "working" ? nf(d.ths, 1) : "—"}${isLow(d) ? ' <span class="warn" title="ниже 85% заводского">↓</span>' : ""}</td><td class="r num ${d.temp >= 80 ? "warn" : ""}">${nf(d.temp, 0)}</td><td class="r num">${nf(d.w, 0)}</td><td class="num">${esc(d.ip || "—")}</td><td>${esc(d.client || "—")}</td><td class="num" title="${esc(d.worker)}">${esc(d.worker || "—")}</td><td class="r num">${d.status === "working" ? dur(d.uptime) : "—"}</td><td>${d.alarms.map((a) => `<span class="lv${a.level}" title="${esc(a.code)}">${esc(a.msg)}</span>`).join(", ")}</td></tr>`).join("")}
-   </tbody></table>${list.length > show.length ? `<div class="empty">Показаны первые ${nf(show.length)} из ${nf(list.length)} — уточните фильтр или выгрузите в Excel.</div>` : ""}${why ? `<div class="empty">${esc(why)}<br><button class="btn" id="fReset2" style="margin-top:10px">Сбросить статус</button></div>` : ""}</div></div>`;
+   <div class="w"><div class="scroll"><table class="tbl" id="tA"><thead><tr><th class="cb"><input type="checkbox" id="cbAll" aria-label="Выделить все"></th>${th("model", "Модель")}${th("place", "Контейнер и место")}${th("status", "Статус")}${th("ths", "TH/s", 1)}${th("temp", "t°", 1)}${th("w", "Вт", 1)}${th("ip", "IP")}${th("client", "Клиент")}${th("worker", "Воркер")}${th("uptime", "Без перезагрузки", 1)}${th("alarms", "Ошибки")}</tr></thead><tbody>
+   ${show.slice(0, PAGE_N).map(rowA).join("")}
+   </tbody></table>${why ? `<div class="empty">${esc(why)}<br><button class="btn" id="fReset2" style="margin-top:10px">Сбросить статус</button></div>` : ""}</div></div>`;
   let qt; $("#q").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { f.q = e.target.value; pageAsics().then(() => { const i = $("#q"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); };
   $$(".chip[data-st]").forEach((c) => c.onclick = () => { f.status = c.dataset.st; pageAsics(); });
   $$(".chip[data-qk]").forEach((c) => c.onclick = () => { f.quick = f.quick === c.dataset.qk ? "" : c.dataset.qk; pageAsics(); });
@@ -454,7 +455,24 @@ async function pageAsics() {
   $("#pageAside").innerHTML = list.length ? `<button class="btn" id="selAll">Выделить все ${nf(list.length)}</button>` : "";
   const sa = $("#selAll"); if (sa) sa.onclick = () => { list.forEach((d) => S.sel.add(d.id)); markSel(); };
   tableClicks("#tA");
+  infinite("#tA", show, rowA);
   markSel();
+}
+const PAGE_N = 150;
+// Endless list: rows are appended while the user scrolls, no "first N" cap.
+function infinite(sel, arr, rowFn) {
+  const tb = $(sel + " tbody"); if (!tb || arr.length <= PAGE_N) return;
+  let n = PAGE_N;
+  const tail = document.createElement("div"); tail.className = "more hint"; tail.textContent = `Показано ${nf(n)} из ${nf(arr.length)} · листайте вниз`;
+  tb.closest("table").after(tail);
+  const io = new IntersectionObserver((es) => {
+    if (!es[0].isIntersecting || !tb.isConnected) return;
+    const next = arr.slice(n, n + PAGE_N); n += next.length;
+    tb.insertAdjacentHTML("beforeend", next.map(rowFn).join(""));
+    markSel();
+    if (n >= arr.length) { io.disconnect(); tail.textContent = `Все ${nf(arr.length)} в списке`; } else tail.textContent = `Показано ${nf(n)} из ${nf(arr.length)} · листайте вниз`;
+  }, { root: tb.closest(".scroll"), rootMargin: "600px" });
+  io.observe(tail);
 }
 function tableClicks(sel) {
   $(sel).addEventListener("click", (e) => {
@@ -490,7 +508,8 @@ async function pageErrors() {
   r.items.forEach((x) => { const k = x.code + " · " + x.msg; const g = gm[k] = gm[k] || { k, code: x.code, msg: x.msg, cls: x.cls_label, lvl: x.lvl, ids: new Set(), conts: {}, since: null }; g.ids.add(x.id); g.conts[x.container || "—"] = (g.conts[x.container || "—"] || 0) + 1; if (x.since && (!g.since || x.since < g.since)) g.since = x.since; });
   const groups = Object.values(gm).sort((a, b) => b.lvl - a.lvl || b.ids.size - a.ids.size);
   const items = ef.gk ? r.items.filter((x) => x.code + " · " + x.msg === ef.gk) : r.items;
-  const show = items.slice(0, 1500);
+  const show = items;
+  const rowE = (x) => { const d = S.devMap && S.devMap.get(x.id); return `<tr data-id="${x.id}"><td class="cb"><input type="checkbox" aria-label="выбрать"></td><td><span class="lv${x.lvl}">${esc(x.msg)}</span> <span class="faint num">${esc(x.code)}</span></td><td class="lv${x.lvl}">${LV[x.lvl] || "—"}</td><td class="num">${tfmt(x.since)}</td><td>${esc(x.model || "")}</td><td title="${esc(x.container)}"><span class="cn">${esc((x.container || "—").split(" ").slice(0, 2).join(" "))}</span> <span class="faint">${d ? esc(placeTxt(d, true)) : ""}</span></td><td class="num">${esc(x.ip || "—")}</td><td>${esc(x.client || "—")}</td><td class="r num">${nf(x.temp, 0)}</td></tr>`; };
   S.order = [...new Set(show.map((x) => x.id))];
   const all = S.sum.classes.filter((c) => c.count);
   if (S.page !== "errors") return;
@@ -505,8 +524,8 @@ async function pageErrors() {
    ${groups.map((g) => { const top = Object.entries(g.conts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([n, c]) => `${esc(n.split(" ").slice(0, 2).join(" "))} <span class="faint">${c}</span>`).join(", "); return `<tr data-gk="${esc(g.k)}" class="${ef.gk === g.k ? "on" : ""}"><td class="lnk"><span class="lv${g.lvl}">${esc(g.msg)}</span></td><td class="num faint">${esc(g.code)}</td><td>${esc(g.cls)}</td><td class="lv${g.lvl}">${LV[g.lvl] || "—"}</td><td class="r num"><b>${nf(g.ids.size)}</b></td><td>${top}</td><td class="num">${tfmt(g.since)}</td></tr>`; }).join("") || '<tr><td colspan="7"><div class="empty">Ошибок нет</div></td></tr>'}
   </tbody></table></div></div>
   <div class="w" style="margin-top:10px"><div class="wh">${ef.gk ? `Асики с ошибкой «${esc(ef.gk.split(" · ").slice(1).join(" · "))}» · ${nf(new Set(items.map((x) => x.id)).size)} <button class="btn ghost" id="gkX" style="height:22px;margin-left:6px">показать все</button>` : `Все асики с ошибками · ${nf(r.devices)}`}<span class="sp"></span><button class="btn" id="eSel" style="height:24px">Выделить эти асики</button></div><div class="scroll"><table class="tbl" id="tE"><thead><tr><th class="cb"><input type="checkbox" id="ecbAll" aria-label="Выделить все"></th><th>Ошибка</th><th>Важность</th><th>С какого времени</th><th>Модель</th><th>Контейнер и место</th><th>IP</th><th>Клиент</th><th class="r">t°</th></tr></thead><tbody>
-    ${show.map((x) => { const d = S.devMap && S.devMap.get(x.id); return `<tr data-id="${x.id}"><td class="cb"><input type="checkbox" aria-label="выбрать"></td><td><span class="lv${x.lvl}">${esc(x.msg)}</span> <span class="faint num">${esc(x.code)}</span></td><td class="lv${x.lvl}">${LV[x.lvl] || "—"}</td><td class="num">${tfmt(x.since)}</td><td>${esc(x.model || "")}</td><td title="${esc(x.container)}"><span class="cn">${esc((x.container || "—").split(" ").slice(0, 2).join(" "))}</span> <span class="faint">${d ? esc(placeTxt(d, true)) : ""}</span></td><td class="num">${esc(x.ip || "—")}</td><td>${esc(x.client || "—")}</td><td class="r num">${nf(x.temp, 0)}</td></tr>`; }).join("")}
-    </tbody></table>${items.length > show.length ? `<div class="empty">Показаны первые ${nf(show.length)} из ${nf(items.length)}. Полный список — в Excel.</div>` : ""}</div></div>`;
+    ${show.slice(0, PAGE_N).map(rowE).join("")}
+    </tbody></table></div></div>`;
   let qt; $("#eq").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { ef.q = e.target.value; pageErrors().then(() => { const i = $("#eq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300); };
   $$(".clsc").forEach((c) => c.onclick = () => { ef.cls = c.dataset.cls; ef.gk = ""; pageErrors(); });
   $("#eCont").onchange = (e) => { ef.container = e.target.value; pageErrors(); };
@@ -518,13 +537,14 @@ async function pageErrors() {
   $("#ecbAll").onchange = (e) => { show.forEach((x) => e.target.checked ? S.sel.add(x.id) : S.sel.delete(x.id)); markSel(); };
   $("#eXls").onclick = () => S.sel.size ? xlsx([...S.sel]) : ef.gk ? xlsx([...new Set(items.map((x) => x.id))]) : download("/farm/errors/export.xlsx?" + qs({ site: site(), client: client(), cls: ef.cls, container: ef.container, model: ef.model }));
   tableClicks("#tE");
+  infinite("#tE", show, rowE);
   markSel();
 }
 
 // ---------- clients ----------
 async function pageClients() {
   await loadSummary();
-  const devs = await loadDevices(true);
+  const devs = await loadDevices();
   const m = {};
   devs.forEach((d) => { const k = m[d.client_id || 0] = m[d.client_id || 0] || { id: d.client_id, name: d.client || "Без клиента", total: 0, working: 0, offline: 0, susp: 0, ths: 0, nom: 0, kw: 0, al: 0, conts: new Set(), models: {} }; k.total++; if (d.status === "working") { k.working++; k.ths += d.ths || 0; k.nom += d.nominal || 0; } if (d.status === "offline") k.offline++; if (d.status === "suspended") k.susp++; k.kw += (d.w || 0) / 1000; if (d.alarms.length) k.al++; if (d.container_id) k.conts.add(d.container_id); k.models[d.model] = (k.models[d.model] || 0) + 1; });
   const cl = Object.values(m).sort((a, b) => b.total - a.total);
@@ -708,7 +728,8 @@ async function boot() {
   const m = location.hash.match(/[#&]s=([\w-]+)/);
   if (m) {
     try { const st = await (await fetch(API + "/auth/qr/status/" + encodeURIComponent(m[1]))).json(); if (st.status === "approved" && st.access_token) tok.set(st); } catch (e) { /* ignore */ }
-    history.replaceState(null, "", "#today");
+    const pg = (location.hash.match(/[#&]p=(\w+)/) || [])[1] || "today";
+    history.replaceState(null, "", "#" + pg);
   }
   if (!tok.get()) return showLogin();
   $("#login").hidden = true; $("#app").hidden = false;
