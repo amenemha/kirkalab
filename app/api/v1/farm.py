@@ -146,6 +146,12 @@ def device_card(dev_id: int, db: Session = Depends(get_db)):
     since = datetime.now(timezone.utc) - timedelta(hours=72)
     hourly = db.scalars(select(fm.FarmDeviceHourly).where(fm.FarmDeviceHourly.device_id == dev_id, fm.FarmDeviceHourly.hour >= since).order_by(fm.FarmDeviceHourly.hour))
     row = _dev_row(d, sites, conts, clients)
+    from app.db import pool_models as pm
+
+    pw = db.scalar(select(pm.PoolWorker).where(pm.PoolWorker.full_name == (d.worker or "").lower()).limit(1)) if d.worker else None
+    row["pool_worker"] = ({"status": pw.status, "ths_10m": round((pw.hs_10m or 0) / 1e12, 2), "ths_1h": round((pw.hs_1h or 0) / 1e12, 2),
+                           "ths_1d": round((pw.hs_1d or 0) / 1e12, 2), "reject_1h": pw.reject_1h, "online_7d_h": pw.online_7d_h,
+                           "updated": pw.updated_at.isoformat() if pw.updated_at else None} if pw else None)
     row.update({
         "first_seen": d.first_seen_at.isoformat() if d.first_seen_at else None,
         "last_seen": d.last_seen_at.isoformat() if d.last_seen_at else None,
