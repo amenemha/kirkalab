@@ -94,15 +94,12 @@ def register_error_alerts(dispatcher: Dispatcher, notifier: AdminNotifier) -> No
         if exc_name in _NETWORK_ERRORS:
             # Сетевые сбои до Telegram — не баг кода; в чат не шлём.
             return True
-        tb = "".join(
-            traceback.format_exception(type(exc), exc, exc.__traceback__)
-        )
         where = ""
         for fr in reversed(traceback.extract_tb(exc.__traceback__)):
             if "/bot/" in fr.filename and "site-packages" not in fr.filename:
                 where = f"{fr.filename.rsplit('/bot/', 1)[-1]}:{fr.lineno}"
                 break
-        logger.error("Traceback tail: %s", mask_secrets(tb)[-_MAX_TRACEBACK_CHARS:])
+        logger.error("Bot exception location: %s", where or "?")
         await notifier.alert(
             f"⚠️ Сбой в боте: {exc_name}" + (f" ({where})" if where else ""),
             key=f"handler_exc:{exc_name}",
