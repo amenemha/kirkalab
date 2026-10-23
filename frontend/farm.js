@@ -75,8 +75,8 @@ async function loadDevices(force) {
 }
 
 // ---------- pages ----------
-const PAGES = { today: pageToday, map: pageMap, asics: pageAsics, errors: pageErrors, clients: pageClients };
-const TITLES = { today: "Сегодня", map: "Карта контейнеров", asics: "Асики", errors: "Ошибки", clients: "Клиенты" };
+const PAGES = { today: pageToday, map: pageMap, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools };
+const TITLES = { today: "Сегодня", map: "Карта контейнеров", asics: "Асики", errors: "Ошибки", clients: "Клиенты", pools: "Пулы" };
 async function go(p, keep) {
   S.page = p; $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; if (!keep) { S.sel.clear(); updSel(); }
   $$(".nav[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === p));
@@ -380,6 +380,98 @@ $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("#
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { $("#drawer").hidden = true; $("#modal").hidden = true; } if ((e.ctrlKey || e.metaKey) && e.key === "a" && ["map", "asics", "errors"].includes(S.page) && !e.target.matches("input")) { e.preventDefault(); S.order.forEach((i) => S.sel.add(i)); markSel(); } });
 
 // ---------- common ----------
+// ---------- pools ----------
+const mskToday = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400e3).toISOString().slice(0, 10);
+S.pf = { from: null, to: null, group: "", q: "" };
+function fh(ths) { if (ths == null) return "—"; if (ths >= 1e6) return nf(ths / 1e6, 2) + " EH"; if (ths >= 1000) return nf(ths / 1000, 2) + " PH"; if (ths >= 1) return nf(ths, 1) + " TH"; return nf(ths * 1000, 0) + " GH"; }
+const dm = (iso) => iso.slice(8, 10) + "." + iso.slice(5, 7);
+async function pagePools() {
+  const pf = S.pf; pf.to = pf.to || mskToday(); pf.from = pf.from || addDays(pf.to, -6);
+  const [acc, daily] = await Promise.all([api("/pools/accounts"), api("/pools/daily?" + qs({ d_from: pf.from, d_to: pf.to, group: pf.group }))]);
+  const groups = [...new Set(acc.items.map((a) => a.group || "Без группы"))];
+  const q = pf.q.toLowerCase();
+  const items = daily.items.filter((it) => !q || [it.account.account, it.account.user, it.account.group].some((x) => x && x.toLowerCase().includes(q)));
+  const days = items.length ? items[0].days.map((d) => d.day) : [];
+  const tot = items.reduce((a, it) => { a.h10 += it.account.ths_10m || 0; a.h24 += it.account.ths_1d || 0; a.wa += it.account.w_active || 0; a.wi += it.account.w_inactive || 0; return a; }, { h10: 0, h24: 0, wa: 0, wi: 0 });
+  const errs = acc.items.filter((a) => a.error).length;
+  let lastG = null;
+  const rowsHtml = items.map((it) => {
+    const a = it.account; const g = a.group || "Без группы"; let head = "";
+    if (g !== lastG) { lastG = g; head = `<tr class="grp"><td colspan="${7 + days.length}">${esc(g)}</td></tr>`; }
+    const vals = it.days.map((d) => d.ths); const ok = vals.filter((v) => v != null);
+    const avg = ok.length ? ok.reduce((x, y) => x + y, 0) / ok.length : null;
+    const prof = it.days.reduce((x, d) => x + (d.profit || 0), 0);
+    const down = a.ths_10m != null && a.ths_1d && a.ths_10m < a.ths_1d * 0.7;
+    return head + `<tr data-pacc="${a.id}"><td class="lnk">${esc(a.account || a.user || "—")}${a.user && a.account && a.user.toLowerCase() !== a.account.toLowerCase() ? ` <span class="faint">${esc(a.user)}</span>` : ""}${a.error ? ` <span class="bad" title="${esc(a.error)}">●</span>` : ""}</td><td>${esc(a.coin)}</td>
+      <td class="r num ${down ? "bad" : ""}">${fh(a.ths_10m)}</td><td class="r num">${fh(a.ths_1d)}</td><td class="r num"><span class="ok">${a.w_active ?? "—"}</span>${a.w_inactive ? ` / <span class="bad">${a.w_inactive}</span>` : ""}</td>
+      ${it.days.map((d) => `<td class="r num ${d.hours && d.hours < 24 && d.day !== pf.to ? "warn" : ""}" title="${d.hours} ч в архиве">${d.ths == null ? '<span class="faint">—</span>' : fh(d.ths)}</td>`).join("")}
+      <td class="r num"><b>${fh(avg)}</b></td><td class="r num">${prof ? nf(prof, 8) : "—"}</td></tr>`;
+  }).join("");
+  if (S.page !== "pools") return;
+  $("#main").innerHTML = `
+  <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+   <div class="k"><div class="l">Ссылок пулов</div><div class="v">${nf(acc.items.length)}</div><div class="s">${errs ? `<span class="bad">${errs} не отвечают</span>` : "все отвечают"} · других пулов ${acc.other.length}</div></div>
+   <div class="k"><div class="l">Хешрейт сейчас, 10 мин</div><div class="v">${fh(tot.h10)}<small>/s</small></div><div class="s">по выбранным ссылкам</div></div>
+   <div class="k"><div class="l">Хешрейт за 24 ч</div><div class="v">${fh(tot.h24)}<small>/s</small></div><div class="s">среднее по данным пула</div></div>
+   <div class="k"><div class="l">Воркеры в пуле</div><div class="v"><span class="ok">${nf(tot.wa)}</span></div><div class="s">неактивны ${nf(tot.wi)}</div></div>
+  </div>
+  <div class="fbar" style="margin-top:10px"><input type="search" id="pq" placeholder="Аккаунт, группа…" value="${esc(pf.q)}">
+   <select class="sel" id="pGrp"><option value="">Все группы</option>${groups.map((g) => `<option ${g === pf.group ? "selected" : ""}>${esc(g)}</option>`).join("")}</select>
+   <label class="mini">с <input type="date" id="pFrom" class="sel" value="${pf.from}"></label><label class="mini">по <input type="date" id="pTo" class="sel" value="${pf.to}"></label>
+   <span class="seg" id="pQuick"><button data-n="7">7 дн</button><button data-n="30">30 дн</button><button data-n="m">месяц</button></span>
+   <span class="sp"></span><button class="btn" id="pImp">Загрузить таблицу</button><button class="btn pri" id="pXls">Выгрузить Excel</button></div>
+  <div class="w" style="margin-top:10px"><div class="wh">Средний хешрейт по суткам МСК (00:00–24:00)<span class="sp"></span><span class="mini">Kirka сама копит часы — пул хранит только 72 ч. Жёлтым — сутки собраны не полностью.</span></div>
+   <div class="scroll"><table class="tbl" id="tP"><thead><tr><th>Аккаунт</th><th>Монета</th><th class="r">10 мин</th><th class="r">24 ч</th><th class="r">Воркеры</th>${days.map((d) => `<th class="r">${dm(d)}</th>`).join("")}<th class="r">Среднее</th><th class="r">Начислено</th></tr></thead>
+   <tbody>${rowsHtml || `<tr><td colspan="${7 + days.length}"><div class="empty">Ссылок пулов пока нет. Нажмите «Загрузить таблицу» и выберите файл Mining Monitor.</div></td></tr>`}</tbody></table></div></div>
+  ${acc.other.length ? `<div class="w" style="margin-top:10px"><div class="wh">Другие пулы · ${acc.other.length}<span class="sp"></span><span class="mini">Ссылки сохранены, чтение подключаю по очереди</span></div><div class="wb"><div class="hl">${acc.other.map((o) => `<div class="row"><span class="nm">${esc(o.group || "")} · <b>${esc(o.provider)}</b> <span class="faint">${esc((o.url || "").replace(/^https?:\/\//, "").slice(0, 70))}</span></span><span class="mini">ждёт</span></div>`).join("")}</div></div></div>` : ""}`;
+  let qt; $("#pq").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { pf.q = e.target.value; pagePools().then(() => { const i = $("#pq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300); };
+  $("#pGrp").onchange = (e) => { pf.group = e.target.value; pagePools(); };
+  $("#pFrom").onchange = (e) => { pf.from = e.target.value; pagePools(); };
+  $("#pTo").onchange = (e) => { pf.to = e.target.value; pagePools(); };
+  $$("#pQuick button").forEach((b) => b.onclick = () => { const t = mskToday(); pf.to = t; pf.from = b.dataset.n === "m" ? t.slice(0, 8) + "01" : addDays(t, -(+b.dataset.n - 1)); pagePools(); });
+  $("#pXls").onclick = () => download("/pools/daily/export.xlsx?" + qs({ d_from: pf.from, d_to: pf.to, group: pf.group }));
+  $("#pImp").onclick = () => $("#poolFile").click();
+  $$("#tP tr[data-pacc]").forEach((r) => r.onclick = () => openPool(+r.dataset.pacc));
+}
+$("#poolFile").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return; e.target.value = "";
+  toast("Читаю таблицу и проверяю ссылки…");
+  const t = tok.get(); const fd = new FormData(); fd.append("file", f);
+  const r = await fetch(API + "/pools/import", { method: "POST", headers: { Authorization: "Bearer " + (t && t.access_token) }, body: fd });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) return toast(j.detail || "Не получилось загрузить");
+  toast(`Добавлено ${j.added}, обновлено ${j.updated}, нерабочих ссылок ${j.invalid}, других пулов ${j.other_links}`);
+  go("pools", true);
+};
+async function openPool(id) {
+  $("#drIn").innerHTML = '<div class="spin" style="margin:40px auto"></div>'; $("#drawer").hidden = false;
+  const pf = S.pf;
+  const [d, w] = await Promise.all([api(`/pools/accounts/${id}/daily?` + qs({ d_from: pf.from, d_to: pf.to })), api(`/pools/accounts/${id}/workers`)]);
+  const a = d.account;
+  const pts = d.rows.filter((r) => r.avg_ths != null).map((r) => [Date.parse(r.day + "T00:00:00Z"), r.avg_ths]);
+  const wsorted = w.items.slice().sort((x, y) => (x.status === "active") - (y.status === "active") || (x.ths_1h || 0) - (y.ths_1h || 0));
+  $("#drIn").innerHTML = `
+   <div class="dr-h"><div><h2>${esc(a.account || a.user)} <span class="faint">${esc(a.coin)}</span></h2><div class="mut small">${esc(a.group || "")} · ViaBTC</div></div><span class="sp"></span><button class="btn" id="drX">Закрыть</button></div>
+   <div class="life">
+    <div class="k"><div class="l">Сейчас, 10 мин</div><div class="v">${fh(a.ths_10m)}<small>/s</small></div><div class="s">за час ${fh(a.ths_1h)}</div></div>
+    <div class="k"><div class="l">Воркеры</div><div class="v"><span class="ok">${a.w_active ?? "—"}</span></div><div class="s">неактивны ${a.w_inactive ?? 0} · ошибочные ${a.w_invalid ?? 0}</div></div>
+    <div class="k"><div class="l">Начислено за 24 ч</div><div class="v">${a.profit_24h != null ? nf(a.profit_24h, 8) : "—"}</div><div class="s">баланс ${a.balance != null ? nf(a.balance, 8) : "—"} ${esc(a.coin)}</div></div>
+   </div>
+   ${a.error ? `<div class="sec"><div class="bad">Пул не отвечает: ${esc(a.error)}</div></div>` : ""}
+   <div class="sec"><h4>Средний хешрейт по суткам МСК</h4>${pts.length > 1 ? lineChart(pts, "TH/s") : ""}
+    <table class="tbl"><thead><tr><th>Сутки</th><th class="r">Среднее</th><th class="r">Часов</th><th>Как посчитано</th><th class="r">Начислено</th><th class="r">≈ $</th></tr></thead><tbody>
+    ${d.rows.map((r) => `<tr><td class="num">${dm(r.day)}</td><td class="r num">${fh(r.avg_ths)}</td><td class="r num">${r.hours}</td><td class="mini">${esc(r.source)}</td><td class="r num">${r.profit != null ? nf(r.profit, 8) : "—"}</td><td class="r num">${r.money_usd != null ? nf(r.money_usd, 2) : "—"}</td></tr>`).join("")}
+    <tr><td><b>Итого</b></td><td class="r num"><b>${fh(d.total.avg_ths)}</b></td><td></td><td class="mini">${d.total.days} сут. с данными</td><td class="r num"><b>${d.total.profit ? nf(d.total.profit, 8) : "—"}</b></td><td class="r num"><b>${d.total.money_usd ? nf(d.total.money_usd, 2) : "—"}</b></td></tr>
+    </tbody></table><div class="hint" style="margin-top:6px">Архив Kirka: ${nf(d.archive_hours)} ч${d.archive_since ? " с " + tfmt(d.archive_since) : ""}. Начисления — по суткам пула.</div></div>
+   <div class="sec"><h4>Воркеры · ${w.items.length} · найдено в CROFT ${w.matched}</h4>
+    <table class="tbl"><thead><tr><th>Воркер</th><th>Статус</th><th class="r">1 ч</th><th class="r">24 ч</th><th class="r">Отказ</th><th>Асик в CROFT</th></tr></thead><tbody>
+    ${wsorted.slice(0, 400).map((x) => `<tr ${x.device ? `data-card="${x.device.id}" class="lnk"` : ""}><td class="num">${esc(x.name)}</td><td>${x.status === "active" ? '<span class="ok">в работе</span>' : `<span class="bad">${x.status === "unactive" ? "нет хешрейта" : esc(x.status || "—")}</span>`}</td><td class="r num">${fh(x.ths_1h)}</td><td class="r num">${fh(x.ths_1d)}</td><td class="r num">${x.reject_1h != null ? nf(x.reject_1h * 100, 2) + "%" : "—"}</td><td>${x.device ? `${esc(x.device.model || "")} <span class="faint num">${esc(x.device.ip || "")}</span> ${stPill(x.device.status)}` : '<span class="faint">—</span>'}</td></tr>`).join("")}
+    </tbody></table></div>`;
+  $("#drX").onclick = () => ($("#drawer").hidden = true);
+  $$("#drIn tr[data-card]").forEach((r) => r.onclick = () => openCard(+r.dataset.card));
+}
+
 function bindCommon() {
   $$("[data-go]").forEach((x) => x.onclick = (e) => { e.preventDefault(); if (x.dataset.st != null) { S.f.status = x.dataset.st; } go(x.dataset.go); });
   $$("[data-cls]", $(".hl") || document).forEach((x) => { if (x.classList.contains("row")) x.onclick = () => { S.ef.cls = x.dataset.cls; go("errors"); }; });
