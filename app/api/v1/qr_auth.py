@@ -187,3 +187,37 @@ def approve_qr_session(
     db.add(session)
     db.commit()
     return QrApproveResponse(status="approved")
+
+
+@router.post("/bot-link")
+@limiter.limit("20/minute")
+def bot_login_link(
+    request: Request,
+    payload: dict,
+    db: Session = Depends(get_db),
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+) -> dict:
+    """One-tap login from the bot: a pre-approved one-time session.
+
+    The bot puts ``https://<site>/#s=<session_id>`` behind an URL button; the
+    site exchanges it once via /status (the session becomes ``consumed``)."""
+    expected = settings.bot_internal_secret
+    if not expected or not x_bot_secret or not secrets.compare_digest(x_bot_secret, expected):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid bot secret")
+    try:
+        tg = int(payload.get("telegram_user_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Invalid telegram_user_id")
+    if not _TELEGRAM_ID_MIN <= tg <= _TELEGRAM_ID_MAX:
+        raise HTTPException(status_code=422, detail="Invalid telegram_user_id")
+    user = crud_users.get_or_create_telegram_user(db, telegram_user_id=tg)
+    session = models.QrLoginSession(
+        session_id=secrets.token_urlsafe(32),
+        status="approved",
+        telegram_user_id=tg,
+        user_id=user.id,
+        expires_at=_now() + timedelta(minutes=30),
+    )
+    db.add(session)
+    db.commit()
+    return {"session_id": session.session_id, "expires_at": session.expires_at.isoformat()}

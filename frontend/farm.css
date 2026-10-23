@@ -194,7 +194,7 @@ button.k:hover,.k.click:hover{border-color:var(--acc)}
 .pc.on{outline:2px solid var(--sel);outline-offset:1px;z-index:1;box-shadow:0 0 0 4px var(--accbg)}
 .l-hydro .racks,.l-bath .racks{gap:10px}
 /* problems */
-.cls-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.cls-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px;margin-bottom:12px}
 .clsc{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;text-align:left;display:flex;flex-direction:column;gap:2px;color:var(--tx);border-top:3px solid var(--line2)}
 .clsc span{font-size:12px;color:var(--mut);font-weight:600}
 .clsc b{font-size:22px}
@@ -234,3 +234,7 @@ button.k:hover,.k.click:hover{border-color:var(--acc)}
 input[type=date].sel{height:30px}
 @media (max-width:1100px){.c8,.c7,.c6,.c5,.c4,.c3{grid-column:span 12}.gsearch{max-width:260px}.auto{display:none}}
 @media (max-width:760px){.top{flex-wrap:wrap;height:auto;padding:6px 10px;gap:6px}.logo span{display:none}.tabs{order:3;width:100%;height:38px}.gsearch{order:2;max-width:none}.gres{min-width:0}#themeBtn,.top a.ib{display:none}.phead{padding:8px 10px 0}.main{padding:8px 10px 90px}.kpis{grid-template-columns:repeat(2,1fr)}.cmap{grid-template-columns:1fr}.kv{grid-template-columns:110px 1fr}.selbar{left:8px;right:8px;transform:none}.layout{--pc:20px}.sel{max-width:46vw}}
+.more{padding:12px;text-align:center}
+.cb-f{display:flex;gap:8px;align-items:baseline}
+.cb-f .go{color:var(--acc);white-space:nowrap}
+.cb-m{flex-wrap:nowrap;white-space:nowrap;overflow:hidden}

@@ -42,7 +42,6 @@ def test_main_menu_has_expected_items():
     "calculator",
     "catalog",
     "reports",
-    "plan",
     "help",
   ]
 

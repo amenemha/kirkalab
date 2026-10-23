@@ -179,7 +179,7 @@ def _retention_hint(retention_days: int) -> str:
     if retention_days > 0:
         window = f"последние {retention_days} дн."
         return (
-            f"🔒 На бесплатном тарифе доступны {window} истории. "
+            f"🔒 В бесплатной версии доступны {window} истории. "
             "Полная история — в PRO 💎"
         )
     return "🔒 Расширенная история расчётов — в PRO 💎"
@@ -217,7 +217,7 @@ def format_detail_screen(item: dict) -> str:
     price = item.get("power_price")
     if price is not None:
         lines.append(
-            f"  • цена э/э: {_money(price, 'USDT', places=4)}/кВт·ч"
+            f"  • стоимость э/э: {_money(price, 'USDT', places=4)}/кВт·ч"
         )
     lines.append("")
 

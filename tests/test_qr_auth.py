@@ -164,3 +164,15 @@ def test_reused_telegram_id_maps_to_same_user(client, db):
         select(models.User).where(models.User.telegram_user_id == 77777)
     ).all()
     assert len(users) == 1
+
+
+def test_bot_link_one_time_login(client):
+    r = client.post("/api/v1/auth/qr/bot-link", json={"telegram_user_id": 777}, headers={"X-Bot-Secret": BOT_SECRET})
+    assert r.status_code == 200
+    sid = r.json()["session_id"]
+    st = client.get(f"/api/v1/auth/qr/status/{sid}").json()
+    assert st["status"] == "approved" and st["access_token"]
+    # one time only
+    assert client.get(f"/api/v1/auth/qr/status/{sid}").json()["status"] == "consumed"
+    assert client.post("/api/v1/auth/qr/bot-link", json={"telegram_user_id": 777}, headers={"X-Bot-Secret": "x"}).status_code == 403
+    assert client.post("/api/v1/auth/qr/bot-link", json={"telegram_user_id": "abc"}, headers={"X-Bot-Secret": BOT_SECRET}).status_code == 422

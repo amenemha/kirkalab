@@ -65,17 +65,7 @@ async def _load(api: ApiClient, uid: int) -> dict | None:
 def _site_url() -> str | None:
     st = get_settings()
     base = getattr(st, "web_app_url", None) or getattr(st, "site_url", None)
-    return f"{base.rstrip('/')}/farm" if base else "https://kirkalab.ru/farm"
-
-
-@router.message(Command("ferma", "farm"))
-async def farm_cmd(message: Message) -> None:
-    api = message.bot.kirkalab_client
-    data = await _load(api, message.from_user.id)
-    if data is None:
-        await message.answer("Ферма пока доступна только администраторам.")
-        return
-    await message.answer(_fmt(data), reply_markup=_kb(_site_url()), parse_mode="HTML")
+    return f"{base.rstrip('/')}/#map" if base else "https://kirkalab.ru/#map"
 
 
 @router.callback_query(F.data == "farm:refresh")

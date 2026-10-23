@@ -43,9 +43,9 @@ def _kb() -> InlineKeyboardMarkup:
     st = get_settings()
     base = getattr(st, "web_app_url", None) or getattr(st, "site_url", None) or "https://kirkalab.ru"
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Обновить", callback_data="pools:refresh"),
-        InlineKeyboardButton(text="Пулы на сайте", url=f"{base.rstrip('/')}/farm#pools"),
-    ]])
+        InlineKeyboardButton(text="🔁 Обновить", callback_data="pools:refresh"),
+        InlineKeyboardButton(text="🌊 Пулы на сайте", url=f"{base.rstrip('/')}/#pools"),
+    ], [InlineKeyboardButton(text="☰ Меню", callback_data="hub:menu")]])
 
 
 async def _load(api, uid: int) -> dict | None:

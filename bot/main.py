@@ -99,6 +99,18 @@ async def main() -> None:
   else:
     logger.info("Admin alerts disabled (ADMIN_CHAT_ID not set)")
   try:
+    from aiogram.types import BotCommand
+
+    await bot.set_my_commands([
+      BotCommand(command="menu", description="Все разделы"),
+      BotCommand(command="ferma", description="Ферма сейчас"),
+      BotCommand(command="problems", description="Проблемы и аварии"),
+      BotCommand(command="pools", description="Пулы за сутки"),
+      BotCommand(command="site", description="Открыть сайт без QR"),
+    ])
+  except Exception as exc:  # noqa: BLE001
+    logger.warning("set_my_commands failed: %s", type(exc).__name__)
+  try:
     await dispatcher.start_polling(bot)
   finally:
     await bot.session.close()
