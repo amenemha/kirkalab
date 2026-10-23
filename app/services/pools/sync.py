@@ -62,6 +62,22 @@ def sync_account(db: Session, cli: ViaBTC, a: pm.PoolAccount, with_workers: bool
             if d not in have_d:
                 db.add(x)
 
+    if with_profit:  # daily chart (90 days) fills the days the archive and accruals do not cover
+        try:
+            dd = cli.daily(key, coin, uid)
+        except ViaBTCError:
+            dd = {}
+        if dd:
+            db.flush()
+            dmap = {datetime.fromtimestamp(ts, tz=timezone.utc).date(): v for ts, v in dd.items()}
+            have_dd = {r.day: r for r in db.scalars(select(pm.PoolDaily).where(pm.PoolDaily.account_id == a.id, pm.PoolDaily.day.in_(list(dmap))))}
+            for day_, v in dmap.items():
+                x = have_dd.get(day_)
+                if x is None:
+                    db.add(pm.PoolDaily(account_id=a.id, day=day_, hs=v))
+                elif x.hs is None:
+                    x.hs = v
+
     if with_workers:
         try:
             ws = cli.workers(key, coin, uid)

@@ -94,6 +94,13 @@ class ViaBTC:
             out[start + i * 3600] = (float(v) * m, (aw[i] if i < len(aw) else None), num(rj[i]) if i < len(rj) else None)
         return out
 
+    def daily(self, key, coin, user_id=0) -> dict[int, float]:
+        """90 days of daily average hashrate (UTC days), H/s."""
+        d = self.get("hashrate/chart", key, coin=coin, interval="day", utc="true", user_id=user_id)
+        m = unit_mult(d.get("unit"))
+        start = int(d.get("start") or 0) // 1000
+        return {start + i * 86400: float(v) * m for i, v in enumerate(d.get("hashrate") or []) if v is not None}
+
     def profit_days(self, key, coin, user_id=0, pages: int = 2, limit: int = 50) -> list[dict]:
         rows = []
         for p in range(1, pages + 1):

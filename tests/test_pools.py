@@ -28,6 +28,9 @@ class FakeVia:
     def hourly(self, key, coin, user_id=0):
         return {self.start + i * 3600: (100e12 + i * 1e12, 2, 0.01) for i in range(72)}
 
+    def daily(self, key, coin, user_id=0):
+        return {int(datetime(2026, 10, 21, tzinfo=timezone.utc).timestamp()): 5e15, int(datetime(2026, 10, 22, tzinfo=timezone.utc).timestamp()): 6e15}
+
     def profit_days(self, key, coin, user_id=0):
         return [{"date": "2026-10-22", "hashrate": "6240658593020593", "total_profit": "0.00273703", "pps_profit": "0.0026",
                  "pplns_profit": "0.00005", "pps_plus_rate": "0.98", "unit_output": "0.00000043", "price": "82479.18", "total_money": "225.74"}]
@@ -78,7 +81,8 @@ def test_import_and_sync(db):
     assert a.hs_10m == 19.966e15 and a.workers_active == 49
     assert db.query(pm.PoolHourly).count() == 71  # the current hour is skipped
     assert db.query(pm.PoolWorker).one().full_name == "bbwtechnology.100x7x46"
-    assert db.query(pm.PoolDaily).one().money_usd == 225.74
+    days = {r.day: r for r in db.query(pm.PoolDaily)}
+    assert days[date(2026, 10, 22)].money_usd == 225.74 and days[date(2026, 10, 21)].hs == 5e15
     # re-run is idempotent
     run_pools(db, fake)
     assert db.query(pm.PoolHourly).count() == 71
