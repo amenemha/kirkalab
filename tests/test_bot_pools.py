@@ -1,4 +1,8 @@
-from bot.handlers.pools import _fmt, _hr
+import pytest
+
+pytest.importorskip("aiogram")
+
+from bot.handlers.pools import _fmt, _hr  # noqa: E402
 
 
 def test_hr_units():
