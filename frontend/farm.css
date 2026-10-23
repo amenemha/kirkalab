@@ -110,7 +110,8 @@ svg{stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-l
 .hint{font-size:12px;color:var(--faint)}
 /* bars list */
 .hl{display:flex;flex-direction:column;gap:6px}
-.hl .row{display:grid;grid-template-columns:minmax(0,1fr) 70px;gap:8px;align-items:center;font-size:12.5px;cursor:pointer}
+.hl .row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;font-size:12.5px;cursor:pointer}
+.hl .num{text-align:right;white-space:nowrap}
 .hl .row:hover .nm{color:var(--acc)}
 .hl .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hl .tr{grid-column:1/-1;height:4px;background:var(--line);border-radius:2px;overflow:hidden}
