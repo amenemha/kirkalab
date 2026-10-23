@@ -804,3 +804,4 @@ class TaxDeduction(Base):
     amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     currency: Mapped[str | None] = mapped_column(String, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+from app.db.farm_models import *  # noqa: F401,F403,E402

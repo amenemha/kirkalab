@@ -74,11 +74,28 @@ class Settings(BaseSettings):
     # window can change without code edits.
     free_history_retention_days: int = 3
 
+    # --- Kirka farm (CROFT sync) ---
+    croft_base_url: str = "https://croftapp.crofttech.ru/apigw/public/api/v1"
+    croft_login: str | None = None
+    croft_password: str | None = None
+    croft_sync_seconds: int = 60
+    # Telegram IDs that become admins on first login (comma-separated).
+    owner_telegram_ids: list[int] = []
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @field_validator("owner_telegram_ids", mode="before")
+    @classmethod
+    def _split_owner_ids(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [int(x) for x in value.split(",") if x.strip()]
+        if isinstance(value, int):
+            return [value]
+        return value
 
     @field_validator("cors_origins", mode="before")
     @classmethod
