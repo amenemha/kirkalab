@@ -380,7 +380,7 @@ async function download(path) {
   const t = tok.get(); const r = await fetch(API + path, { headers: { Authorization: "Bearer " + (t && t.access_token) } });
   if (!r.ok) return toast("Не удалось выгрузить");
   const b = await r.blob(); const a = document.createElement("a"); a.href = URL.createObjectURL(b);
-  a.download = (r.headers.get("Content-Disposition") || "").split('filename="')[1]?.replace('"', "") || "kirka.xlsx"; a.click();
+  a.download = (r.headers.get("Content-Disposition") || "").split('filename="')[1]?.replace(/"/g, "") || "kirka.xlsx"; a.click();
 }
 function toast(t) { const el = $("#toast"); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (el.hidden = true), 2200); }
 
