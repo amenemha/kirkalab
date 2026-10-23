@@ -194,39 +194,113 @@ def errors(
     return {"total": len(rows), "devices": len({r["id"] for r in rows}), "groups": grp, "items": rows}
 
 
-@router.get("/errors/export.xlsx")
-def errors_export(site: str | None = None, container: str | None = None, client: str | None = None,
-                  model: str | None = None, cls: str | None = None, ids: str | None = None, db: Session = Depends(get_db)):
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
+ST_RU = {"working": "Работает", "offline": "Не работает", "suspended": "Пауза", "unknown": "Нет данных"}
+LV_RU = {0: "Инфо", 1: "Предупреждение", 2: "Опасно", 3: "Критично"}
 
-    data = errors(None, site, container, client, model, cls, None, "code", db)
-    items = data["items"]
-    if ids:
-        keep = {int(x) for x in ids.split(",") if x}
-        items = [r for r in items if r["id"] in keep]
+
+def _place_texts(db: Session, devs: list[fm.FarmDevice]) -> dict[int, str]:
+    by = defaultdict(list)
+    for d in devs:
+        if d.container_id:
+            by[d.container_id].append(d.id)
+    out: dict[int, str] = {}
+    for cid in by:
+        c = db.get(fm.FarmContainer, cid)
+        allc = list(db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.container_id == cid)))
+        L = _layout_for(c, allc)
+        kind = L["layout"]["kind"]
+        for did, (si, r, sh, sl, num) in L["placed"].items():
+            sec = L["layout"]["sections"][si]
+            if kind == "bath":
+                out[did] = f"№ {num}"
+            elif kind == "hydro":
+                out[did] = f"{sec['title']} · полка {sh + 1} · место {num}"
+            else:
+                out[did] = f"стеллаж {(sec.get('rack_from') or 1) + r} · полка {sh + 1} · место {num}"
+    return out
+
+
+def _xlsx(name: str, sheets: list[tuple[str, list[str], list[list], tuple]]) -> StreamingResponse:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Ошибки"
-    head = ["Площадка", "Контейнер", "Клиент", "Модель", "IP", "Воркер", "Серийный №", "Статус", "Класс", "Код", "Ошибка", "Уровень", "С какого времени (МСК)", "Темп., °C"]
-    ws.append(head)
-    for c in ws[1]:
-        c.font = Font(bold=True, color="FFFFFF")
-        c.fill = PatternFill("solid", fgColor="01696F")
-    msk = timezone(timedelta(hours=3))
-    for r in items:
-        since = datetime.fromtimestamp(r["since"], msk).strftime("%d.%m.%Y %H:%M") if r["since"] else ""
-        ws.append([r["site"], r["container"], r["client"], r["model"], r["ip"], r["worker"], r["serial"], r["status"], r["cls_label"], r["code"], r["msg"], r["lvl"], since, r["temp"]])
-    for col, w in zip("ABCDEFGHIJKLMN", (18, 34, 24, 20, 15, 30, 34, 10, 14, 8, 36, 8, 18, 8)):
-        ws.column_dimensions[col].width = w
-    ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
+    wb.remove(wb.active)
+    for title, head, rows, widths in sheets:
+        ws = wb.create_sheet(title)
+        ws.append(head)
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="01696F")
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+        ws.row_dimensions[1].height = 30
+        bad = PatternFill("solid", fgColor="FBE3E4")
+        for r in rows:
+            ws.append(r)
+            if "Не работает" in r:
+                for c in ws[ws.max_row]:
+                    c.fill = bad
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
+        if rows:
+            ws.auto_filter.ref = ws.dimensions
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    name = f"kirka_errors_{datetime.now(msk).strftime('%Y%m%d_%H%M')}.xlsx"
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _devices_xlsx(db: Session, devs: list[fm.FarmDevice], prefix: str, only_errors: bool = False):
+    sites, conts, clients = _refs(db)
+    places = _place_texts(db, devs)
+    msk = timezone(timedelta(hours=3))
+    ts = lambda x: datetime.fromtimestamp(x, msk).strftime("%d.%m.%Y %H:%M") if x else ""  # noqa: E731
+    order = sorted(devs, key=lambda d: ((conts.get(d.container_id) or ("",))[0], places.get(d.id, "~"), d.ip or ""))
+    rows, err = [], []
+    for d in order:
+        cont = (conts.get(d.container_id) or (None,))[0]
+        pct = round(d.hashrate_ths / d.nominal_ths * 100) if d.status == "working" and d.nominal_ths and d.hashrate_ths else None
+        al = d.alarms or []
+        rows.append([sites.get(d.site_id), cont, places.get(d.id, ""), d.model, ST_RU.get(d.status, d.status),
+                     round(d.hashrate_ths, 2) if d.status == "working" and d.hashrate_ths is not None else None, pct,
+                     d.temp_env, d.power_w, d.ip, d.worker, clients.get(d.client_id), d.serial, d.mac,
+                     len(al), "; ".join(a.get("msg") or "" for a in al)])
+        for a in al:
+            err.append([cont, places.get(d.id, ""), d.model, d.ip, d.worker, ST_RU.get(d.status, d.status),
+                        a.get("msg"), a.get("code"), CLASSES.get(a.get("cls") or "other", ("Прочее",))[0],
+                        LV_RU.get(a.get("level"), a.get("level")), ts(a.get("since")), clients.get(d.client_id)])
+    dh = ["Площадка", "Контейнер", "Место", "Модель", "Статус", "TH/s", "% от заводского", "t°, C", "Вт", "IP", "Воркер",
+          "Клиент", "Серийный №", "MAC", "Ошибок", "Ошибки"]
+    eh = ["Контейнер", "Место", "Модель", "IP", "Воркер", "Статус", "Ошибка", "Код", "Класс", "Важность", "С какого времени (МСК)", "Клиент"]
+    sheets = [] if only_errors else [(f"Асики ({len(rows)})", dh, rows, (16, 34, 30, 22, 13, 9, 10, 7, 7, 14, 40, 22, 22, 18, 8, 40))]
+    sheets.append((f"Ошибки ({len(err)})", eh, err, (34, 30, 22, 14, 40, 13, 30, 8, 14, 14, 18, 22)))
+    return _xlsx(f"kirka_{prefix}_{datetime.now(msk).strftime('%Y%m%d_%H%M')}.xlsx", sheets)
+
+
+@router.post("/devices/export.xlsx")
+def devices_export(body: dict, db: Session = Depends(get_db)):
+    """Exactly the given device ids (selection or current list)."""
+    try:
+        ids = sorted({int(x) for x in (body.get("ids") or [])})
+    except (TypeError, ValueError):
+        raise HTTPException(400, "ids — список чисел")
+    if not ids:
+        raise HTTPException(400, "Ничего не выбрано")
+    devs = list(db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.id.in_(ids))))
+    return _devices_xlsx(db, devs, "asics")
+
+
+@router.get("/errors/export.xlsx")
+def errors_export(site: str | None = None, container: str | None = None, client: str | None = None,
+                  model: str | None = None, cls: str | None = None, ids: str | None = None, db: Session = Depends(get_db)):
+    devs = _filtered(db, None, None, site, container, client, model, cls, True)
+    if ids:
+        keep = {int(x) for x in ids.split(",") if x}
+        devs = [d for d in devs if d.id in keep]
+    return _devices_xlsx(db, devs, "errors")
 
 
 @router.get("/containers/{cid}/history")
@@ -243,3 +317,49 @@ def farm_history(hours: int = 24, db: Session = Depends(get_db)):
                 func.sum(fm.FarmContainerSample.total), func.sum(fm.FarmContainerSample.power_kw))
          .where(fm.FarmContainerSample.at >= since).group_by(fm.FarmContainerSample.at).order_by(fm.FarmContainerSample.at))
     return [dict(at=a.isoformat(), ths=round(h or 0, 1), online=int(o or 0), total=int(t or 0), kw=round(k or 0, 1)) for a, h, o, t, k in db.execute(q)]
+
+
+# ---------- container layout (racks / shelves / places) ----------
+def _layout_for(c: fm.FarmContainer, devs: list[fm.FarmDevice]) -> dict:
+    from app.services.farm import layout as L
+
+    rows = [{"id": d.id, "ip": d.ip, "worker": d.worker, "model": d.model, "status": d.status} for d in devs]
+    spec = c.layout if isinstance(c.layout, dict) and c.layout.get("sections") else L.infer(c.name, rows)
+    pl = L.place(spec, rows)
+    cap = sum(s["racks"] * s["shelves"] * s["places"] if s.get("by") == "order" or not s.get("last")
+              else min(s["racks"] * s["shelves"] * s["places"], s["last"] - s.get("first", 1) + 1) for s in spec["sections"])
+    return {"id": c.id, "name": c.name, "layout": spec, "capacity": cap, "placed": pl["placed"],
+            "unplaced": pl["unplaced"], "doubles": pl["doubles"]}
+
+
+@router.get("/layouts")
+def layouts(site: str | None = None, db: Session = Depends(get_db)):
+    st = select(fm.FarmContainer)
+    if site:
+        st = st.where(fm.FarmContainer.site_id.in_([int(x) for x in site.split(",")]))
+    conts = list(db.scalars(st))
+    by = defaultdict(list)
+    for d in db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.container_id.in_([c.id for c in conts]))):
+        by[d.container_id].append(d)
+    return {"items": [_layout_for(c, by[c.id]) for c in conts]}
+
+
+@router.get("/containers/{cid}/layout")
+def container_layout(cid: int, db: Session = Depends(get_db)):
+    c = db.get(fm.FarmContainer, cid)
+    if not c:
+        raise HTTPException(404, "Нет такого контейнера")
+    devs = list(db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.container_id == cid)))
+    return _layout_for(c, devs)
+
+
+@router.put("/containers/{cid}/layout")
+def container_layout_save(cid: int, body: dict, db: Session = Depends(get_db)):
+    from app.services.farm import layout as L
+
+    c = db.get(fm.FarmContainer, cid)
+    if not c:
+        raise HTTPException(404, "Нет такого контейнера")
+    c.layout = None if body.get("reset") else L.clean(body)
+    db.commit()
+    return container_layout(cid, db)

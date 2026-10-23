@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text,
     UniqueConstraint, Index, func,
 )
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
 
-JSONType = JSONB().with_variant(Text(), "sqlite")
+JSONType = JSONB().with_variant(JSON(), "sqlite")
 
 
 class FarmSite(Base):
@@ -40,6 +41,7 @@ class FarmContainer(Base):
     site_id: Mapped[int | None] = mapped_column(ForeignKey("farm_sites.id"))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    layout: Mapped[dict | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
