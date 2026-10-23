@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.config import get_settings
@@ -25,8 +26,10 @@ def _hr(ths: float) -> str:
 def _fmt(s: dict) -> str:
     when = datetime.fromisoformat(s["updated"]).astimezone(MSK).strftime("%H:%M") if s.get("updated") else "—"
     y = datetime.fromisoformat(s["yesterday"]).strftime("%d.%m")
-    lines = [f"<b>Пулы · сейчас</b>  <i>{when} МСК</i>", ""]
+    lines = [f"🌊 <b>Пулы</b> · <i>{when} МСК</i>", ""]
     for c in s["coins"]:
+        if not (c.get("ths_1h") or c.get("ths_1d") or c.get("yesterday") or c.get("w_active")):
+            continue
         lines.append(f"<b>{c['coin']}</b> · {_hr(c['ths_1h'])} за час · {_hr(c['ths_1d'])} за сутки")
         lines.append(f"   воркеров {_n(c['w_active'])} в работе, {_n(c['w_inactive'])} без хешрейта · ссылок {c['links']}")
         lines.append(f"   {y}: в среднем {_hr(c['yesterday'])}")
@@ -56,19 +59,21 @@ async def _load(api, uid: int) -> dict | None:
 
 
 @router.message(Command("pools", "puly"))
-async def pools_cmd(message: Message) -> None:
+async def pools_cmd(message: Message, state: FSMContext) -> None:
+    from bot.live_screen import drop_screen, edit_live_screen, safe_delete
+
+    await safe_delete(message)
+    await drop_screen(message, state)
     data = await _load(message.bot.kirkalab_client, message.from_user.id)
-    if data is None:
-        await message.answer("Пулы пока доступны только администраторам.")
-        return
-    await message.answer(_fmt(data), reply_markup=_kb(), parse_mode="HTML")
+    text = _fmt(data) if data is not None else "🌊 Пулы пока доступны только администраторам."
+    await edit_live_screen(message, state, text, reply_markup=_kb())
 
 
 @router.callback_query(F.data == "pools:refresh")
 async def pools_refresh(cb: CallbackQuery) -> None:
     data = await _load(cb.bot.kirkalab_client, cb.from_user.id)
     if data is None:
-        await cb.answer("Нет доступа", show_alert=True)
+        await cb.answer("Пулы доступны только администраторам", show_alert=True)
         return
     try:
         await cb.message.edit_text(_fmt(data), reply_markup=_kb(), parse_mode="HTML")

@@ -75,6 +75,9 @@ class AdminNotifier:
         return await self.alert(text, key=f"backend:{error_type}")
 
 
+_NETWORK_ERRORS = {"TelegramNetworkError", "TelegramRetryAfter", "ClientConnectorError", "ServerDisconnectedError", "TimeoutError"}
+
+
 def register_error_alerts(dispatcher: Dispatcher, notifier: AdminNotifier) -> None:
     """Install a global errors handler that logs + alerts on any handler crash."""
 
@@ -88,12 +91,17 @@ def register_error_alerts(dispatcher: Dispatcher, notifier: AdminNotifier) -> No
         # again inside AdminNotifier.alert).
         exc_name = type(exc).__name__
         logger.error("Unhandled bot exception: %s", exc_name)
-        tb = "".join(
-            traceback.format_exception(type(exc), exc, exc.__traceback__)
-        )
-        tail = mask_secrets(tb)[-_MAX_TRACEBACK_CHARS:]
+        if exc_name in _NETWORK_ERRORS:
+            # Сетевые сбои до Telegram — не баг кода; в чат не шлём.
+            return True
+        where = ""
+        for fr in reversed(traceback.extract_tb(exc.__traceback__)):
+            if "/bot/" in fr.filename and "site-packages" not in fr.filename:
+                where = f"{fr.filename.rsplit('/bot/', 1)[-1]}:{fr.lineno}"
+                break
+        logger.error("Bot exception location: %s", where or "?")
         await notifier.alert(
-            f"🛑 Необработанное исключение в боте:\n{exc_name}\n\n{tail}",
+            f"⚠️ Сбой в боте: {exc_name}" + (f" ({where})" if where else ""),
             key=f"handler_exc:{exc_name}",
         )
         # Returning True marks the error as handled so polling continues.

@@ -89,6 +89,9 @@ services:
       context: .
       dockerfile: bot/Dockerfile
     restart: always
+    # Провайдер режет часть адресов Telegram; этот отвечает стабильно (30/30).
+    extra_hosts:
+      - "api.telegram.org:149.154.167.220"
     env_file:
       - .env.prod
     environment:

@@ -37,9 +37,19 @@ async def get_screen_id(state: FSMContext) -> int | None:
     return data.get(SCREEN_KEY)
 
 
+async def drop_screen(message: Message, state: FSMContext) -> None:
+    """Убрать прошлый экран бота, чтобы новый появился внизу один."""
+    sid = await get_screen_id(state)
+    if sid:
+        with suppress(Exception):
+            await message.bot.delete_message(message.chat.id, sid)
+    await set_screen_id(state, None)
+
+
 async def safe_delete(message: Message) -> None:
     """Delete a message, ignoring "already gone / not allowed" failures."""
-    with suppress(*_DELETE_ERRORS):
+    # Удаление — косметика: любые сбои (включая сеть) глотаем.
+    with suppress(Exception):
         await message.delete()
 
 

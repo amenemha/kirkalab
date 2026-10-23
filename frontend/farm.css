@@ -238,3 +238,6 @@ input[type=date].sel{height:30px}
 .cb-f{display:flex;gap:8px;align-items:baseline}
 .cb-f .go{color:var(--acc);white-space:nowrap}
 .cb-m{flex-wrap:nowrap;white-space:nowrap;overflow:hidden}
+/* Неактивные варианты (0 результатов) — бледные и не нажимаются */
+.chip:disabled, .chip[disabled] { opacity: .38; cursor: default; pointer-events: none; }
+.fbar .sel { max-width: 320px; text-overflow: ellipsis; }

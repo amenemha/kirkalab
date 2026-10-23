@@ -62,19 +62,41 @@ async function loadSummary() {
   S.sum = await api("/farm/summary");
   const s = S.sum;
   const ss = $("#siteSel"), cs = $("#clientSel"), sv = ss.value, cv = cs.value;
-  ss.innerHTML = '<option value="">Все площадки</option>' + s.sites.map((x) => `<option value="${x.id}">${esc(x.name.trim())}</option>`).join("");
-  cs.innerHTML = '<option value="">Все клиенты</option>' + s.clients.filter((c) => c.id).map((c) => `<option value="${c.id}">${esc(c.name.trim())} · ${c.total}</option>`).join("");
-  ss.value = sv; cs.value = cv;
+  if (S.all) scope(); else {
+    ss.innerHTML = '<option value="">Все площадки</option>' + s.sites.map((x) => `<option value="${x.id}">${esc(x.name.trim())}</option>`).join("");
+    cs.innerHTML = '<option value="">Все клиенты</option>' + s.clients.filter((c) => c.id).map((c) => `<option value="${c.id}">${esc(c.name.trim())} · ${c.total}</option>`).join("");
+    ss.value = sv; cs.value = cv;
+  }
   const age = s.synced_at ? (Date.now() - new Date(s.synced_at)) / 1000 : 1e9;
   $("#syncAt").textContent = s.synced_at ? "обновлено " + tfmt(s.synced_at, false) : "нет данных";
   $(".auto").classList.toggle("stale", age > 300);
   const b = $("#errBadge"); b.hidden = !s.with_alarms; b.textContent = nf(s.with_alarms);
 }
+// Все асики грузим один раз, площадку и клиента фильтруем на месте: так списки
+// площадок и клиентов показывают только реальные варианты с количеством.
 async function loadDevices(force) {
-  if (!force && S.devs && Date.now() - S.devAt < 55000) return S.devs;
-  const r = await api("/farm/devices?" + qs({ site: site(), client: client(), limit: 6000 }));
-  S.devs = r.items; S.devAt = Date.now(); S.devMap = new Map(S.devs.map((d) => [d.id, d]));
+  if (force || !S.all || Date.now() - S.devAt >= 55000) {
+    const r = await api("/farm/devices?limit=6000");
+    S.all = r.items; S.devAt = Date.now();
+  }
+  scope();
   return S.devs;
+}
+function scope() {
+  const ss = $("#siteSel"), cs = $("#clientSel"); let sv = ss.value, cv = cs.value;
+  const cntBy = (arr, k) => arr.reduce((o, d) => { if (d[k]) o[d[k]] = (o[d[k]] || 0) + 1; return o; }, {});
+  let cC = cntBy(S.all.filter((d) => !sv || String(d.site_id) === sv), "client_id");
+  if (cv && !cC[cv]) { cv = ""; }
+  const sC = cntBy(S.all.filter((d) => !cv || String(d.client_id) === cv), "site_id");
+  if (sv && !sC[sv]) { sv = ""; cC = cntBy(S.all, "client_id"); }
+  const sites = (S.sum ? S.sum.sites : []).filter((x) => sC[x.id]);
+  const cls = (S.sum ? S.sum.clients : []).filter((c) => c.id && cC[c.id]).sort((a, b) => cC[b.id] - cC[a.id]);
+  const nAll = S.all.filter((d) => !cv || String(d.client_id) === cv).length, nCl = S.all.filter((d) => !sv || String(d.site_id) === sv).length;
+  ss.innerHTML = `<option value="">Все площадки · ${nf(nAll)}</option>` + sites.map((x) => `<option value="${x.id}">${esc(x.name.trim())} · ${nf(sC[x.id])}</option>`).join("");
+  cs.innerHTML = `<option value="">Все клиенты · ${nf(nCl)}</option>` + cls.map((c) => `<option value="${c.id}">${esc(c.name.trim())} · ${nf(cC[c.id])}</option>`).join("");
+  ss.value = sv; cs.value = cv;
+  S.devs = S.all.filter((d) => (!sv || String(d.site_id) === sv) && (!cv || String(d.client_id) === cv));
+  S.devMap = new Map(S.all.map((d) => [d.id, d]));
 }
 async function loadLayouts(force) {
   if (!force && S.lay && Date.now() - S.layAt < 120000) return S.lay;
@@ -119,6 +141,7 @@ function aggregate(devs) {
 const isLow = (d) => d.status === "working" && d.nominal && d.ths != null && d.ths < d.nominal * 0.85;
 const isHot = (d) => d.temp != null && d.temp >= 80;
 async function pageToday() {
+  const seq = S.seq = (S.seq || 0) + 1;
   await loadSummary();
   const [devs] = await Promise.all([loadDevices(), loadLayouts()]);
   const s = S.sum, agg = aggregate(devs);
@@ -140,7 +163,7 @@ async function pageToday() {
   s.classes.filter((c) => c.count && c.key !== "offline").forEach((c) => att.push({ col: "mut", t: `Ошибки: ${c.label.toLowerCase()}`, s: "открыть список", n: c.count, go: ["errors", c.key] }));
   const noPlace = devs.filter((d) => d.container_id && !placeOf(d)).length;
   if (noPlace) att.push({ col: "mut", t: "Без места в раскладке", s: "IP не совпал с местом — поправьте раскладку", n: noPlace, go: ["asics", "noplace"] });
-  if (S.page !== "today") return;
+  if (S.page !== "today" || seq !== S.seq) return;
   $("#main").innerHTML = `
   <div class="kpis">
     <button class="k click" data-q="working" title="Сколько асиков сейчас отдают хешрейт"><div class="l">Работают</div><div class="v ok">${nf(agg.working)}<small>из ${nf(agg.total)}</small></div>
@@ -246,24 +269,26 @@ function miniLayout(L, devsById, layer) {
   return `<div class="mini-l ml-${L.layout.kind}">${secs.map((s, si) => `<div class="ml-sec">${Array.from({ length: s.racks }, (_, r) => `<div class="ml-rack" style="grid-template-columns:repeat(${s.places},1fr)">${Array.from({ length: s.shelves * s.places }, (_, j) => { const sh = Math.floor(j / s.places), sl = j % s.places; const id = grid[si][r + ":" + sh + ":" + sl]; const d = id && devsById.get(id); const num = (s.first || 1) + r * s.shelves * s.places + j; if (s.last && num > s.last) return '<i class="x"></i>'; return d ? `<i style="background:${cellColor(d, layer)}"></i>` : '<i class="e"></i>'; }).join("")}</div>`).join("")}</div>`).join("")}</div>`;
 }
 async function pageMap() {
+  const seq = S.seq = (S.seq || 0) + 1;
   await loadSummary();
   const [devs] = await Promise.all([loadDevices(), loadLayouts(true)]);
   const mf = S.mf; const by = {};
   devs.forEach((d) => { (by[d.container_id || 0] = by[d.container_id || 0] || []).push(d); });
   let conts = filtConts().filter((c) => by[c.id || 0] && c.id);
+  const kinds = {}; conts.forEach((c) => { const L = S.lay[c.id]; if (L) kinds[L.layout.kind] = (kinds[L.layout.kind] || 0) + 1; });
+  if (mf.kind && !kinds[mf.kind]) mf.kind = "";
   if (mf.kind) conts = conts.filter((c) => S.lay[c.id] && S.lay[c.id].layout.kind === mf.kind);
   const st = (c) => { const l = by[c.id]; const w = l.filter((d) => d.status === "working").length, off = l.filter((d) => d.status === "offline").length; return { w, off, n: l.length, ths: l.reduce((a, d) => a + (d.status === "working" ? d.ths || 0 : 0), 0), kw: l.reduce((a, d) => a + (d.w || 0), 0) / 1000, tmax: Math.max(-99, ...l.map((d) => d.temp ?? -99)), al: l.filter((d) => d.alarms.length && d.status === "working").length }; };
   const stats = new Map(conts.map((c) => [c.id, st(c)]));
   const natural = (a, b) => a.name.localeCompare(b.name, "ru", { numeric: true });
   conts.sort(mf.sort === "problems" ? (a, b) => stats.get(b.id).off / stats.get(b.id).n - stats.get(a.id).off / stats.get(a.id).n || natural(a, b) : natural);
-  const kinds = {}; filtConts().forEach((c) => { const L = S.lay[c.id]; if (L) kinds[L.layout.kind] = (kinds[L.layout.kind] || 0) + 1; });
   const html = conts.map((c) => { const L = S.lay[c.id]; const x = stats.get(c.id);
     return `<button class="cbox" data-c="${c.id}"><div class="cb-h"><span class="kind k-${L ? L.layout.kind : "air"}">${L ? KIND[L.layout.kind] : ""}</span><span class="nm" title="${esc(c.name)}">${esc(c.name)}</span></div>
       <div class="cb-m"><span><b class="num ok">${nf(x.w)}</b><span class="faint"> / ${nf(x.n)}</span></span>${x.off ? `<span class="bad num">✕ ${nf(x.off)}</span>` : '<span class="faint">все в работе</span>'}${x.al ? `<span class="warn num">⚠ ${nf(x.al)}</span>` : ""}<span class="sp"></span><span class="num">${nf(x.ths / 1000, 2)} PH</span><span class="num faint">${nf(x.kw, 0)} кВт</span>${x.tmax > -99 ? `<span class="num ${x.tmax >= 80 ? "warn" : "faint"}">${nf(x.tmax, 0)}°</span>` : ""}</div>
       ${miniLayout(L, S.devMap, mf.layer)}
       <div class="cb-f faint">${L ? `${L.layout.kind === "hydro" ? "секций" : L.layout.kind === "bath" ? "ванн" : "подсетей"}: ${L.layout.sections.length} · мест ${nf(L.capacity)} · свободно ${nf(Math.max(0, L.capacity - Object.keys(L.placed).length))}${L.unplaced.length ? ` · без места ${L.unplaced.length}` : ""}` : ""}<span class="sp"></span><span class="go">открыть →</span></div></button>`; }).join("");
-  if (S.page !== "map") return;
-  $("#pageAside").innerHTML = `<span class="seg" id="mKind"><button data-k="" class="${!mf.kind ? "on" : ""}">Все</button>${Object.entries(kinds).map(([k, n]) => `<button data-k="${k}" class="${mf.kind === k ? "on" : ""}">${KIND[k]} ${n}</button>`).join("")}</span>
+  if (S.page !== "map" || seq !== S.seq) return;
+  $("#pageAside").innerHTML = `<span class="seg" id="mKind"><button data-k="" class="${!mf.kind ? "on" : ""}">Все ${Object.values(kinds).reduce((x, y) => x + y, 0)}</button>${Object.entries(kinds).map(([k, n]) => `<button data-k="${k}" class="${mf.kind === k ? "on" : ""}">${KIND[k]} ${n}</button>`).join("")}</span>
     <span class="seg" id="mSort"><button data-s="problems" class="${mf.sort === "problems" ? "on" : ""}">Сначала проблемные</button><button data-s="name" class="${mf.sort === "name" ? "on" : ""}">По номеру</button></span>`;
   $("#main").innerHTML = `<div class="fbar"><span class="lbl">Чем красить</span><span class="seg" id="mLayer">${LAYERS.map(([k, t]) => `<button data-l="${k}" class="${mf.layer === k ? "on" : ""}">${t}</button>`).join("")}</span><div class="legend">${legendFor(mf.layer, devs)}</div></div>
     <div class="cmap">${html || '<div class="empty">Нет контейнеров под фильтр</div>'}</div>`;
@@ -275,11 +300,13 @@ async function pageMap() {
 
 // ---------- one container ----------
 async function pageCont() {
+  const seq = S.seq = (S.seq || 0) + 1;
   const cid = +S.arg;
   await loadSummary();
   const [devs, L] = await Promise.all([loadDevices(), api(`/farm/containers/${cid}/layout`)]);
   S.lay = S.lay || {}; S.lay[cid] = L;
-  const list = devs.filter((d) => d.container_id === cid);
+  // Контейнер — физический вид: показываем все его места, без фильтра клиента.
+  void devs; const list = S.all.filter((d) => d.container_id === cid);
   const cl = S.cl; const layer = cl.layer;
   const agg = aggregate(list); const tl = list.map((d) => d.temp).filter((t) => t != null);
   const secs = L.layout.sections;
@@ -305,7 +332,7 @@ async function pageCont() {
   }).join("");
   const un = L.unplaced.map((i) => S.devMap.get(i)).filter(Boolean), dbl = L.doubles.map((i) => S.devMap.get(i)).filter(Boolean);
   const shape = secs.map((s) => L.layout.kind === "air" ? `${s.racks} стеллажей × ${s.shelves} полок × ${s.places} мест` : `${s.shelves} полок × ${s.places} мест`);
-  if (S.page !== "cont") return;
+  if (S.page !== "cont" || seq !== S.seq) return;
   $("#pageTitle").innerHTML = `<a href="#map" class="crumb-a">Контейнеры</a> <span class="faint">›</span> ${esc(L.name)}`;
   $("#pageAside").innerHTML = `<span class="kind k-${L.layout.kind}">${KIND[L.layout.kind]}</span><span class="hint">${esc([...new Set(shape)].join(" · "))}${L.layout.auto ? " · определено по IP" : " · ваша раскладка"}</span><button class="btn" id="lEdit">Поправить раскладку</button>`;
   $("#main").innerHTML = `
@@ -405,12 +432,18 @@ async function compare(ids) {
 const QUICK = { low: ["Ниже 85% заводского", isLow], hot: ["Горячие 80°+", isHot], noplace: ["Без места", (d) => d.container_id && !placeOf(d)] };
 function resetF() { Object.assign(S.f, { q: "", status: "", cls: "", container: "", model: "", alarms: false, quick: "", ids: null }); }
 async function pageAsics() {
+  const seq = S.seq = (S.seq || 0) + 1;
   await loadSummary();
   const [devs] = await Promise.all([loadDevices(), loadLayouts()]);
   const f = S.f; const q = f.q.trim().toLowerCase();
   const idset = f.ids ? new Set(f.ids) : null;
   const base = (d, skip) => (!idset || idset.has(d.id)) && (skip === "c" || !f.container || String(d.container_id) === f.container) && (skip === "m" || !f.model || d.model === f.model) && (!f.cls || d.alarms.some((a) => a.cls === f.cls))
     && (skip === "k" || !f.quick || QUICK[f.quick][1](d)) && (!q || [d.ip, d.mac, d.serial, d.worker, d.num, d.model, d.container, d.client].some((x) => x && String(x).toLowerCase().includes(q)));
+  // Только варианты, где есть результат: счётчики по остальным фильтрам; невозможный выбор сбрасываем.
+  const tally = (skip, keyFn) => { const o = {}; devs.forEach((d) => { if (base(d, skip)) { const k = keyFn(d); if (k != null && k !== "") o[k] = (o[k] || 0) + 1; } }); return o; };
+  let cc = tally("c", (d) => d.container_id), mm = tally("m", (d) => d.model);
+  if (f.container && !cc[f.container]) { f.container = ""; mm = tally("m", (d) => d.model); }
+  if (f.model && !mm[f.model]) { f.model = ""; cc = tally("c", (d) => d.container_id); }
   const pre = devs.filter((d) => base(d));
   let list = pre.filter((d) => (!f.status || d.status === f.status) && (!f.alarms || d.alarms.length));
   const key = f.sort.replace("-", ""), desc = f.sort[0] === "-";
@@ -419,21 +452,21 @@ async function pageAsics() {
   list.sort((a, b) => { if (key === "place") return ((a.container || "").localeCompare(b.container || "", "ru", { numeric: true }) || pk(a) - pk(b)) * (desc ? -1 : 1); let x = a[key], y = b[key]; if (key === "ip") { x = ipn(x); y = ipn(y); } if (key === "alarms") { x = a.alarms.length; y = b.alarms.length; } if (x == null) return 1; if (y == null) return -1; return (typeof x === "number" ? x - y : String(x).localeCompare(String(y), "ru", { numeric: true })) * (desc ? -1 : 1); });
   S.order = list.map((d) => d.id);
   const cnt = (fn) => pre.filter(fn).length;
-  const models = [...new Set(devs.filter((d) => base(d, "m")).map((d) => d.model).filter(Boolean))].sort();
-  const conts = filtConts().filter((c) => c.id).sort((a, b) => a.name.localeCompare(b.name, "ru", { numeric: true }));
+  const models = Object.keys(mm).sort();
+  const conts = filtConts().filter((c) => c.id && cc[c.id]).sort((a, b) => a.name.localeCompare(b.name, "ru", { numeric: true }));
   const show = list;
   const rowA = (d) => `<tr data-id="${d.id}"><td class="cb"><input type="checkbox" aria-label="выбрать"></td><td class="lnk">${esc(d.model)}</td><td title="${esc(d.container)}"><span class="cn">${esc((d.container || "—").split(" ").slice(0, 2).join(" "))}</span> <span class="faint">${esc(placeTxt(d, true))}</span></td><td>${stPill(d.status)}</td><td class="r num">${d.status === "working" ? nf(d.ths, 1) : "—"}${isLow(d) ? ' <span class="warn" title="ниже 85% заводского">↓</span>' : ""}</td><td class="r num ${d.temp >= 80 ? "warn" : ""}">${nf(d.temp, 0)}</td><td class="r num">${nf(d.w, 0)}</td><td class="num">${esc(d.ip || "—")}</td><td>${esc(d.client || "—")}</td><td class="num" title="${esc(d.worker)}">${esc(d.worker || "—")}</td><td class="r num">${d.status === "working" ? dur(d.uptime) : "—"}</td><td>${d.alarms.map((a) => `<span class="lv${a.level}" title="${esc(a.code)}">${esc(a.msg)}</span>`).join(", ")}</td></tr>`;
   const th = (k, t, r) => `<th class="${r ? "r" : ""}" data-sort="${k}">${t}${key === k ? (desc ? " ↓" : " ↑") : ""}</th>`;
   const cname = f.container && (conts.find((c) => String(c.id) === f.container) || {}).name;
   const why = !list.length ? (pre.length ? `Под этот фильтр ничего: ${f.status ? `в выборке нет асиков со статусом «${ST[f.status]}»` : "нет асиков с ошибками"}${cname ? ` в контейнере «${cname}»` : ""}. Всего в выборке ${nf(pre.length)}: работают ${nf(cnt((d) => d.status === "working"))}, не работают ${nf(cnt((d) => d.status === "offline"))}.` : "Ничего не нашлось по поиску и фильтрам.") : "";
-  if (S.page !== "asics") return;
+  if (S.page !== "asics" || seq !== S.seq) return;
   $("#main").innerHTML = `
    <div class="fbar"><input type="search" id="q" placeholder="IP, воркер, серийник, клиент…" value="${esc(f.q)}">
     <div class="chips">${[["", "Все", pre.length], ["working", "Работают", cnt((d) => d.status === "working")], ["offline", "Не работают", cnt((d) => d.status === "offline")], ["suspended", "Пауза", cnt((d) => d.status === "suspended")]].map(([v, t, n]) => `<button class="chip ${f.status === v ? "on" : ""}" data-st="${v}" ${n || !v ? "" : "disabled"}>${t} <b>${nf(n)}</b></button>`).join("")}
-     <button class="chip ${f.alarms ? "on" : ""}" id="onlyAl">С ошибками <b>${nf(cnt((d) => d.alarms.length))}</b></button></div>
-    <div class="chips">${Object.entries(QUICK).map(([k, [t, fn]]) => { const n = devs.filter((d) => base(d, "k") && fn(d)).length; return `<button class="chip q ${f.quick === k ? "on" : ""}" data-qk="${k}">${t} <b>${nf(n)}</b></button>`; }).join("")}</div>
-    <select class="sel" id="fCont"><option value="">Все контейнеры</option>${conts.map((c) => `<option value="${c.id}" ${String(c.id) === f.container ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
-    <select class="sel" id="fModel"><option value="">Все модели</option>${models.map((m) => `<option ${m === f.model ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>
+     <button class="chip ${f.alarms ? "on" : ""}" id="onlyAl" ${cnt((d) => d.alarms.length) || f.alarms ? "" : "disabled"}>С ошибками <b>${nf(cnt((d) => d.alarms.length))}</b></button></div>
+    <div class="chips">${Object.entries(QUICK).map(([k, [t, fn]]) => { const n = devs.filter((d) => base(d, "k") && fn(d)).length; return `<button class="chip q ${f.quick === k ? "on" : ""}" data-qk="${k}" ${n || f.quick === k ? "" : "disabled"}>${t} <b>${nf(n)}</b></button>`; }).join("")}</div>
+    <select class="sel" id="fCont"><option value="">Все контейнеры · ${conts.length}</option>${conts.map((c) => `<option value="${c.id}" ${String(c.id) === f.container ? "selected" : ""}>${esc(c.name)} · ${nf(cc[c.id])}</option>`).join("")}</select>
+    <select class="sel" id="fModel"><option value="">Все модели · ${models.length}</option>${models.map((m) => `<option value="${esc(m)}" ${m === f.model ? "selected" : ""}>${esc(m)} · ${nf(mm[m])}</option>`).join("")}</select>
     ${f.ids ? `<span class="pill">только выделенные ${nf(f.ids.length)} <button class="x" id="idsX" aria-label="убрать">✕</button></span>` : ""}
     ${f.q || f.status || f.container || f.model || f.alarms || f.quick || f.ids ? '<button class="btn ghost" id="fReset">Сбросить фильтры</button>' : ""}
     <span class="sp"></span><span class="hint">${nf(list.length)} асиков</span><button class="btn" id="csv">Выгрузить в Excel</button></div>
@@ -496,13 +529,25 @@ function saveBlob(b, cd) { const a = document.createElement("a"); a.href = URL.c
 
 // ---------- problems ----------
 async function pageErrors() {
+  const seq = S.seq = (S.seq || 0) + 1;
   await loadSummary();
   await loadLayouts();
   if (!S.devs) await loadDevices();
-  const ef = S.ef;
+  const ef = S.ef; const eq = ef.q.trim().toLowerCase();
+  // Карточки классов — по выбранным площадке и клиенту, считаем асики; пустые не показываем.
+  const clsN = {}; let anyAl = 0;
+  S.devs.forEach((d) => { if (!d.alarms.length) return; anyAl++; new Set(d.alarms.map((a) => a.cls)).forEach((k) => (clsN[k] = (clsN[k] || 0) + 1)); });
+  if (ef.cls && !clsN[ef.cls]) { ef.cls = ""; }
+  const okE = (d, skip) => d.alarms.some((a) => (!ef.cls || a.cls === ef.cls) && (!ef.level || (a.level || 0) >= +ef.level))
+    && (!eq || [d.ip, d.mac, d.serial, d.worker, d.num, d.model].some((x) => x && String(x).toLowerCase().includes(eq)))
+    && (skip === "c" || !ef.container || String(d.container_id) === ef.container) && (skip === "m" || !ef.model || d.model === ef.model);
+  const tallyE = (skip, keyFn) => { const o = {}; S.devs.forEach((d) => { if (okE(d, skip)) { const k = keyFn(d); if (k != null && k !== "") o[k] = (o[k] || 0) + 1; } }); return o; };
+  let ecc = tallyE("c", (d) => d.container_id), emm = tallyE("m", (d) => d.model);
+  if (ef.container && !ecc[ef.container]) { ef.container = ""; emm = tallyE("m", (d) => d.model); }
+  if (ef.model && !emm[ef.model]) { ef.model = ""; ecc = tallyE("c", (d) => d.container_id); }
   const r = await api("/farm/errors?" + qs({ site: site(), client: client(), cls: ef.cls, container: ef.container, model: ef.model, group: "code", q: ef.q, level: ef.level }));
-  const conts = filtConts().filter((c) => c.id).sort((a, b) => a.name.localeCompare(b.name, "ru", { numeric: true }));
-  const models = [...new Set(r.items.map((x) => x.model).filter(Boolean))].sort();
+  const conts = filtConts().filter((c) => c.id && ecc[c.id]).sort((a, b) => a.name.localeCompare(b.name, "ru", { numeric: true }));
+  const models = Object.keys(emm).sort();
   // groups computed here: error → devices, top containers, oldest
   const gm = {};
   r.items.forEach((x) => { const k = x.code + " · " + x.msg; const g = gm[k] = gm[k] || { k, code: x.code, msg: x.msg, cls: x.cls_label, lvl: x.lvl, ids: new Set(), conts: {}, since: null }; g.ids.add(x.id); g.conts[x.container || "—"] = (g.conts[x.container || "—"] || 0) + 1; if (x.since && (!g.since || x.since < g.since)) g.since = x.since; });
@@ -511,13 +556,13 @@ async function pageErrors() {
   const show = items;
   const rowE = (x) => { const d = S.devMap && S.devMap.get(x.id); return `<tr data-id="${x.id}"><td class="cb"><input type="checkbox" aria-label="выбрать"></td><td><span class="lv${x.lvl}">${esc(x.msg)}</span> <span class="faint num">${esc(x.code)}</span></td><td class="lv${x.lvl}">${LV[x.lvl] || "—"}</td><td class="num">${tfmt(x.since)}</td><td>${esc(x.model || "")}</td><td title="${esc(x.container)}"><span class="cn">${esc((x.container || "—").split(" ").slice(0, 2).join(" "))}</span> <span class="faint">${d ? esc(placeTxt(d, true)) : ""}</span></td><td class="num">${esc(x.ip || "—")}</td><td>${esc(x.client || "—")}</td><td class="r num">${nf(x.temp, 0)}</td></tr>`; };
   S.order = [...new Set(show.map((x) => x.id))];
-  const all = S.sum.classes.filter((c) => c.count);
-  if (S.page !== "errors") return;
+  const all = S.sum.classes.map((c) => ({ ...c, count: clsN[c.key] || 0 })).filter((c) => c.count);
+  if (S.page !== "errors" || seq !== S.seq) return;
   $("#main").innerHTML = `
-  <div class="cls-row"><button class="clsc ${!ef.cls ? "on" : ""}" data-cls=""><span>Все проблемы</span><b class="num">${nf(S.sum.with_alarms)}</b><i>асиков</i></button>${all.map((c) => `<button class="clsc ${ef.cls === c.key ? "on" : ""} c-${c.key}" data-cls="${c.key}"><span>${esc(c.label)}</span><b class="num">${nf(c.count)}</b><i>ошибок</i></button>`).join("")}</div>
+  <div class="cls-row"><button class="clsc ${!ef.cls ? "on" : ""}" data-cls=""><span>Все проблемы</span><b class="num">${nf(anyAl)}</b><i>асиков</i></button>${all.map((c) => `<button class="clsc ${ef.cls === c.key ? "on" : ""} c-${c.key}" data-cls="${c.key}"><span>${esc(c.label)}</span><b class="num">${nf(c.count)}</b><i>асиков</i></button>`).join("")}</div>
   <div class="fbar"><input type="search" id="eq" placeholder="IP, воркер, серийник…" value="${esc(ef.q)}">
-   <select class="sel" id="eCont"><option value="">Все контейнеры</option>${conts.map((c) => `<option value="${c.id}" ${String(c.id) === ef.container ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
-   <select class="sel" id="eModel"><option value="">Все модели</option>${models.map((m) => `<option ${m === ef.model ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>
+   <select class="sel" id="eCont"><option value="">Все контейнеры · ${conts.length}</option>${conts.map((c) => `<option value="${c.id}" ${String(c.id) === ef.container ? "selected" : ""}>${esc(c.name)} · ${nf(ecc[c.id])}</option>`).join("")}</select>
+   <select class="sel" id="eModel"><option value="">Все модели · ${models.length}</option>${models.map((m) => `<option value="${esc(m)}" ${m === ef.model ? "selected" : ""}>${esc(m)} · ${nf(emm[m])}</option>`).join("")}</select>
    <select class="sel" id="eLvl"><option value="">Любая важность</option><option value="1" ${ef.level === "1" ? "selected" : ""}>от предупреждения</option><option value="2" ${ef.level === "2" ? "selected" : ""}>от «опасно»</option><option value="3" ${ef.level === "3" ? "selected" : ""}>только критичные</option></select>
    <span class="sp"></span><button class="btn pri" id="eXls">Выгрузить в Excel</button></div>
   <div class="w"><div class="wh">Какие ошибки · ${groups.length}<span class="sp"></span><span class="mini">клик по строке — показать асики с этой ошибкой ниже</span></div><div class="scroll" style="max-height:360px"><table class="tbl" id="tG"><thead><tr><th>Ошибка</th><th>Код</th><th>Класс</th><th>Важность</th><th class="r">Асиков</th><th>Где больше всего</th><th>Самая давняя</th></tr></thead><tbody>
@@ -543,12 +588,13 @@ async function pageErrors() {
 
 // ---------- clients ----------
 async function pageClients() {
+  const seq = S.seq = (S.seq || 0) + 1;
   await loadSummary();
   const devs = await loadDevices();
   const m = {};
   devs.forEach((d) => { const k = m[d.client_id || 0] = m[d.client_id || 0] || { id: d.client_id, name: d.client || "Без клиента", total: 0, working: 0, offline: 0, susp: 0, ths: 0, nom: 0, kw: 0, al: 0, conts: new Set(), models: {} }; k.total++; if (d.status === "working") { k.working++; k.ths += d.ths || 0; k.nom += d.nominal || 0; } if (d.status === "offline") k.offline++; if (d.status === "suspended") k.susp++; k.kw += (d.w || 0) / 1000; if (d.alarms.length) k.al++; if (d.container_id) k.conts.add(d.container_id); k.models[d.model] = (k.models[d.model] || 0) + 1; });
   const cl = Object.values(m).sort((a, b) => b.total - a.total);
-  if (S.page !== "clients") return;
+  if (S.page !== "clients" || seq !== S.seq) return;
   $("#main").innerHTML = `<div class="w"><div class="wh">Клиенты · ${cl.length}<span class="sp"></span><span class="mini">«В работе» — доля асиков клиента, которые майнят прямо сейчас. «% от заводского» — их хешрейт к паспортному</span></div><div class="scroll"><table class="tbl" id="tCl"><thead><tr><th>Клиент</th><th class="r">Асиков</th><th class="r">В работе</th><th class="r">Не работают</th><th class="r">С ошибками</th><th class="r">PH/s</th><th class="r">% от заводского</th><th class="r">кВт</th><th class="r">Контейнеров</th><th>Модели</th></tr></thead><tbody>
    ${cl.map((c) => { const p = c.total ? c.working / c.total * 100 : 0; return `<tr data-client="${c.id || ""}"><td class="lnk">${esc((c.name || "").trim())}</td><td class="r num">${nf(c.total)}</td><td class="r"><span class="pct ${p >= 95 ? "p-ok" : p >= 80 ? "p-warn" : "p-bad"}">${nf(p, 0)}%</span></td><td class="r num ${c.offline ? "bad" : "faint"}">${nf(c.offline)}</td><td class="r num ${c.al ? "warn" : "faint"}">${nf(c.al)}</td><td class="r num">${nf(c.ths / 1000, 2)}</td><td class="r num">${c.nom ? nf(c.ths / c.nom * 100, 0) + "%" : "—"}</td><td class="r num">${nf(c.kw, 0)}</td><td class="r num">${c.conts.size}</td><td class="small">${Object.entries(c.models).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n, k]) => `${esc(n || "—")} <span class="faint">${k}</span>`).join(", ")}</td></tr>`; }).join("")}
    </tbody></table></div></div>`;

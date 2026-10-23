@@ -88,7 +88,7 @@ def back_to_menu() -> InlineKeyboardMarkup:
   """A single button that returns to the main menu."""
   return InlineKeyboardMarkup(
     inline_keyboard=[
-      [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home")]
+      [InlineKeyboardButton(text="☰ Меню", callback_data="menu:home")]
     ]
   )
 
@@ -103,7 +103,7 @@ def brand_list_kb(brands: list[dict]) -> InlineKeyboardMarkup:
     builder.button(text=label, callback_data=f"cat:b:{brand}:0")
   builder.adjust(2)
   builder.row(
-    InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home")
+    InlineKeyboardButton(text="☰ Меню", callback_data="menu:home")
   )
   return builder.as_markup()
 
@@ -191,7 +191,7 @@ def calc_start_kb() -> InlineKeyboardMarkup:
   builder.button(text="✍️ Ввести вручную", callback_data="calc:manual")
   builder.adjust(1)
   builder.row(
-    InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home")
+    InlineKeyboardButton(text="☰ Меню", callback_data="menu:home")
   )
   return builder.as_markup()
 
@@ -405,7 +405,7 @@ def history_list_kb(
             )
         )
     builder.row(
-        InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home")
+        InlineKeyboardButton(text="☰ Меню", callback_data="menu:home")
     )
     return builder.as_markup()
 
@@ -437,7 +437,7 @@ def history_empty_kb() -> InlineKeyboardMarkup:
                     text="🧮 Сделать расчёт", callback_data="menu:calculator"
                 )
             ],
-            [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home")],
+            [InlineKeyboardButton(text="☰ Меню", callback_data="menu:home")],
         ]
     )
 
