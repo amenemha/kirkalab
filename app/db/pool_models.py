@@ -13,6 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.db import farm_models  # noqa: F401  (farm_clients for the FK)
 from app.db.session import Base
 
 
@@ -46,6 +47,7 @@ class PoolAccount(Base):
     profit_total: Mapped[float | None] = mapped_column(Float)
     last_ok: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)  # что ссылка не показывает (начисления/воркеры)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

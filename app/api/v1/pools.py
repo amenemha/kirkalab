@@ -32,7 +32,7 @@ def _acc(a: pm.PoolAccount) -> dict:
         "ths_10m": _th(a.hs_10m), "ths_1h": _th(a.hs_1h), "ths_1d": _th(a.hs_1d),
         "w_active": a.workers_active, "w_inactive": a.workers_inactive, "w_invalid": a.workers_invalid,
         "balance": a.balance, "profit_24h": a.profit_24h, "profit_total": a.profit_total,
-        "last_ok": a.last_ok.isoformat() if a.last_ok else None, "error": a.last_error,
+        "last_ok": a.last_ok.isoformat() if a.last_ok else None, "error": a.last_error, "note": a.note,
     }
 
 
