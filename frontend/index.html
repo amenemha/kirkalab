@@ -1,70 +1,63 @@
-<!DOCTYPE html>
-<html lang="ru">
+<!doctype html>
+<html lang="ru" data-theme="dark">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Kirkalab — Admin</title>
-<link rel="stylesheet" href="/styles.css" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kirka — ферма</title>
+<meta name="theme-color" content="#0E0F10">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2301696F'/%3E%3Cpath d='M9 23 16 9l7 14M12 18h8' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/farm.css?v=1">
 </head>
 <body>
-<header class="topbar">
-<span class="brand">Kirkalab</span>
-<span id="whoami" class="whoami"></span>
-<button id="logout-btn" class="btn ghost hidden">Выйти</button>
-</header>
-
-<main class="container">
-<!-- Экран входа -->
-<section id="login-view" class="card">
-<h1>Вход</h1>
-<form id="login-form" autocomplete="on">
-<label>Email<input type="email" id="login-email" required /></label>
-<label>Пароль<input type="password" id="login-password" required /></label>
-<button type="submit" class="btn primary">Войти</button>
-</form>
-<p class="muted"><a href="#" id="show-reset">Забыли пароль?</a></p>
-<p id="login-error" class="error" role="alert"></p>
-</section>
-
-<!-- Сброс пароля -->
-<section id="reset-view" class="card hidden">
-<h1>Сброс пароля</h1>
-<form id="reset-request-form">
-<label>Email<input type="email" id="reset-email" required /></label>
-<button type="submit" class="btn primary">Запросить токен</button>
-</form>
-<form id="reset-confirm-form" class="mt">
-<label>Токен<input type="text" id="reset-token" required /></label>
-<label>Новый пароль<input type="password" id="reset-new-password" minlength="8" required /></label>
-<button type="submit" class="btn primary">Сменить пароль</button>
-</form>
-<p class="muted"><a href="#" id="show-login">Назад ко входу</a></p>
-<p id="reset-msg" class="info" role="status"></p>
-</section>
-
-<!-- Панель -->
-<section id="dashboard-view" class="hidden">
-<div class="card">
-<h1>Профиль</h1>
-<dl id="profile" class="profile"></dl>
-<button id="verify-email-btn" class="btn">Подтвердить email</button>
-<p id="profile-msg" class="info" role="status"></p>
+<div id="login" class="login" hidden>
+  <div class="lg-card">
+    <div class="lg-logo"><svg viewBox="0 0 32 32" width="40" height="40" aria-label="Kirka"><rect width="32" height="32" rx="7" fill="var(--acc)"/><path d="M9 23 16 9l7 14M12 18h8" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Kirka</span></div>
+    <h1>Вход через Telegram</h1>
+    <p class="mut">Отсканируйте код телефоном или нажмите кнопку — бот спросит подтверждение.</p>
+    <div id="qrbox" class="qrbox"><div class="spin"></div></div>
+    <a id="tglink" class="btn pri wide" target="_blank" rel="noopener">Открыть @kirkalabbot</a>
+    <p id="lgmsg" class="mut small"></p>
+  </div>
 </div>
 
-<div class="card" id="users-card">
-<div class="row between">
-<h1>Пользователи</h1>
-<button id="refresh-users" class="btn ghost">Обновить</button>
+<div id="app" class="app" hidden>
+  <aside class="side">
+    <div class="logo" title="Kirka"><svg viewBox="0 0 32 32" width="28" height="28"><rect width="32" height="32" rx="7" fill="var(--acc)"/><path d="M9 23 16 9l7 14M12 18h8" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <button class="nav on" data-page="today" aria-label="Сегодня"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span class="tip">Сегодня</span></button>
+    <button class="nav" data-page="map" aria-label="Карта"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><span class="tip">Карта контейнеров</span></button>
+    <button class="nav" data-page="asics" aria-label="Асики"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1"/><path d="M8 9h8M8 13h8M8 17h4"/></svg><span class="tip">Асики</span></button>
+    <button class="nav" data-page="errors" aria-label="Ошибки"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17v.5"/></svg><span class="tip">Ошибки</span><b id="errBadge" class="badge" hidden></b></button>
+    <button class="nav" data-page="clients" aria-label="Клиенты"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.5 3.6 5.2"/></svg><span class="tip">Клиенты</span></button>
+    <div class="sp"></div>
+    <a class="nav" href="/calc.html" aria-label="Калькулятор"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 12h2M12 12h2M16 12h0M8 16h2M12 16h2"/></svg><span class="tip">Калькулятор</span></a>
+    <button class="nav" id="themeBtn" aria-label="Тема"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg><span class="tip">Светлая / тёмная</span></button>
+    <button class="nav" id="logoutBtn" aria-label="Выйти"><svg viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg><span class="tip">Выйти</span></button>
+  </aside>
+  <header class="top">
+    <div class="crumb"><span id="pageTitle">Сегодня</span>
+      <select id="siteSel" class="sel" aria-label="Площадка"><option value="">Все площадки</option></select>
+      <select id="clientSel" class="sel" aria-label="Клиент"><option value="">Все клиенты</option></select>
+    </div>
+    <div class="sp"></div>
+    <div class="auto"><i></i><span id="syncAt">—</span></div>
+    <div class="user"><div class="av" id="av">K</div></div>
+  </header>
+  <main class="main" id="main"></main>
 </div>
-<table class="users">
-<thead><tr><th>ID</th><th>Email</th><th>Handle</th><th>Активен</th><th>Админ</th><th>Создан</th></tr></thead>
-<tbody id="users-body"></tbody>
-</table>
-<p id="users-msg" class="info" role="status"></p>
-</div>
-</section>
-</main>
 
-<script src="/app.js"></script>
+<div id="selbar" class="selbar" hidden>
+  <b id="selN">0</b> выбрано
+  <button class="btn" data-act="compare">Сравнить</button>
+  <button class="btn" data-act="export">Выгрузить ошибки</button>
+  <button class="btn" data-act="copy">Копировать IP</button>
+  <button class="btn ghost" data-act="clear">Снять</button>
+</div>
+
+<div id="drawer" class="drawer" hidden><div class="dr-in" id="drIn"></div></div>
+<div id="modal" class="modal" hidden><div class="md-in" id="mdIn"></div></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="/vendor/qrcode.min.js"></script>
+<script src="/farm.js?v=1"></script>
 </body>
 </html>

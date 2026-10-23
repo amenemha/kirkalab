@@ -24,8 +24,16 @@ def get_user_by_telegram_id(db: Session, telegram_user_id: int) -> models.User |
 
 
 def get_or_create_telegram_user(db: Session, telegram_user_id: int) -> models.User:
+    from app.core.config import get_settings
+
+    owners = set(get_settings().owner_telegram_ids or [])
     user = get_user_by_telegram_id(db, telegram_user_id=telegram_user_id)
     if user is not None:
+        if telegram_user_id in owners and not user.is_admin:
+            user.is_admin = True
+            db.add(user)
+            db.commit()
+            db.refresh(user)
         return user
     user = models.User(
         # Placeholder address: telegram users have no real email. The domain
@@ -38,7 +46,7 @@ def get_or_create_telegram_user(db: Session, telegram_user_id: int) -> models.Us
         hashed_password=hash_password(secrets.token_urlsafe(32)),
         telegram_user_id=telegram_user_id,
         is_active=True,
-        is_admin=False,
+        is_admin=telegram_user_id in owners,
     )
     db.add(user)
     db.commit()

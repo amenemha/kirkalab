@@ -679,3 +679,25 @@ def billing_activate(
         premium_until=user.premium_until,
         already_applied=already,
     )
+
+
+@router.get("/farm/summary")
+def internal_farm_summary(
+    telegram_user_id: int,
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    db: Session = Depends(get_db),
+):
+    """Compact farm summary for the bot (admins only)."""
+    _require_bot_secret(x_bot_secret)
+    from app.api.v1.farm import errors as farm_errors, summary as farm_summary
+    from app.crud.users import get_user_by_telegram_id
+
+    user = get_user_by_telegram_id(db, telegram_user_id=telegram_user_id)
+    owners = set(settings.owner_telegram_ids or [])
+    if not ((user and user.is_admin) or telegram_user_id in owners):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Farm is not available")
+    s = farm_summary(db)
+    e = farm_errors(None, None, None, None, None, None, None, "code", db)
+    s["top_errors"] = e["groups"][:6]
+    s.pop("clients", None)
+    return s
