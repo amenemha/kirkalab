@@ -12,6 +12,7 @@ from app.services.farm.sync import run_sync
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("kirka.farm.worker")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def pools_loop(every: int) -> None:

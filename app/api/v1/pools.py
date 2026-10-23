@@ -86,7 +86,7 @@ def all_daily(d_from: str | None = None, d_to: str | None = None, tz: int = 3, g
     out = []
     for a in db.scalars(q.order_by(pm.PoolAccount.group_name, pm.PoolAccount.account)):
         rows = day_table(db, a.id, f, t, tz)
-        out.append({"account": _acc(a), "days": [{"day": r["day"], "ths": _th(r["avg_hs"]), "hours": r["hours"], "profit": r["profit"]} for r in rows]})
+        out.append({"account": _acc(a), "days": [{"day": r["day"], "ths": _th(r["avg_hs"]), "hours": r["hours"], "part": r["source"].startswith("в архиве"), "src": r["source"], "profit": r["profit"]} for r in rows]})
     return {"from": f.isoformat(), "to": t.isoformat(), "items": out}
 
 
