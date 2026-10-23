@@ -5,9 +5,11 @@ const TOKENS = "kirkalab_tokens";
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const nf = (x, d = 0) => (x == null || isNaN(x) ? "—" : Number(x).toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }));
+const NF = {};
+const nf = (x, d = 0) => (x == null || isNaN(x) ? "—" : (NF[d] || (NF[d] = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }))).format(Number(x)));
 const MSK = { timeZone: "Europe/Moscow" };
-const tfmt = (iso, withDate = true) => { if (!iso) return "—"; const d = typeof iso === "number" ? new Date(iso * 1000) : new Date(iso); return d.toLocaleString("ru-RU", Object.assign({ hour: "2-digit", minute: "2-digit" }, withDate ? { day: "2-digit", month: "2-digit" } : {}, MSK)); };
+const TF = {};
+const tfmt = (iso, withDate = true) => { if (!iso) return "—"; const d = typeof iso === "number" ? new Date(iso * 1000) : new Date(iso); const k = withDate ? 1 : 0; return (TF[k] || (TF[k] = new Intl.DateTimeFormat("ru-RU", Object.assign({ hour: "2-digit", minute: "2-digit" }, withDate ? { day: "2-digit", month: "2-digit" } : {}, MSK)))).format(d); };
 const dur = (sec) => { if (sec == null) return "—"; sec = Math.max(0, Math.floor(sec)); const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60); return d ? `${d} д ${h} ч` : h ? `${h} ч ${m} мин` : `${m} мин`; };
 const ST = { working: "Работает", offline: "Офлайн", suspended: "Пауза", unknown: "Нет данных" };
 const LV = { 0: "Инфо", 1: "Предупреждение", 2: "Опасно", 3: "Критично" };
@@ -76,7 +78,7 @@ async function loadDevices(force) {
 const PAGES = { today: pageToday, map: pageMap, asics: pageAsics, errors: pageErrors, clients: pageClients };
 const TITLES = { today: "Сегодня", map: "Карта контейнеров", asics: "Асики", errors: "Ошибки", clients: "Клиенты" };
 async function go(p, keep) {
-  S.page = p; if (!keep) { S.sel.clear(); updSel(); }
+  S.page = p; $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; if (!keep) { S.sel.clear(); updSel(); }
   $$(".nav[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === p));
   $("#pageTitle").textContent = TITLES[p];
   history.replaceState(null, "", "#" + p);
