@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     croft_login: str | None = None
     croft_password: str | None = None
     croft_sync_seconds: int = 60
+    pools_sync_seconds: int = 600
     # Telegram IDs that become admins on first login (comma-separated).
     owner_telegram_ids: list[int] = []
 

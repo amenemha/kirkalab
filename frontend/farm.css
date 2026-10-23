@@ -147,3 +147,7 @@ svg{stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-l
 .empty{padding:30px;text-align:center;color:var(--mut)}
 @media (max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}.c8,.c7,.c6,.c5,.c4,.c3{grid-column:span 12}}
 @media (max-width:640px){.app{grid-template-columns:1fr;grid-template-rows:46px 1fr 52px}.side{grid-row:3;flex-direction:row;justify-content:space-around;border-right:0;border-top:1px solid var(--line);padding:0 4px}.logo,.side .sp,.nav .tip,#themeBtn,#logoutBtn{display:none}.nav.on::before{display:none}.top,.main{grid-column:1}.kpis{grid-template-columns:repeat(2,1fr)}.crumb select{max-width:110px}.auto{display:none}.kv{grid-template-columns:110px 1fr}.selbar{left:8px;right:8px;transform:none;overflow:auto;bottom:60px}}
+
+.tbl tr.grp td{background:var(--panel2);color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;cursor:default}
+#tP tr[data-pacc]{cursor:pointer}
+input[type=date].sel{height:30px}
