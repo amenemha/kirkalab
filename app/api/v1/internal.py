@@ -701,3 +701,49 @@ def internal_farm_summary(
     s["top_errors"] = e["groups"][:6]
     s.pop("clients", None)
     return s
+
+
+@router.get("/pools/summary")
+def internal_pools_summary(
+    telegram_user_id: int,
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    db: Session = Depends(get_db),
+):
+    """Pool totals for the bot: now per coin, yesterday per coin, drops and broken links (admins only)."""
+    _require_bot_secret(x_bot_secret)
+    from datetime import date as _date, datetime as _dt, timedelta as _td, timezone as _tz
+
+    from app.api.v1.pools import accounts as pool_accounts, all_daily
+    from app.crud.users import get_user_by_telegram_id
+
+    user = get_user_by_telegram_id(db, telegram_user_id=telegram_user_id)
+    owners = set(settings.owner_telegram_ids or [])
+    if not ((user and user.is_admin) or telegram_user_id in owners):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Pools are not available")
+    items = pool_accounts(db)["items"]
+    coins: dict[str, dict] = {}
+    drops, broken, last = [], [], None
+    for a in items:
+        if not a["active"]:
+            continue
+        c = coins.setdefault(a["coin"] or "?", {"coin": a["coin"] or "?", "ths_1h": 0.0, "ths_1d": 0.0, "w_active": 0, "w_inactive": 0, "links": 0, "yesterday": 0.0})
+        c["links"] += 1
+        c["ths_1h"] += a["ths_1h"] or 0
+        c["ths_1d"] += a["ths_1d"] or 0
+        c["w_active"] += a["w_active"] or 0
+        c["w_inactive"] += a["w_inactive"] or 0
+        if a["error"]:
+            broken.append({"account": a["account"], "group": a["group"], "error": a["error"][:80]})
+        elif (a["ths_1d"] or 0) > 0 and (a["ths_1h"] or 0) < a["ths_1d"] * 0.7:
+            drops.append({"account": a["account"], "group": a["group"], "coin": a["coin"], "ths_1h": a["ths_1h"], "ths_1d": a["ths_1d"]})
+        if a["last_ok"] and (last is None or a["last_ok"] > last):
+            last = a["last_ok"]
+    y = (_dt.now(_tz(_td(hours=3))).date() - _td(days=1)).isoformat()
+    for it in all_daily(y, y, 3, None, db)["items"]:
+        d = it["days"][0] if it["days"] else None
+        if d and d["ths"] is not None:
+            coins[it["account"]["coin"] or "?"]["yesterday"] += d["ths"]
+    drops.sort(key=lambda r: (r["ths_1h"] or 0) - r["ths_1d"])
+    _ = _date
+    return {"coins": sorted(coins.values(), key=lambda c: -c["ths_1d"]), "drops": drops[:8], "broken": broken[:8],
+            "broken_total": len(broken), "drops_total": len(drops), "yesterday": y, "updated": last}
