@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import pool_models as pm
-from app.services.pools.viabtc import ViaBTC, hs, num
+from app.services.pools.viabtc import ViaBTC, ViaBTCError, hs, num
 
 log = logging.getLogger("kirka.pools")
 
@@ -39,8 +39,13 @@ def sync_account(db: Session, cli: ViaBTC, a: pm.PoolAccount, with_workers: bool
         else:
             db.add(pm.PoolHourly(account_id=a.id, ts=ts, hs=v, workers=w, reject=rj))
 
+    notes = []
     if with_profit:
-        rows = cli.profit_days(key, coin, uid)
+        try:
+            rows = cli.profit_days(key, coin, uid)
+        except ViaBTCError as e:  # 3002: the link does not share accruals
+            rows = []
+            notes.append("начисления закрыты" if str(e).startswith("3002") else f"начисления: {e}")
         days = {}
         for r in rows:
             try:
@@ -58,7 +63,11 @@ def sync_account(db: Session, cli: ViaBTC, a: pm.PoolAccount, with_workers: bool
                 db.add(x)
 
     if with_workers:
-        ws = cli.workers(key, coin, uid)
+        try:
+            ws = cli.workers(key, coin, uid)
+        except ViaBTCError as e:
+            ws = []
+            notes.append("воркеры закрыты" if str(e).startswith("3002") else f"воркеры: {e}")
         have_w = {w.name: w for w in db.scalars(select(pm.PoolWorker).where(pm.PoolWorker.account_id == a.id))}
         t = datetime.now(timezone.utc)
         for r in ws:
@@ -75,7 +84,10 @@ def sync_account(db: Session, cli: ViaBTC, a: pm.PoolAccount, with_workers: bool
             w.hs_10m, w.hs_1h, w.hs_1d = num(r.get("hashrate_10min")), num(r.get("hashrate_1hour")), num(r.get("hashrate_1day"))
             w.reject_1h, w.online_7d_h = num(r.get("reject_rate_1hour")), num(r.get("online_time_7d"))
             w.last_active, w.updated_at = _ts(r.get("last_active")), t
-    a.last_ok, a.last_error = datetime.now(timezone.utc), None
+    a.last_ok = datetime.now(timezone.utc)
+    a.last_error = None
+    if notes:
+        a.note = "; ".join(notes)
 
 
 def run_pools(db: Session, cli: ViaBTC | None = None, with_workers: bool = True, with_profit: bool = True) -> tuple[int, int]:
@@ -128,10 +140,12 @@ def import_rows(db: Session, rows: list[dict], cli: ViaBTC | None = None, resolv
             added += 1
         else:
             updated += 1
+        first = a.id is None or a.group_name is None or a.group_name == r.get("group")
         a.account = account
-        a.note_user = r.get("user_name")
-        a.group_name = r.get("group")
-        a.track = bool(r.get("track", True))
+        if first:  # the same link may repeat on test sheets — the first sheet keeps it
+            a.note_user = r.get("user_name")
+            a.group_name = r.get("group")
+        a.track = bool(r.get("track", True)) or bool(a.track and not first)
         a.tg_chat = str(r["chat"]) if r.get("chat") not in (None, "") else None
         a.tg_thread = int(r["thread"]) if r.get("thread") not in (None, "") else None
         a.threshold_ths = num(r.get("threshold"))
@@ -201,17 +215,19 @@ def import_other(db: Session, other: list[dict]) -> int:
     import hashlib
 
     n = 0
+    seen: set[str] = set()
     for o in other:
         url = o["url"].strip()
         prov = provider_of(url)
-        if prov == "viabtc":
-            continue
         key = hashlib.sha1(url.encode()).hexdigest()
+        if prov == "viabtc" or key in seen:
+            continue
+        seen.add(key)
         a = db.scalar(select(pm.PoolAccount).where(pm.PoolAccount.provider == prov, pm.PoolAccount.access_key == key))
         if a is None:
             a = pm.PoolAccount(provider=prov, access_key=key, coin="", sub_user_id=0, url=url, active=False)
             db.add(a)
             n += 1
-        a.group_name = o.get("group")
+        a.group_name = a.group_name or o.get("group")
     db.commit()
     return n

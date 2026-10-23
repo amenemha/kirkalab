@@ -403,7 +403,7 @@ async function pagePools() {
     const avg = ok.length ? ok.reduce((x, y) => x + y, 0) / ok.length : null;
     const prof = it.days.reduce((x, d) => x + (d.profit || 0), 0);
     const down = a.ths_10m != null && a.ths_1d && a.ths_10m < a.ths_1d * 0.7;
-    return head + `<tr data-pacc="${a.id}"><td class="lnk">${esc(a.account || a.user || "—")}${a.user && a.account && a.user.toLowerCase() !== a.account.toLowerCase() ? ` <span class="faint">${esc(a.user)}</span>` : ""}${a.error ? ` <span class="bad" title="${esc(a.error)}">●</span>` : ""}</td><td>${esc(a.coin)}</td>
+    return head + `<tr data-pacc="${a.id}"><td class="lnk">${esc(a.account || a.user || "—")}${a.user && a.account && a.user.toLowerCase() !== a.account.toLowerCase() ? ` <span class="faint">${esc(a.user)}</span>` : ""}${a.error ? ` <span class="bad" title="${esc(a.error)}">●</span>` : ""}${a.note ? ` <span class="faint" title="${esc(a.note)}">ⓘ</span>` : ""}</td><td>${esc(a.coin)}</td>
       <td class="r num ${down ? "bad" : ""}">${fh(a.ths_10m)}</td><td class="r num">${fh(a.ths_1d)}</td><td class="r num"><span class="ok">${a.w_active ?? "—"}</span>${a.w_inactive ? ` / <span class="bad">${a.w_inactive}</span>` : ""}</td>
       ${it.days.map((d) => `<td class="r num ${d.hours && d.hours < 24 && d.day !== pf.to ? "warn" : ""}" title="${d.hours} ч в архиве">${d.ths == null ? '<span class="faint">—</span>' : fh(d.ths)}</td>`).join("")}
       <td class="r num"><b>${fh(avg)}</b></td><td class="r num">${prof ? nf(prof, 8) : "—"}</td></tr>`;
@@ -458,7 +458,7 @@ async function openPool(id) {
     <div class="k"><div class="l">Воркеры</div><div class="v"><span class="ok">${a.w_active ?? "—"}</span></div><div class="s">неактивны ${a.w_inactive ?? 0} · ошибочные ${a.w_invalid ?? 0}</div></div>
     <div class="k"><div class="l">Начислено за 24 ч</div><div class="v">${a.profit_24h != null ? nf(a.profit_24h, 8) : "—"}</div><div class="s">баланс ${a.balance != null ? nf(a.balance, 8) : "—"} ${esc(a.coin)}</div></div>
    </div>
-   ${a.error ? `<div class="sec"><div class="bad">Пул не отвечает: ${esc(a.error)}</div></div>` : ""}
+   ${a.error ? `<div class="sec"><div class="bad">Пул не отвечает: ${esc(a.error)}</div></div>` : ""}${a.note ? `<div class="sec"><div class="hint">По этой ссылке пул не показывает: ${esc(a.note)}</div></div>` : ""}
    <div class="sec"><h4>Средний хешрейт по суткам МСК</h4>${pts.length > 1 ? lineChart(pts, "TH/s") : ""}
     <table class="tbl"><thead><tr><th>Сутки</th><th class="r">Среднее</th><th class="r">Часов</th><th>Как посчитано</th><th class="r">Начислено</th><th class="r">≈ $</th></tr></thead><tbody>
     ${d.rows.map((r) => `<tr><td class="num">${dm(r.day)}</td><td class="r num">${fh(r.avg_ths)}</td><td class="r num">${r.hours}</td><td class="mini">${esc(r.source)}</td><td class="r num">${r.profit != null ? nf(r.profit, 8) : "—"}</td><td class="r num">${r.money_usd != null ? nf(r.money_usd, 2) : "—"}</td></tr>`).join("")}
