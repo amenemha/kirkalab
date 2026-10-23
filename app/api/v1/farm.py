@@ -311,12 +311,32 @@ def container_history(cid: int, hours: int = 24, db: Session = Depends(get_db)):
 
 
 @router.get("/history")
-def farm_history(hours: int = 24, db: Session = Depends(get_db)):
+def farm_history(hours: int = 24, site: str | None = None, db: Session = Depends(get_db)):
+    """Ферма по времени, усреднённая по интервалам (~300 точек), как графики пулов."""
+    hours = max(1, min(int(hours), 24 * 31))
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
-    q = (select(fm.FarmContainerSample.at, func.sum(fm.FarmContainerSample.hashrate_ths), func.sum(fm.FarmContainerSample.online),
-                func.sum(fm.FarmContainerSample.total), func.sum(fm.FarmContainerSample.power_kw))
-         .where(fm.FarmContainerSample.at >= since).group_by(fm.FarmContainerSample.at).order_by(fm.FarmContainerSample.at))
-    return [dict(at=a.isoformat(), ths=round(h or 0, 1), online=int(o or 0), total=int(t or 0), kw=round(k or 0, 1)) for a, h, o, t, k in db.execute(q)]
+    S = fm.FarmContainerSample
+    q = (select(S.at, func.sum(S.hashrate_ths), func.sum(S.online), func.sum(S.total), func.sum(S.power_kw))
+         .where(S.at >= since))
+    if site:
+        q = q.join(fm.FarmContainer, fm.FarmContainer.id == S.container_id).where(fm.FarmContainer.site_id == int(site))
+    q = q.group_by(S.at).order_by(S.at)
+    step = max(60, hours * 3600 // 300)
+    buckets: dict[int, list] = {}
+    for a, h, o, t, k in db.execute(q):
+        ts = a.replace(tzinfo=a.tzinfo or timezone.utc).timestamp()
+        b = buckets.setdefault(int(ts // step), [0, 0.0, 0.0, 0.0, 0.0])
+        b[0] += 1
+        b[1] += h or 0
+        b[2] += o or 0
+        b[3] += t or 0
+        b[4] += k or 0
+    out = []
+    for key in sorted(buckets):
+        n, h, o, t, k = buckets[key]
+        at = datetime.fromtimestamp(key * step + step / 2, timezone.utc)
+        out.append(dict(at=at.isoformat(), ths=round(h / n, 1), online=round(o / n), total=round(t / n), kw=round(k / n, 1)))
+    return out
 
 
 # ---------- container layout (racks / shelves / places) ----------

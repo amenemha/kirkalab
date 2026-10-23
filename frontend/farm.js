@@ -175,8 +175,8 @@ async function pageToday() {
     <div class="k"><div class="l">Аварии</div><div class="v ${openInc.length ? "bad" : "ok"}">${openInc.length || "нет"}</div><div class="s">${openInc.length ? esc(openInc[0].scope) : "контейнеры не падали целиком"}</div></div>
   </div>
   <div class="grid">
-    <div class="w c8"><div class="wh"><span class="seg" id="chSer"><button data-s="ths" class="on">Хешрейт</button><button data-s="online">Асики в работе</button><button data-s="kw">Потребление</button></span><span class="sp"></span><span class="seg" id="chRange"><button data-h="6">6 ч</button><button data-h="24" class="on">24 ч</button><button data-h="72">3 дня</button><button data-h="168">7 дней</button></span></div><div class="wb chartbox" id="hrChart"></div></div>
-    <div class="w c4"><div class="wh">Требует внимания<span class="sp"></span><span class="mini">${att.length ? nf(att.length) + " пунктов" : ""}</span></div><div class="wb att">
+    <div class="w c8 ovr"><div class="wh"><span class="seg" id="chSer"><button data-s="ths" class="on">Хешрейт</button><button data-s="online">Асики в работе</button><button data-s="kw">Потребление</button></span><span class="sp"></span><span class="seg" id="chRange"><button data-h="6">6 ч</button><button data-h="24" class="on">24 ч</button><button data-h="72">3 дня</button><button data-h="168">7 дней</button></span></div><div class="cstats" id="hrStats"></div><div class="wb chartbox" id="hrChart"></div></div>
+    <div class="w c4 ovr"><div class="wh">Требует внимания<span class="sp"></span><span class="mini">${att.length ? nf(att.length) + " пунктов" : ""}</span></div><div class="wb att">
       ${att.map((a, i) => `<button class="arow" data-att="${i}"><i class="dot" style="background:var(--${a.col})"></i><span class="at"><b>${esc(a.t)}</b><span>${esc(a.s)}</span></span><span class="num an">${nf(a.n)}</span><span class="chev">›</span></button>`).join("") || '<div class="okbox">Всё спокойно: аварий, перегрева и просадок нет.</div>'}
     </div></div>
     <div class="w c7"><div class="wh">Контейнеры · ${conts.length}<span class="sp"></span><span class="mini">сначала те, где больше не работает · клик — открыть контейнер</span></div><div class="scroll" style="max-height:440px"><table class="tbl" id="tC"><thead><tr><th>Контейнер</th><th>Тип</th><th style="width:150px">Работают</th><th class="r">Не работают</th><th class="r">PH/s</th><th class="r">кВт</th><th class="r">t° макс</th></tr></thead><tbody>
@@ -195,30 +195,42 @@ async function pageToday() {
   $$("#chSer button").forEach((b) => b.onclick = () => { $$("#chSer button").forEach((x) => x.classList.toggle("on", x === b)); ch.s = b.dataset.s; drawFarm(ch); });
   $$("#chRange button").forEach((b) => b.onclick = () => { $$("#chRange button").forEach((x) => x.classList.toggle("on", x === b)); ch.h = +b.dataset.h; drawFarm(ch); });
   drawFarm(ch);
+  // при смене ширины окна (поворот телефона, боковая панель) перерисовываем, а не растягиваем картинку
+  let rw = $("#hrChart").clientWidth; const ro = new ResizeObserver(() => { const el = $("#hrChart"); if (!el) return ro.disconnect(); if (Math.abs(el.clientWidth - rw) > 8) { rw = el.clientWidth; clearTimeout(ro.t); ro.t = setTimeout(() => drawFarm(ch), 150); } });
+  ro.observe($("#hrChart"));
 }
 const SER = { ths: { k: "ths", unit: "PH/s", f: (v) => v / 1000, d: 1, name: "Хешрейт" }, online: { k: "online", unit: "асиков", f: (v) => v, d: 0, name: "В работе" }, kw: { k: "kw", unit: "МВт", f: (v) => v / 1000, d: 2, name: "Потребление" } };
 async function drawFarm(ch) {
   const el = $("#hrChart"); if (!el) return;
-  const pts = await api("/farm/history?hours=" + ch.h);
+  const pts = await api("/farm/history?" + qs({ hours: ch.h, site: site() }));
   if (!$("#hrChart")) return;
   if (pts.length < 2) { el.innerHTML = '<div class="hint">Копим историю: точка добавляется каждую минуту.</div>'; return; }
   const sr = SER[ch.s];
+  const vals = pts.map((p) => sr.f(p[sr.k])); const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  let mi = 0; vals.forEach((v, i) => { if (v < vals[mi]) mi = i; });
+  const span = (new Date(pts[pts.length - 1].at) - new Date(pts[0].at)) / 3.6e6;
+  const per = span < ch.h * 0.9 ? "всё время (" + (span < 48 ? Math.max(1, Math.round(span)) + " ч" : Math.round(span / 24) + " дн") + ")" : { 6: "6 ч", 24: "24 ч", 72: "3 дня", 168: "7 дней" }[ch.h] || ch.h + " ч";
+  const tm0 = (t) => new Date(t).toLocaleString("ru-RU", Object.assign({ day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }, MSK));
+  const tm = (t) => new Date(t).toLocaleString("ru-RU", Object.assign(ch.h > 36 ? { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" }, MSK));
+  $("#hrStats").innerHTML = `<span>Сейчас <b class="num">${nf(vals[vals.length - 1], sr.d)}</b> ${sr.unit}</span><span>Среднее за ${per} <b class="num">${nf(avg, sr.d)}</b></span><span>Минимум <b class="num">${nf(vals[mi], sr.d)}</b> <span class="faint">в ${tm(pts[mi].at)}</span></span>${span < ch.h * 0.9 ? `<span class="faint">история копится с ${tm0(pts[0].at)}</span>` : ""}${client() ? '<span class="faint">график — по площадке целиком, без фильтра клиента</span>' : ""}`;
   mountChart(el, pts.map((p) => [new Date(p.at).getTime(), sr.f(p[sr.k])]), { unit: sr.unit, d: sr.d, name: sr.name, h: ch.h, extra: ch.s === "online" ? pts.map((p) => p.total) : null });
 }
 function mountChart(el, pts, o) {
   const W = Math.max(320, el.clientWidth - 4), H = Math.max(200, el.clientHeight - 4), P = { l: 54, r: 12, t: 14, b: 24 };
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs); let y0 = Math.min(...ys), y1 = Math.max(...ys);
-  const pad = (y1 - y0) * 0.12 || Math.max(1, y1 * 0.02); y0 = Math.max(0, y0 - pad); y1 += pad;
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  // Ось всегда от нуля и с ровными делениями — как у пулов: колебание в 1% не выглядит обрывом.
+  const nice = (v) => { if (!(v > 0)) return 1; const e = 10 ** Math.floor(Math.log10(v)), m = v / e; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 4 ? 4 : m <= 5 ? 5 : m <= 8 ? 8 : 10) * e; };
+  let y0 = 0, y1 = nice(Math.max(...ys) * 1.1);
   const X = (x) => P.l + (x - x0) / (x1 - x0 || 1) * (W - P.l - P.r), Y = (y) => H - P.b - (y - y0) / (y1 - y0 || 1) * (H - P.t - P.b);
   const d = pts.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1)).join("");
-  const dd = (y1 - y0) < 3 ? 2 : (y1 - y0) < 30 ? 1 : 0;
+  const dd = y1 / 4 < 1 ? 2 : y1 / 4 < 10 && y1 / 4 % 1 ? 1 : 0;
   const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => { const v = y0 + (y1 - y0) * f; return `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${P.l - 6}" y="${Y(v) + 3}" text-anchor="end">${nf(v, dd)}</text>`; }).join("");
   const long = (x1 - x0) > 36 * 3600e3;
   const tf = (t) => new Date(t).toLocaleString("ru-RU", Object.assign(long ? { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" }, MSK));
   const nt = Math.max(2, Math.min(7, Math.floor(W / 130)));
   const tx = Array.from({ length: nt }, (_, i) => x0 + (x1 - x0) * i / (nt - 1)).map((t, i) => `<text x="${X(t)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === nt - 1 ? "end" : "middle"}">${tf(t)}</text>`).join("");
-  el.innerHTML = `<svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${tx}<path class="a" d="${d}L${X(x1)} ${H - P.b}L${X(x0)} ${H - P.b}Z"/><path class="l" d="${d}"/><text x="${W - P.r}" y="10" text-anchor="end">${o.unit}</text><line class="cx" x1="0" x2="0" y1="${P.t}" y2="${H - P.b}" style="display:none"/><circle class="cd" r="3.5" style="display:none"/></svg><div class="ctip" hidden></div>`;
+  el.innerHTML = `<svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--acc)" stop-opacity=".22"/><stop offset="1" stop-color="var(--acc)" stop-opacity="0"/></linearGradient></defs>${grid}${tx}<path class="a" fill="url(#cg)" d="${d}L${X(x1)} ${H - P.b}L${X(x0)} ${H - P.b}Z"/><path class="l" d="${d}"/><text x="${W - P.r}" y="10" text-anchor="end">${o.unit}</text><line class="cx" x1="0" x2="0" y1="${P.t}" y2="${H - P.b}" style="display:none"/><circle class="cd" r="3.5" style="display:none"/></svg><div class="ctip" hidden></div>`;
   const svg = $("svg", el), tip = $(".ctip", el), cx = $(".cx", el), cd = $(".cd", el);
   svg.onmousemove = (e) => {
     const r = svg.getBoundingClientRect(); const mx = e.clientX - r.left; let bi = 0, bd = 1e18;
@@ -532,7 +544,7 @@ async function pageErrors() {
   const seq = S.seq = (S.seq || 0) + 1;
   await loadSummary();
   await loadLayouts();
-  if (!S.devs) await loadDevices();
+  await loadDevices();
   const ef = S.ef; const eq = ef.q.trim().toLowerCase();
   // Карточки классов — по выбранным площадке и клиенту, считаем асики; пустые не показываем.
   const clsN = {}; let anyAl = 0;
@@ -545,7 +557,13 @@ async function pageErrors() {
   let ecc = tallyE("c", (d) => d.container_id), emm = tallyE("m", (d) => d.model);
   if (ef.container && !ecc[ef.container]) { ef.container = ""; emm = tallyE("m", (d) => d.model); }
   if (ef.model && !emm[ef.model]) { ef.model = ""; ecc = tallyE("c", (d) => d.container_id); }
-  const r = await api("/farm/errors?" + qs({ site: site(), client: client(), cls: ef.cls, container: ef.container, model: ef.model, group: "code", q: ef.q, level: ef.level }));
+  // Список строим из того же снимка асиков, что и счётчики в меню, — числа всегда совпадают.
+  const clsL = Object.fromEntries(S.sum.classes.map((c) => [c.key, c.label]));
+  const eItems = [];
+  S.devs.forEach((d) => { if (!okE(d)) return; d.alarms.forEach((a) => { if ((ef.cls && a.cls !== ef.cls) || (ef.level && (a.level || 0) < +ef.level)) return;
+    eItems.push({ id: d.id, model: d.model, site: d.site, container: d.container, client: d.client, ip: d.ip, worker: d.worker, serial: d.serial, status: d.status, temp: d.temp,
+      code: a.code, msg: a.msg, cls: a.cls, cls_label: clsL[a.cls || "other"] || "Прочее", lvl: a.level, since: a.since }); }); });
+  const r = { items: eItems, devices: new Set(eItems.map((x) => x.id)).size };
   const conts = filtConts().filter((c) => c.id && ecc[c.id]).sort((a, b) => a.name.localeCompare(b.name, "ru", { numeric: true }));
   const models = Object.keys(emm).sort();
   // groups computed here: error → devices, top containers, oldest
