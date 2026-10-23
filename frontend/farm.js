@@ -48,12 +48,15 @@ async function showLogin(msg) {
   } catch (e) { $("#lgmsg").textContent = "Сервер не отвечает, попробуйте обновить страницу."; }
 }
 
+
 // ---------- state ----------
-const S = { page: "today", sum: null, devs: null, devAt: 0, sel: new Set(), lastIdx: null, order: [],
-  f: { q: "", status: "", cls: "", container: "", model: "", alarms: false, sort: "container" },
-  ef: { cls: "", container: "", model: "", group: "code", q: "", level: "" } };
+const S = { page: "today", arg: null, sum: null, devs: null, devAt: 0, lay: null, layAt: 0, sel: new Set(), lastIdx: null, order: [],
+  f: { q: "", status: "", cls: "", container: "", model: "", alarms: false, quick: "", ids: null, sort: "place" },
+  ef: { cls: "", container: "", model: "", group: "code", q: "", level: "", gk: "" },
+  mf: { kind: "", sort: "problems", layer: "status" }, cl: { layer: "status", selMode: false } };
 const site = () => $("#siteSel").value, client = () => $("#clientSel").value;
 const qs = (o) => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+const KIND = { air: "Воздух", hydro: "Гидро", bath: "Ванны" };
 
 async function loadSummary() {
   S.sum = await api("/farm/summary");
@@ -63,139 +66,300 @@ async function loadSummary() {
   cs.innerHTML = '<option value="">Все клиенты</option>' + s.clients.filter((c) => c.id).map((c) => `<option value="${c.id}">${esc(c.name.trim())} · ${c.total}</option>`).join("");
   ss.value = sv; cs.value = cv;
   const age = s.synced_at ? (Date.now() - new Date(s.synced_at)) / 1000 : 1e9;
-  $("#syncAt").textContent = s.synced_at ? "CROFT · " + tfmt(s.synced_at, false) : "нет данных";
+  $("#syncAt").textContent = s.synced_at ? "обновлено " + tfmt(s.synced_at, false) : "нет данных";
   $(".auto").classList.toggle("stale", age > 300);
-  const b = $("#errBadge"); b.hidden = !s.with_alarms; b.textContent = s.with_alarms > 999 ? "999+" : s.with_alarms;
+  const b = $("#errBadge"); b.hidden = !s.with_alarms; b.textContent = nf(s.with_alarms);
 }
 async function loadDevices(force) {
   if (!force && S.devs && Date.now() - S.devAt < 55000) return S.devs;
   const r = await api("/farm/devices?" + qs({ site: site(), client: client(), limit: 6000 }));
-  S.devs = r.items; S.devAt = Date.now();
+  S.devs = r.items; S.devAt = Date.now(); S.devMap = new Map(S.devs.map((d) => [d.id, d]));
   return S.devs;
 }
+async function loadLayouts(force) {
+  if (!force && S.lay && Date.now() - S.layAt < 120000) return S.lay;
+  const r = await api("/farm/layouts");
+  S.lay = {}; r.items.forEach((x) => (S.lay[x.id] = x)); S.layAt = Date.now();
+  return S.lay;
+}
+function placeOf(d) {
+  const L = S.lay && S.lay[d.container_id]; if (!L) return null;
+  const p = L.placed[d.id]; if (!p) return null;
+  const sec = L.layout.sections[p[0]];
+  return { sec, si: p[0], rack: (sec.rack_from || 1) + p[1], shelf: p[2] + 1, slot: p[3] + 1, num: p[4], kind: L.layout.kind };
+}
+function placeTxt(d, short) {
+  const p = placeOf(d); if (!p) return short ? "—" : "место не определено";
+  if (p.kind === "bath") return `№ ${p.num}`;
+  if (p.kind === "hydro") return `${short ? p.sec.title.replace("Кабинет ", "каб. ").replace(/ · подсеть.*/, "") : p.sec.title} · полка ${p.shelf} · место ${p.num}`;
+  return `стеллаж ${p.rack} · полка ${p.shelf} · место ${p.num}`;
+}
 
-// ---------- pages ----------
-const PAGES = { today: pageToday, map: pageMap, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools };
-const TITLES = { today: "Сегодня", map: "Карта контейнеров", asics: "Асики", errors: "Ошибки", clients: "Клиенты", pools: "Пулы" };
-async function go(p, keep) {
-  S.page = p; $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; if (!keep) { S.sel.clear(); updSel(); }
-  $$(".nav[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === p));
+// ---------- routing ----------
+const PAGES = { today: pageToday, map: pageMap, cont: pageCont, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools };
+const TITLES = { today: "Обзор фермы", map: "Контейнеры", cont: "Контейнер", asics: "Асики", errors: "Проблемы", clients: "Клиенты хостинга", pools: "Пулы" };
+const NAVOF = { cont: "map" };
+async function go(p, keep, arg) {
+  if (!PAGES[p]) p = "today";
+  S.page = p; S.arg = arg != null ? String(arg) : null;
+  if (!keep) { $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; S.sel.clear(); updSel(); }
+  $$(".tab[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === (NAVOF[p] || p)));
   $("#pageTitle").textContent = TITLES[p];
-  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools";
-  history.replaceState(null, "", "#" + p);
-  try { await PAGES[p](); } catch (e) { if (S.page !== p) return; if (e.message === "auth") return showLogin(e.status === 403 ? "Ферма доступна администраторам. Войдите под нужным Telegram." : ""); $("#main").innerHTML = `<div class="empty">Не удалось загрузить: ${esc(e.message)}</div>`; }
+  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont";
+  $("#pageAside").innerHTML = "";
+  history.replaceState(null, "", "#" + p + (S.arg ? "/" + S.arg : ""));
+  try { await PAGES[p](); } catch (e) { if (S.page !== p) return; if (e.message === "auth") return showLogin(e.status === 403 ? "Ферма доступна администраторам. Войдите под нужным Telegram." : ""); $("#main").innerHTML = `<div class="empty">Не удалось загрузить: ${esc(e.message)}</div>`; console.error(e); }
 }
+function filtConts() { const sid = site() ? +site() : null; return S.sum.containers.filter((c) => !sid || c.site_id === sid); }
 
-function filtSum() {
-  const s = S.sum; const sid = site() ? +site() : null;
-  const conts = s.containers.filter((c) => !sid || c.site_id === sid);
-  return { conts };
+// ---------- overview ----------
+function aggregate(devs) {
+  return devs.reduce((a, d) => { a.total++; a[d.status] = (a[d.status] || 0) + 1; if (d.status === "working") { a.ths += d.ths || 0; a.nom += d.nominal || 0; } a.kw += (d.w || 0) / 1000; if (d.alarms.length) a.al++; return a; }, { total: 0, working: 0, offline: 0, suspended: 0, ths: 0, nom: 0, kw: 0, al: 0 });
 }
-
+const isLow = (d) => d.status === "working" && d.nominal && d.ths != null && d.ths < d.nominal * 0.85;
+const isHot = (d) => d.temp != null && d.temp >= 80;
 async function pageToday() {
   await loadSummary();
-  const s = S.sum, { conts } = filtSum();
-  const devs = site() || client() ? await loadDevices(true) : null;
-  const agg = devs ? devs.reduce((a, d) => { a.total++; a[d.status] = (a[d.status] || 0) + 1; if (d.status === "working") { a.ths += d.ths || 0; a.nom += d.nominal || 0; } a.kw += (d.w || 0) / 1000; if (d.alarms.length) a.al++; return a; }, { total: 0, ths: 0, nom: 0, kw: 0, al: 0 }) : { total: s.total, working: s.working, offline: s.offline, suspended: s.suspended, ths: s.ths, nom: s.nominal_ths, kw: s.kw, al: s.with_alarms };
+  const [devs] = await Promise.all([loadDevices(true), loadLayouts()]);
+  const s = S.sum, agg = aggregate(devs);
   const eff = agg.nom ? agg.ths / agg.nom * 100 : null;
   const pw = (x) => (agg.total ? (x || 0) / agg.total * 100 : 0);
   const openInc = s.incidents.filter((i) => !i.ended);
-  const cls = s.classes.filter((c) => c.count);
-  const maxc = Math.max(1, ...cls.map((c) => c.count));
-  const worst = conts.filter((c) => c.total).sort((a, b) => b.offline / b.total - a.offline / a.total).slice(0, 8);
+  // containers from filtered devices
+  const cmap = {}; devs.forEach((d) => { const c = cmap[d.container_id || 0] = cmap[d.container_id || 0] || { id: d.container_id, name: d.container || "Без контейнера", site: d.site, total: 0, working: 0, offline: 0, suspended: 0, ths: 0, kw: 0, tmax: null }; c.total++; c[d.status] = (c[d.status] || 0) + 1; if (d.status === "working") c.ths += d.ths || 0; c.kw += (d.w || 0) / 1000; if (d.temp != null) c.tmax = Math.max(c.tmax ?? -99, d.temp); });
+  const conts = Object.values(cmap).sort((a, b) => b.offline / b.total - a.offline / a.total || b.offline - a.offline);
+  const clm = {}; devs.forEach((d) => { const k = clm[d.client_id || 0] = clm[d.client_id || 0] || { id: d.client_id, name: d.client || "Без клиента", total: 0, working: 0, offline: 0, ths: 0, kw: 0 }; k.total++; if (d.status === "working") { k.working++; k.ths += d.ths || 0; } if (d.status === "offline") k.offline++; k.kw += (d.w || 0) / 1000; });
+  const clients = Object.values(clm).sort((a, b) => b.total - a.total);
+  // attention list
+  const att = [];
+  openInc.forEach((i) => att.push({ col: "bad", t: `Авария: ${i.scope}`, s: `${nf(i.down)} из ${nf(i.total)} офлайн с ${tfmt(i.started)}`, n: i.down, go: ["map"] }));
+  conts.filter((c) => c.id && c.offline >= 5 && c.offline / c.total >= 0.1).slice(0, 6).forEach((c) => att.push({ col: c.offline / c.total >= 0.8 ? "bad" : "warn", t: c.name, s: `не работают ${nf(c.offline)} из ${nf(c.total)}`, n: c.offline, go: ["cont", c.id] }));
+  const low = devs.filter(isLow).length, hot = devs.filter(isHot).length;
+  if (low) att.push({ col: "warn", t: "Работают ниже 85% паспорта", s: "хешрейт заметно меньше заводского", n: low, go: ["asics", "low"] });
+  if (hot) att.push({ col: "avg", t: "Горячие, 80° и выше", s: "проверьте охлаждение", n: hot, go: ["asics", "hot"] });
+  s.classes.filter((c) => c.count && c.key !== "offline").forEach((c) => att.push({ col: "mut", t: `Ошибки: ${c.label.toLowerCase()}`, s: "открыть список", n: c.count, go: ["errors", c.key] }));
+  const noPlace = devs.filter((d) => d.container_id && !placeOf(d)).length;
+  if (noPlace) att.push({ col: "mut", t: "Без места в раскладке", s: "IP не совпал с местом — поправьте раскладку", n: noPlace, go: ["asics", "noplace"] });
   if (S.page !== "today") return;
   $("#main").innerHTML = `
+  <div class="kpis">
+    <button class="k click" data-q="working" title="Сколько асиков сейчас отдают хешрейт"><div class="l">Работают</div><div class="v ok">${nf(agg.working)}<small>из ${nf(agg.total)}</small></div>
+      <div class="bar"><span style="width:${pw(agg.working)}%;background:var(--ok)"></span><span style="width:${pw(agg.suspended)}%;background:var(--susp)"></span><span style="width:${pw(agg.offline)}%;background:var(--bad)"></span></div></button>
+    <button class="k click" data-q="offline" title="Нет связи с асиком"><div class="l">Не работают</div><div class="v bad">${nf(agg.offline)}</div><div class="s">${nf(pw(agg.offline), 1)}% парка${agg.suspended ? ` · пауза ${nf(agg.suspended)}` : ""}</div></button>
+    <div class="k" title="Сумма текущего хешрейта работающих асиков"><div class="l">Хешрейт</div><div class="v">${nf(agg.ths / 1000, 1)}<small>PH/s</small></div><div class="s">${eff ? nf(eff, 0) + "% от заводского" : "—"}</div></div>
+    <div class="k" title="Сумма потребления по данным асиков"><div class="l">Потребление</div><div class="v">${nf(agg.kw / 1000, 2)}<small>МВт</small></div><div class="s">≈ ${nf(agg.kw * 24 / 1000, 0)} МВт·ч в сутки</div></div>
+    <button class="k click" data-go="errors" title="Асики, у которых сейчас есть хотя бы одна ошибка"><div class="l">С ошибками</div><div class="v warn">${nf(agg.al)}</div><div class="s">открыть проблемы →</div></button>
+    <div class="k"><div class="l">Аварии</div><div class="v ${openInc.length ? "bad" : "ok"}">${openInc.length || "нет"}</div><div class="s">${openInc.length ? esc(openInc[0].scope) : "контейнеры не падали целиком"}</div></div>
+  </div>
   <div class="grid">
-    <div class="kpis">
-      <div class="k click" data-go="asics" data-st="working"><div class="l">Работают</div><div class="v ok">${nf(agg.working)}<small>из ${nf(agg.total)}</small></div>
-        <div class="bar"><span style="width:${pw(agg.working)}%;background:var(--ok)"></span><span style="width:${pw(agg.suspended)}%;background:var(--susp)"></span><span style="width:${pw(agg.offline)}%;background:var(--bad)"></span></div></div>
-      <div class="k click" data-go="asics" data-st="offline"><div class="l">Офлайн</div><div class="v bad">${nf(agg.offline)}</div><div class="s">пауза ${nf(agg.suspended)}</div></div>
-      <div class="k"><div class="l">Хешрейт</div><div class="v">${nf(agg.ths / 1000, 2)}<small>PH/s</small></div><div class="s">${nf(eff, 1)}% от паспорта</div></div>
-      <div class="k"><div class="l">Мощность</div><div class="v">${nf(agg.kw / 1000, 2)}<small>МВт</small></div><div class="s">${nf(agg.kw * 24 / 1000, 1)} МВт·ч в сутки</div></div>
-      <div class="k click" data-go="errors"><div class="l">С ошибками</div><div class="v warn">${nf(agg.al)}</div><div class="s">асиков</div></div>
-      <div class="k"><div class="l">Аварии</div><div class="v ${openInc.length ? "bad" : "ok"}">${openInc.length}</div><div class="s">${openInc.length ? esc(openInc[0].scope) : "сейчас нет"}</div></div>
-    </div>
-    <div class="w c8"><div class="wh">Хешрейт фермы<span class="sp"></span><span class="seg" id="hrSeg"><button data-h="6">6 ч</button><button data-h="24" class="on">24 ч</button><button data-h="72">3 дня</button></span></div><div class="wb" id="hrChart"><div class="hint">Копим историю: точки появляются каждую минуту.</div></div></div>
-    <div class="w c4"><div class="wh">Ошибки по классам<span class="sp"></span><a class="mini" href="#errors" data-go="errors">все</a></div><div class="wb"><div class="hl">
-      ${cls.map((c) => `<div class="row" data-cls="${c.key}"><span class="nm">${esc(c.label)}</span><span class="num r">${nf(c.count)}</span><div class="tr"><span style="width:${c.count / maxc * 100}%;background:${c.key === "offline" ? "var(--bad)" : c.key === "temperature" ? "var(--avg)" : "var(--warn)"}"></span></div></div>`).join("") || '<div class="hint">Ошибок нет</div>'}
-    </div></div></div>
-    <div class="w c7"><div class="wh">Контейнеры: где больше офлайна<span class="sp"></span><a class="mini" href="#map" data-go="map">карта</a></div><div class="wb" style="padding:0"><table class="tbl"><thead><tr><th>Контейнер</th><th>Площадка</th><th class="r">Работают</th><th class="r">Офлайн</th><th class="r">TH/s</th><th class="r">кВт</th></tr></thead><tbody>
-      ${worst.map((c) => `<tr><td class="lnk" data-cont="${c.id}">${esc(c.name)}</td><td>${esc((c.site || "").trim())}</td><td class="r num">${nf(c.working)}/${nf(c.total)}</td><td class="r num ${c.offline ? "bad" : ""}">${nf(c.offline)}</td><td class="r num">${nf(c.ths, 0)}</td><td class="r num">${nf(c.kw, 0)}</td></tr>`).join("")}
+    <div class="w c8"><div class="wh"><span class="seg" id="chSer"><button data-s="ths" class="on">Хешрейт</button><button data-s="online">Асики в работе</button><button data-s="kw">Потребление</button></span><span class="sp"></span><span class="seg" id="chRange"><button data-h="6">6 ч</button><button data-h="24" class="on">24 ч</button><button data-h="72">3 дня</button><button data-h="168">7 дней</button></span></div><div class="wb chartbox" id="hrChart"></div></div>
+    <div class="w c4"><div class="wh">Требует внимания<span class="sp"></span><span class="mini">${att.length ? nf(att.length) + " пунктов" : ""}</span></div><div class="wb att">
+      ${att.map((a, i) => `<button class="arow" data-att="${i}"><i class="dot" style="background:var(--${a.col})"></i><span class="at"><b>${esc(a.t)}</b><span>${esc(a.s)}</span></span><span class="num an">${nf(a.n)}</span><span class="chev">›</span></button>`).join("") || '<div class="okbox">Всё спокойно: аварий, перегрева и просадок нет.</div>'}
+    </div></div>
+    <div class="w c7"><div class="wh">Контейнеры · ${conts.length}<span class="sp"></span><span class="mini">сначала те, где больше не работает · клик — открыть контейнер</span></div><div class="scroll" style="max-height:440px"><table class="tbl" id="tC"><thead><tr><th>Контейнер</th><th>Тип</th><th style="width:150px">Работают</th><th class="r">Не работают</th><th class="r">PH/s</th><th class="r">кВт</th><th class="r">t° макс</th></tr></thead><tbody>
+      ${conts.map((c) => { const L = c.id && S.lay[c.id]; return `<tr data-cont="${c.id || ""}"><td class="lnk" title="${esc(c.name)}">${esc(c.name)}</td><td>${L ? `<span class="kind k-${L.layout.kind}">${KIND[L.layout.kind]}</span>` : ""}</td><td><div class="mbar"><span style="width:${c.working / c.total * 100}%;background:var(--ok)"></span><span style="width:${(c.suspended || 0) / c.total * 100}%;background:var(--susp)"></span><span style="width:${c.offline / c.total * 100}%;background:var(--bad)"></span></div><span class="num small">${nf(c.working)} / ${nf(c.total)}</span></td><td class="r num ${c.offline ? "bad" : "faint"}">${nf(c.offline)}</td><td class="r num">${nf(c.ths / 1000, 2)}</td><td class="r num">${nf(c.kw, 0)}</td><td class="r num ${c.tmax >= 80 ? "warn" : ""}">${c.tmax != null && c.tmax > -99 ? nf(c.tmax, 0) + "°" : "—"}</td></tr>`; }).join("")}
     </tbody></table></div></div>
-    <div class="w c5"><div class="wh">Клиенты хостинга<span class="sp"></span><a class="mini" href="#clients" data-go="clients">все</a></div><div class="wb"><div class="hl">
-      ${s.clients.slice(0, 8).map((c) => `<div class="row" data-client="${c.id || ""}"><span class="nm">${esc((c.name || "").trim())}</span><span class="num">${nf(c.working)}/${nf(c.total)}</span><div class="tr"><span style="width:${c.total ? c.working / c.total * 100 : 0}%"></span></div></div>`).join("")}
-    </div></div></div>
+    <div class="w c5"><div class="wh">Клиенты хостинга · ${clients.length}<span class="sp"></span><span class="mini">«В работе» — доля асиков клиента, что майнят сейчас</span></div><div class="scroll" style="max-height:440px"><table class="tbl" id="tK"><thead><tr><th>Клиент</th><th class="r">Асиков</th><th class="r">В работе</th><th class="r">Не работают</th><th class="r">PH/s</th></tr></thead><tbody>
+      ${clients.map((c) => { const p = c.total ? c.working / c.total * 100 : 0; return `<tr data-client="${c.id || ""}"><td class="lnk">${esc((c.name || "").trim())}</td><td class="r num">${nf(c.total)}</td><td class="r"><span class="pct ${p >= 95 ? "p-ok" : p >= 80 ? "p-warn" : "p-bad"}">${nf(p, 0)}%</span></td><td class="r num ${c.offline ? "bad" : "faint"}">${nf(c.offline)}</td><td class="r num">${nf(c.ths / 1000, 2)}</td></tr>`; }).join("")}
+    </tbody></table></div></div>
   </div>`;
-  bindCommon();
-  $$("#hrSeg button").forEach((b) => b.onclick = () => { $$("#hrSeg button").forEach((x) => x.classList.toggle("on", x === b)); drawHr(+b.dataset.h); });
-  drawHr(24);
+  $$(".k[data-q]").forEach((x) => x.onclick = () => { resetF(); S.f.status = x.dataset.q; go("asics"); });
+  $$(".k[data-go]").forEach((x) => x.onclick = () => go(x.dataset.go));
+  $$(".arow").forEach((x) => x.onclick = () => { const a = att[+x.dataset.att]; if (a.go[0] === "asics") { resetF(); S.f.quick = a.go[1]; return go("asics"); } if (a.go[0] === "errors") { S.ef.cls = a.go[1]; return go("errors"); } go(a.go[0], false, a.go[1]); });
+  $$("#tC tr[data-cont]").forEach((x) => x.onclick = () => x.dataset.cont && go("cont", false, x.dataset.cont));
+  $$("#tK tr[data-client]").forEach((x) => x.onclick = () => { $("#clientSel").value = x.dataset.client; S.devs = null; go("today"); });
+  const ch = { s: "ths", h: 24 };
+  $$("#chSer button").forEach((b) => b.onclick = () => { $$("#chSer button").forEach((x) => x.classList.toggle("on", x === b)); ch.s = b.dataset.s; drawFarm(ch); });
+  $$("#chRange button").forEach((b) => b.onclick = () => { $$("#chRange button").forEach((x) => x.classList.toggle("on", x === b)); ch.h = +b.dataset.h; drawFarm(ch); });
+  drawFarm(ch);
 }
-async function drawHr(h) {
-  const pts = await api("/farm/history?hours=" + h);
+const SER = { ths: { k: "ths", unit: "PH/s", f: (v) => v / 1000, d: 1, name: "Хешрейт" }, online: { k: "online", unit: "асиков", f: (v) => v, d: 0, name: "В работе" }, kw: { k: "kw", unit: "МВт", f: (v) => v / 1000, d: 2, name: "Потребление" } };
+async function drawFarm(ch) {
   const el = $("#hrChart"); if (!el) return;
-  if (pts.length < 2) { el.innerHTML = '<div class="hint">Копим историю: точки появляются каждую минуту.</div>'; return; }
-  el.innerHTML = lineChart(pts.map((p) => [new Date(p.at).getTime(), p.ths / 1000]), "PH/s");
+  const pts = await api("/farm/history?hours=" + ch.h);
+  if (!$("#hrChart")) return;
+  if (pts.length < 2) { el.innerHTML = '<div class="hint">Копим историю: точка добавляется каждую минуту.</div>'; return; }
+  const sr = SER[ch.s];
+  mountChart(el, pts.map((p) => [new Date(p.at).getTime(), sr.f(p[sr.k])]), { unit: sr.unit, d: sr.d, name: sr.name, h: ch.h, extra: ch.s === "online" ? pts.map((p) => p.total) : null });
 }
-function lineChart(pts, unit) {
-  const W = 800, H = 170, P = { l: 44, r: 8, t: 8, b: 20 };
+function mountChart(el, pts, o) {
+  const W = Math.max(320, el.clientWidth - 4), H = Math.max(200, el.clientHeight - 4), P = { l: 54, r: 12, t: 14, b: 24 };
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs); let y0 = Math.min(...ys), y1 = Math.max(...ys);
-  const pad = (y1 - y0) * 0.15 || 1; y0 = Math.max(0, y0 - pad); y1 += pad;
+  const pad = (y1 - y0) * 0.12 || Math.max(1, y1 * 0.02); y0 = Math.max(0, y0 - pad); y1 += pad;
   const X = (x) => P.l + (x - x0) / (x1 - x0 || 1) * (W - P.l - P.r), Y = (y) => H - P.b - (y - y0) / (y1 - y0 || 1) * (H - P.t - P.b);
   const d = pts.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1)).join("");
-  const grid = [0, 0.5, 1].map((f) => { const v = y0 + (y1 - y0) * f; return `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${P.l - 6}" y="${Y(v) + 3}" text-anchor="end">${nf(v, (y1 - y0) < 3 ? 2 : (y1 - y0) < 30 ? 1 : 0)}</text>`; }).join("");
-  const tx = [x0, (x0 + x1) / 2, x1].map((t, i) => `<text x="${X(t)}" y="${H - 5}" text-anchor="${["start", "middle", "end"][i]}">${new Date(t).toLocaleString("ru-RU", Object.assign({ hour: "2-digit", minute: "2-digit" }, MSK))}</text>`).join("");
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${tx}<path class="a" d="${d}L${X(x1)} ${H - P.b}L${X(x0)} ${H - P.b}Z"/><path class="l" d="${d}"/><text x="${W - P.r}" y="12" text-anchor="end">${unit}</text></svg>`;
+  const dd = (y1 - y0) < 3 ? 2 : (y1 - y0) < 30 ? 1 : 0;
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => { const v = y0 + (y1 - y0) * f; return `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${P.l - 6}" y="${Y(v) + 3}" text-anchor="end">${nf(v, dd)}</text>`; }).join("");
+  const long = (x1 - x0) > 36 * 3600e3;
+  const tf = (t) => new Date(t).toLocaleString("ru-RU", Object.assign(long ? { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" }, MSK));
+  const nt = Math.max(2, Math.min(7, Math.floor(W / 130)));
+  const tx = Array.from({ length: nt }, (_, i) => x0 + (x1 - x0) * i / (nt - 1)).map((t, i) => `<text x="${X(t)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === nt - 1 ? "end" : "middle"}">${tf(t)}</text>`).join("");
+  el.innerHTML = `<svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${tx}<path class="a" d="${d}L${X(x1)} ${H - P.b}L${X(x0)} ${H - P.b}Z"/><path class="l" d="${d}"/><text x="${W - P.r}" y="10" text-anchor="end">${o.unit}</text><line class="cx" x1="0" x2="0" y1="${P.t}" y2="${H - P.b}" style="display:none"/><circle class="cd" r="3.5" style="display:none"/></svg><div class="ctip" hidden></div>`;
+  const svg = $("svg", el), tip = $(".ctip", el), cx = $(".cx", el), cd = $(".cd", el);
+  svg.onmousemove = (e) => {
+    const r = svg.getBoundingClientRect(); const mx = e.clientX - r.left; let bi = 0, bd = 1e18;
+    pts.forEach((p, i) => { const dx = Math.abs(X(p[0]) - mx); if (dx < bd) { bd = dx; bi = i; } });
+    const p = pts[bi]; const px = X(p[0]), py = Y(p[1]);
+    cx.setAttribute("x1", px); cx.setAttribute("x2", px); cx.style.display = cd.style.display = ""; cd.setAttribute("cx", px); cd.setAttribute("cy", py);
+    tip.hidden = false; tip.innerHTML = `<b class="num">${nf(p[1], o.d)} ${o.unit}</b>${o.extra ? ` <span class="faint">из ${nf(o.extra[bi])}</span>` : ""}<br><span class="faint">${new Date(p[0]).toLocaleString("ru-RU", Object.assign({ day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }, MSK))}</span>`;
+    tip.style.left = Math.min(px + 12, W - 150) + "px"; tip.style.top = Math.max(0, py - 44) + "px";
+  };
+  svg.onmouseleave = () => { tip.hidden = true; cx.style.display = cd.style.display = "none"; };
 }
+function lineChart(pts, unit) { const box = document.createElement("div"); box.className = "chartbox sm"; box.style.width = "560px"; document.body.appendChild(box); mountChart(box, pts, { unit, d: 1 }); const h = box.innerHTML; box.remove(); return `<div class="chartbox sm">${h}</div>`; }
 
 const MODES = { normal: "обычный", low: "тихий", high: "разгон", sleep: "сон", eco: "эко", unknown: "—" };
 function modeRu(m) { return m ? (MODES[String(m).toLowerCase()] || m) : "—"; }
 
-// ---------- map ----------
-let mapMode = "status";
+// ---------- colouring ----------
+const PAL = ["#4F98A3", "#E0A33A", "#8D78C4", "#5FB878", "#E07B3A", "#6C8EEF", "#C46FA0", "#9FB34A", "#D9625A", "#47B3C9", "#B38A5A", "#7F8C99"];
+function hashCol(s) { let h = 0; for (const c of String(s || "")) h = (h * 31 + c.charCodeAt(0)) >>> 0; return PAL[h % PAL.length]; }
+function cellColor(d, layer) {
+  if (!d) return "";
+  if (layer === "temp") { if (d.temp == null) return "var(--off)"; const t = d.temp; return t >= 85 ? "var(--bad)" : t >= 75 ? "var(--avg)" : t >= 65 ? "var(--warn)" : t >= 45 ? "var(--ok)" : "var(--info)"; }
+  if (layer === "eff") { if (d.status !== "working" || !d.nominal) return "var(--off)"; const p = d.ths / d.nominal; return p >= 0.95 ? "var(--ok)" : p >= 0.85 ? "var(--warn)" : p >= 0.6 ? "var(--avg)" : "var(--bad)"; }
+  if (layer === "model") return hashCol(d.model);
+  if (layer === "client") return hashCol(d.client);
+  return d.status === "working" ? (d.alarms.length ? "var(--okw)" : "var(--ok)") : d.status === "suspended" ? "var(--susp)" : d.status === "offline" ? "var(--bad)" : "var(--off)";
+}
+const LAYERS = [["status", "Статус"], ["temp", "Температура"], ["eff", "% от заводского"], ["model", "Модель"], ["client", "Клиент"]];
+function legendFor(layer, devs) {
+  const it = (c, t) => `<span><i style="background:${c}"></i>${t}</span>`;
+  if (layer === "temp") return it("var(--info)", "&lt;45°") + it("var(--ok)", "45–65°") + it("var(--warn)", "65–75°") + it("var(--avg)", "75–85°") + it("var(--bad)", "85°+") + it("var(--off)", "нет данных");
+  if (layer === "eff") return it("var(--ok)", "95%+") + it("var(--warn)", "85–95%") + it("var(--avg)", "60–85%") + it("var(--bad)", "&lt;60%") + it("var(--off)", "не работает");
+  if (layer === "model" || layer === "client") { const k = layer; const cnt = {}; (devs || []).forEach((d) => { cnt[d[k] || "—"] = (cnt[d[k] || "—"] || 0) + 1; }); return Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([n, c]) => it(hashCol(n === "—" ? null : n), `${esc(n)} <span class="faint">${c}</span>`)).join(""); }
+  return it("var(--ok)", "работает") + it("var(--okw)", "работает с ошибкой") + it("var(--bad)", "не работает") + it("var(--susp)", "пауза") + `<span><i class="empty-i"></i>пустое место</span>`;
+}
+function tipHtml(d) {
+  return `<b>${esc(d.model || "")}</b> ${stPill(d.status)}<br><span class="faint">${esc(placeTxt(d))}</span><br><span class="num">${esc(d.ip || "без IP")}</span> · ${d.status === "working" ? `<span class="num">${nf(d.ths, 1)} TH/s</span>` : ""}${d.temp != null ? ` · <span class="num">${nf(d.temp, 0)}°</span>` : ""}<br><span class="faint num">${esc(d.worker || "")}</span>${d.client ? `<br>${esc(d.client)}` : ""}${d.alarms.length ? `<br><span class="warn">⚠ ${esc(d.alarms.map((a) => a.msg).join("; "))}</span>` : ""}`;
+}
+const tipEl = () => $("#tip");
+document.addEventListener("mouseover", (e) => { const c = e.target.closest && e.target.closest("[data-tip]"); const t = tipEl(); if (!c) { t.hidden = true; return; } const d = S.devMap && S.devMap.get(+c.dataset.tip); if (!d) { t.hidden = true; return; } t.innerHTML = tipHtml(d); t.hidden = false; });
+document.addEventListener("mousemove", (e) => { const t = tipEl(); if (t.hidden) return; const x = Math.min(e.clientX + 14, innerWidth - t.offsetWidth - 8), y = Math.min(e.clientY + 14, innerHeight - t.offsetHeight - 8); t.style.left = x + "px"; t.style.top = y + "px"; });
+
+// ---------- containers overview ----------
+function miniLayout(L, devsById, layer) {
+  if (!L) return "";
+  const secs = L.layout.sections; const grid = secs.map(() => ({}));
+  Object.entries(L.placed).forEach(([id, p]) => { grid[p[0]][p[1] + ":" + p[2] + ":" + p[3]] = +id; });
+  return `<div class="mini-l ml-${L.layout.kind}">${secs.map((s, si) => `<div class="ml-sec">${Array.from({ length: s.racks }, (_, r) => `<div class="ml-rack" style="grid-template-columns:repeat(${s.places},1fr)">${Array.from({ length: s.shelves * s.places }, (_, j) => { const sh = Math.floor(j / s.places), sl = j % s.places; const id = grid[si][r + ":" + sh + ":" + sl]; const d = id && devsById.get(id); const num = (s.first || 1) + r * s.shelves * s.places + j; if (s.last && num > s.last) return '<i class="x"></i>'; return d ? `<i style="background:${cellColor(d, layer)}"></i>` : '<i class="e"></i>'; }).join("")}</div>`).join("")}</div>`).join("")}</div>`;
+}
 async function pageMap() {
   await loadSummary();
-  const devs = await loadDevices(true);
-  const by = {};
+  const [devs] = await Promise.all([loadDevices(true), loadLayouts(true)]);
+  const mf = S.mf; const by = {};
   devs.forEach((d) => { (by[d.container_id || 0] = by[d.container_id || 0] || []).push(d); });
-  const conts = filtSum().conts.filter((c) => by[c.id || 0]);
-  const ipn = (ip) => (ip || "").split(".").reduce((a, x) => a * 256 + (+x || 0), 0);
-  S.order = [];
-  const box = conts.map((c) => {
-    const list = by[c.id || 0].slice().sort((a, b) => ipn(a.ip) - ipn(b.ip) || String(a.num).localeCompare(String(b.num)));
-    const w = list.filter((d) => d.status === "working").length, off = list.filter((d) => d.status === "offline").length;
-    const ths = list.reduce((a, d) => a + (d.status === "working" ? d.ths || 0 : 0), 0);
-    const tmax = Math.max(-99, ...list.map((d) => d.temp ?? -99));
-    const cells = list.map((d) => { S.order.push(d.id); return `<i class="cell ${cellCls(d)}" data-id="${d.id}" title="${esc(cellTip(d))}"></i>`; }).join("");
-    return `<div class="cbox"><h3><span title="${esc(c.name)}">${esc(c.name)}</span><button class="btn ghost" style="height:22px;padding:0 6px" data-selcont="${c.id}">выбрать</button></h3>
-      <div class="meta"><span class="ok num">${w}</span>/<span class="num">${list.length}</span><span class="${off ? "bad" : ""}">офлайн ${off}</span><span class="num">${nf(ths, 0)} TH/s</span>${tmax > -99 ? `<span class="num ${tmax >= 75 ? "warn" : ""}">${nf(tmax, 0)}°</span>` : ""}</div>
-      <div class="cells">${cells}</div></div>`;
-  }).join("");
+  let conts = filtConts().filter((c) => by[c.id || 0] && c.id);
+  if (mf.kind) conts = conts.filter((c) => S.lay[c.id] && S.lay[c.id].layout.kind === mf.kind);
+  const st = (c) => { const l = by[c.id]; const w = l.filter((d) => d.status === "working").length, off = l.filter((d) => d.status === "offline").length; return { w, off, n: l.length, ths: l.reduce((a, d) => a + (d.status === "working" ? d.ths || 0 : 0), 0), kw: l.reduce((a, d) => a + (d.w || 0), 0) / 1000, tmax: Math.max(-99, ...l.map((d) => d.temp ?? -99)), al: l.filter((d) => d.alarms.length && d.status === "working").length }; };
+  const stats = new Map(conts.map((c) => [c.id, st(c)]));
+  const natural = (a, b) => a.name.localeCompare(b.name, "ru", { numeric: true });
+  conts.sort(mf.sort === "problems" ? (a, b) => stats.get(b.id).off / stats.get(b.id).n - stats.get(a.id).off / stats.get(a.id).n || natural(a, b) : natural);
+  const kinds = {}; filtConts().forEach((c) => { const L = S.lay[c.id]; if (L) kinds[L.layout.kind] = (kinds[L.layout.kind] || 0) + 1; });
+  const html = conts.map((c) => { const L = S.lay[c.id]; const x = stats.get(c.id);
+    return `<button class="cbox" data-c="${c.id}"><div class="cb-h"><span class="kind k-${L ? L.layout.kind : "air"}">${L ? KIND[L.layout.kind] : ""}</span><span class="nm" title="${esc(c.name)}">${esc(c.name)}</span></div>
+      <div class="cb-m"><span><b class="num ok">${nf(x.w)}</b><span class="faint"> / ${nf(x.n)}</span></span>${x.off ? `<span class="bad num">✕ ${nf(x.off)}</span>` : '<span class="faint">все в работе</span>'}${x.al ? `<span class="warn num">⚠ ${nf(x.al)}</span>` : ""}<span class="sp"></span><span class="num">${nf(x.ths / 1000, 2)} PH</span><span class="num faint">${nf(x.kw, 0)} кВт</span>${x.tmax > -99 ? `<span class="num ${x.tmax >= 80 ? "warn" : "faint"}">${nf(x.tmax, 0)}°</span>` : ""}</div>
+      ${miniLayout(L, S.devMap, mf.layer)}
+      <div class="cb-f faint">${L ? `${L.layout.sections.length} ${L.layout.kind === "hydro" ? "секц." : L.layout.kind === "bath" ? "ванн" : "подсети"} · мест ${nf(L.capacity)} · свободно ${nf(Math.max(0, L.capacity - Object.keys(L.placed).length))}${L.unplaced.length ? ` · без места ${L.unplaced.length}` : ""}` : ""}<span class="sp"></span>открыть →</div></button>`; }).join("");
   if (S.page !== "map") return;
-  $("#main").innerHTML = `<div class="fbar"><div class="legend"><span><i style="background:var(--ok)"></i>работает</span><span><i style="background:var(--bad)"></i>офлайн</span><span><i style="background:var(--susp)"></i>пауза</span><span><i style="background:var(--ok);box-shadow:inset 0 0 0 3px var(--ok),inset 0 0 0 6px var(--warn)"></i>есть ошибка</span></div>
-    <span class="sp"></span><span class="hint">Клик — карточка · Ctrl/⌘ — добавить к выбору · Shift — диапазон</span>
-    <span class="seg" id="mapMode"><button data-m="status" class="${mapMode === "status" ? "on" : ""}">Статус</button><button data-m="temp" class="${mapMode === "temp" ? "on" : ""}">Температура</button><button data-m="eff" class="${mapMode === "eff" ? "on" : ""}">% паспорта</button></span></div>
-    <div class="cmap">${box || '<div class="empty">Нет устройств под фильтр</div>'}</div>`;
-  if (mapMode !== "status") paintMode();
-  $$("#mapMode button").forEach((b) => b.onclick = () => { mapMode = b.dataset.m; $$("#mapMode button").forEach((x) => x.classList.toggle("on", x === b)); pageMap(); });
-  $(".cmap").addEventListener("click", (e) => {
-    const sc = e.target.closest("[data-selcont]");
-    if (sc) { by[+sc.dataset.selcont || 0].forEach((d) => S.sel.add(d.id)); markSel(); return; }
-    const c = e.target.closest(".cell"); if (!c) return;
-    pickId(+c.dataset.id, e) || openCard(+c.dataset.id);
+  $("#pageAside").innerHTML = `<span class="seg" id="mKind"><button data-k="" class="${!mf.kind ? "on" : ""}">Все</button>${Object.entries(kinds).map(([k, n]) => `<button data-k="${k}" class="${mf.kind === k ? "on" : ""}">${KIND[k]} ${n}</button>`).join("")}</span>
+    <span class="seg" id="mSort"><button data-s="problems" class="${mf.sort === "problems" ? "on" : ""}">Сначала проблемные</button><button data-s="name" class="${mf.sort === "name" ? "on" : ""}">По номеру</button></span>`;
+  $("#main").innerHTML = `<div class="fbar"><span class="lbl">Чем красить</span><span class="seg" id="mLayer">${LAYERS.map(([k, t]) => `<button data-l="${k}" class="${mf.layer === k ? "on" : ""}">${t}</button>`).join("")}</span><div class="legend">${legendFor(mf.layer, devs)}</div></div>
+    <div class="cmap">${html || '<div class="empty">Нет контейнеров под фильтр</div>'}</div>`;
+  $$("#mKind button").forEach((b) => b.onclick = () => { mf.kind = b.dataset.k; pageMap(); });
+  $$("#mSort button").forEach((b) => b.onclick = () => { mf.sort = b.dataset.s; pageMap(); });
+  $$("#mLayer button").forEach((b) => b.onclick = () => { mf.layer = b.dataset.l; pageMap(); });
+  $$(".cbox[data-c]").forEach((b) => b.onclick = () => go("cont", false, b.dataset.c));
+}
+
+// ---------- one container ----------
+async function pageCont() {
+  const cid = +S.arg;
+  await loadSummary();
+  const [devs, L] = await Promise.all([loadDevices(), api(`/farm/containers/${cid}/layout`)]);
+  if (S.lay) S.lay[cid] = L;
+  const list = devs.filter((d) => d.container_id === cid);
+  const cl = S.cl; const layer = cl.layer;
+  const agg = aggregate(list); const tl = list.map((d) => d.temp).filter((t) => t != null);
+  const secs = L.layout.sections;
+  const grid = secs.map(() => ({})); Object.entries(L.placed).forEach(([id, p]) => { grid[p[0]][p[1] + ":" + p[2] + ":" + p[3]] = +id; });
+  S.order = [];
+  const secHtml = secs.map((s, si) => {
+    const racks = Array.from({ length: s.racks }, (_, r) => {
+      const rows = Array.from({ length: s.shelves }, (_, sh) => {
+        const cells = Array.from({ length: s.places }, (_, sl) => {
+          const num = (s.first || 1) + r * s.shelves * s.places + sh * s.places + sl;
+          if (s.last && num > s.last) return '<i class="pc x"></i>';
+          const id = grid[si][r + ":" + sh + ":" + sl]; const d = id && S.devMap.get(id);
+          if (!d) return `<i class="pc e" title="Место ${num} свободно"><span>${num}</span></i>`;
+          S.order.push(d.id);
+          return `<i class="pc" data-id="${d.id}" data-tip="${d.id}" style="background:${cellColor(d, layer)}"><span>${num}</span></i>`;
+        }).join("");
+        const shelfNo = L.layout.start === "bottom-left" ? s.shelves - sh : sh + 1;
+        return `<div class="shelf"><b class="sh" data-shelf="${si}:${r}:${sh}" title="Выделить полку">${shelfNo}</b><div class="pcs" style="grid-template-columns:repeat(${s.places},var(--pc))">${cells}</div></div>`;
+      }).join("");
+      return `<div class="rack"><div class="rk" data-rack="${si}:${r}" title="Выделить весь стеллаж">${L.layout.kind === "air" ? "Стеллаж " + ((s.rack_from || 1) + r) : "Полки"}</div>${rows}</div>`;
+    }).join("");
+    return `<div class="sec2"><div class="sec2-h"><b>${esc(s.title)}</b>${s.subnet != null ? `<span class="faint num">IP 10.x.${s.subnet}.${s.first || 1}–${s.last || (s.first || 1) + s.racks * s.shelves * s.places - 1}</span>` : ""}</div><div class="racks">${racks}</div></div>`;
+  }).join("");
+  const un = L.unplaced.map((i) => S.devMap.get(i)).filter(Boolean), dbl = L.doubles.map((i) => S.devMap.get(i)).filter(Boolean);
+  const shape = secs.map((s) => L.layout.kind === "air" ? `${s.racks} стеллажей × ${s.shelves} полок × ${s.places} мест` : `${s.shelves} полок × ${s.places} мест`);
+  if (S.page !== "cont") return;
+  $("#pageTitle").innerHTML = `<a href="#map" class="crumb-a">Контейнеры</a> <span class="faint">›</span> ${esc(L.name)}`;
+  $("#pageAside").innerHTML = `<span class="kind k-${L.layout.kind}">${KIND[L.layout.kind]}</span><span class="hint">${esc([...new Set(shape)].join(" · "))}${L.layout.auto ? " · определено по IP" : " · ваша раскладка"}</span><button class="btn" id="lEdit">Поправить раскладку</button>`;
+  $("#main").innerHTML = `
+  <div class="kpis">
+    <div class="k"><div class="l">Работают</div><div class="v ok">${nf(agg.working)}<small>из ${nf(agg.total)}</small></div></div>
+    <div class="k"><div class="l">Не работают</div><div class="v ${agg.offline ? "bad" : ""}">${nf(agg.offline)}</div><div class="s">${agg.suspended ? "пауза " + nf(agg.suspended) : "&nbsp;"}</div></div>
+    <div class="k"><div class="l">Хешрейт</div><div class="v">${nf(agg.ths / 1000, 2)}<small>PH/s</small></div><div class="s">${agg.nom ? nf(agg.ths / agg.nom * 100, 0) + "% от заводского" : ""}</div></div>
+    <div class="k"><div class="l">Потребление</div><div class="v">${nf(agg.kw, 0)}<small>кВт</small></div><div class="s">≈ ${nf(agg.kw * 24, 0)} кВт·ч в сутки</div></div>
+    <div class="k"><div class="l">Температура</div><div class="v">${tl.length ? nf(Math.max(...tl), 0) + "°" : "—"}<small>макс</small></div><div class="s">${tl.length ? "средняя " + nf(tl.reduce((a, b) => a + b, 0) / tl.length, 0) + "°" : ""}</div></div>
+    <div class="k"><div class="l">Места</div><div class="v">${nf(Object.keys(L.placed).length)}<small>из ${nf(L.capacity)}</small></div><div class="s">свободно ${nf(Math.max(0, L.capacity - Object.keys(L.placed).length))}</div></div>
+  </div>
+  <div class="fbar"><span class="lbl">Чем красить</span><span class="seg" id="cLayer">${LAYERS.map(([k, t]) => `<button data-l="${k}" class="${layer === k ? "on" : ""}">${t}</button>`).join("")}</span><div class="legend">${legendFor(layer, list)}</div>
+    <span class="sp"></span><label class="tgl"><input type="checkbox" id="selMode" ${cl.selMode ? "checked" : ""}> Режим выделения</label><span class="hint">${cl.selMode ? "клик — добавить/убрать · клик по стеллажу или полке — выделить целиком" : "клик по асику — карточка"}</span></div>
+  <div class="w"><div class="wb layout-wrap"><div class="layout l-${L.layout.kind}">${secHtml}</div></div></div>
+  ${un.length || dbl.length ? `<div class="w" style="margin-top:10px"><div class="wh">Не на своём месте · ${un.length + dbl.length}<span class="sp"></span><span class="mini">IP не попал в раскладку или два асика претендуют на одно место — обычно это старые записи CROFT или асики без IP</span></div><div class="scroll" style="max-height:300px"><table class="tbl" id="tU"><thead><tr><th>Модель</th><th>IP</th><th>Статус</th><th>Воркер</th><th>Почему</th></tr></thead><tbody>
+    ${[...un.map((d) => [d, "нет места под этот IP"]), ...dbl.map((d) => [d, "место занято другим асиком"])].map(([d, why]) => `<tr data-id="${d.id}"><td class="lnk">${esc(d.model)}</td><td class="num">${esc(d.ip || "—")}</td><td>${stPill(d.status)}</td><td class="num">${esc(d.worker || "—")}</td><td class="faint">${why}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+  <div class="w" style="margin-top:10px"><div class="wh">Контейнер за 24 часа<span class="sp"></span><span class="seg" id="ccS"><button data-s="online" class="on">Асики в работе</button><button data-s="ths">Хешрейт</button><button data-s="kw">Потребление</button></span></div><div class="wb chartbox" id="cChart" style="height:220px"></div></div>`;
+  $$("#cLayer button").forEach((b) => b.onclick = () => { cl.layer = b.dataset.l; pageCont(); });
+  $("#selMode").onchange = (e) => { cl.selMode = e.target.checked; pageCont(); };
+  $("#lEdit").onclick = () => editLayout(cid, L);
+  $(".layout").addEventListener("click", (e) => {
+    const rk = e.target.closest("[data-rack]"), sh = e.target.closest("[data-shelf]");
+    if ((rk || sh) && cl.selMode) { const [si, r, s] = (rk ? rk.dataset.rack : sh.dataset.shelf).split(":").map(Number); Object.entries(L.placed).forEach(([id, p]) => { if (p[0] === si && p[1] === r && (s == null || isNaN(s) || p[2] === s)) S.sel.add(+id); }); markSel(); return; }
+    const c = e.target.closest(".pc[data-id]"); if (!c) return; const id = +c.dataset.id;
+    if (cl.selMode) { if (e.shiftKey && S.lastIdx != null) return pickId(id, e); S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); S.lastIdx = id; markSel(); return; }
+    pickId(id, e) || openCard(id);
   });
+  const tu = $("#tU"); if (tu) tu.onclick = (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) openCard(+tr.dataset.id); };
+  const cc = { s: "online" };
+  const drawC = async () => { const pts = await api(`/farm/containers/${cid}/history?hours=24`); const el = $("#cChart"); if (!el) return; if (pts.length < 2) { el.innerHTML = '<div class="hint">История копится.</div>'; return; } const k = cc.s; mountChart(el, pts.map((p) => [new Date(p.at).getTime(), k === "ths" ? p.ths / 1000 : k === "kw" ? p.kw : p.online]), { unit: k === "ths" ? "PH/s" : k === "kw" ? "кВт" : "асиков", d: k === "ths" ? 2 : 0, extra: k === "online" ? pts.map((p) => p.total) : null }); };
+  $$("#ccS button").forEach((b) => b.onclick = () => { $$("#ccS button").forEach((x) => x.classList.toggle("on", x === b)); cc.s = b.dataset.s; drawC(); });
+  drawC();
   markSel();
 }
-function cellCls(d) { return `${d.status}${d.alarms.length && d.status !== "offline" ? " alarm" : ""}${d.temp >= 80 ? " hot" : ""}`; }
-function cellTip(d) { return `${d.model || ""} · ${d.ip || "без IP"}\n${ST[d.status] || d.status}${d.ths ? " · " + nf(d.ths, 1) + " TH/s" : ""}${d.temp != null ? " · " + nf(d.temp, 0) + "°" : ""}\n${d.worker || ""}${d.alarms.length ? "\n⚠ " + d.alarms.map((a) => a.msg).join("; ") : ""}`; }
-function paintMode() {
-  const m = new Map(S.devs.map((d) => [d.id, d]));
-  $$(".cell").forEach((c) => {
-    const d = m.get(+c.dataset.id); let col = "var(--off)";
-    if (mapMode === "temp" && d.temp != null) { const t = d.temp; col = t >= 85 ? "var(--bad)" : t >= 75 ? "var(--avg)" : t >= 65 ? "var(--warn)" : t >= 45 ? "var(--ok)" : "var(--info)"; }
-    if (mapMode === "eff" && d.status === "working" && d.nominal) { const p = d.ths / d.nominal; col = p >= 0.95 ? "var(--ok)" : p >= 0.85 ? "var(--warn)" : p >= 0.6 ? "var(--avg)" : "var(--bad)"; }
-    c.className = "cell"; c.style.background = col;
-  });
+function editLayout(cid, L) {
+  const sp = JSON.parse(JSON.stringify(L.layout));
+  const row = (s, i) => `<tr data-i="${i}"><td><input class="in" data-k="title" value="${esc(s.title)}"></td><td><input class="in n" data-k="subnet" value="${s.subnet ?? ""}" placeholder="—"></td><td><input class="in n" data-k="first" value="${s.first || 1}"></td><td><input class="in n" data-k="last" value="${s.last || ""}" placeholder="авто"></td><td><input class="in n" data-k="racks" value="${s.racks}"></td><td><input class="in n" data-k="shelves" value="${s.shelves}"></td><td><input class="in n" data-k="places" value="${s.places}"></td><td><button class="btn ghost" data-del="${i}">✕</button></td></tr>`;
+  const draw = () => {
+    $("#mdIn").innerHTML = `<div class="dr-h"><div><h2>Раскладка контейнера</h2><div class="mut small">${esc(L.name)}</div></div><span class="sp"></span><button class="btn" id="mdX">Закрыть</button></div>
+    <p class="hint">Секция — это подсеть или кабинет. Номер места = последняя цифра IP. Каждая секция: стеллажи × полки × места на полке. Место 1 — ${sp.start === "bottom-left" ? "внизу слева" : "вверху слева"}.</p>
+    <div class="fbar"><label class="mini">Тип <select class="sel" id="lKind">${Object.entries(KIND).map(([k, t]) => `<option value="${k}" ${sp.kind === k ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+    <label class="mini">Место 1 <select class="sel" id="lStart"><option value="top-left" ${sp.start !== "bottom-left" ? "selected" : ""}>вверху слева</option><option value="bottom-left" ${sp.start === "bottom-left" ? "selected" : ""}>внизу слева</option></select></label></div>
+    <table class="tbl"><thead><tr><th>Секция</th><th>Подсеть (3-я цифра IP)</th><th>Первое место</th><th>Последнее</th><th>Стеллажей</th><th>Полок</th><th>Мест на полке</th><th></th></tr></thead><tbody>${sp.sections.map(row).join("")}</tbody></table>
+    <div class="fbar" style="margin-top:10px"><button class="btn" id="lAdd">+ секция</button><span class="sp"></span>${L.layout.auto ? "" : '<button class="btn ghost" id="lReset">Вернуть автоматическую</button>'}<button class="btn pri" id="lSave">Сохранить</button></div>`;
+    $("#mdX").onclick = () => ($("#modal").hidden = true);
+    $$("#mdIn input.in").forEach((inp) => inp.onchange = () => { const i = +inp.closest("tr").dataset.i, k = inp.dataset.k; sp.sections[i][k] = k === "title" ? inp.value : inp.value === "" ? null : +inp.value; });
+    $$("#mdIn [data-del]").forEach((b) => b.onclick = () => { sp.sections.splice(+b.dataset.del, 1); draw(); });
+    $("#lAdd").onclick = () => { const l = sp.sections[sp.sections.length - 1] || { racks: 5, shelves: 6, places: 5 }; sp.sections.push({ title: "Новая секция", subnet: l.subnet != null ? l.subnet + 1 : null, first: 1, racks: l.racks, shelves: l.shelves, places: l.places, rack_from: (l.rack_from || 1) + l.racks }); draw(); };
+    $("#lKind").onchange = (e) => (sp.kind = e.target.value);
+    $("#lStart").onchange = (e) => { sp.start = e.target.value; };
+    $("#lSave").onclick = async () => { await api(`/farm/containers/${cid}/layout`, { method: "PUT", body: JSON.stringify(sp) }); $("#modal").hidden = true; toast("Раскладка сохранена"); S.lay = null; go("cont", false, cid); };
+    const rs = $("#lReset"); if (rs) rs.onclick = async () => { await api(`/farm/containers/${cid}/layout`, { method: "PUT", body: JSON.stringify({ reset: true }) }); $("#modal").hidden = true; S.lay = null; go("cont", false, cid); };
+  };
+  draw(); $("#modal").hidden = false;
 }
 
 // ---------- selection ----------
@@ -204,21 +368,24 @@ function pickId(id, e) {
     const a = S.order.indexOf(S.lastIdx), b = S.order.indexOf(id);
     if (a >= 0 && b >= 0) { const [i, j] = a < b ? [a, b] : [b, a]; S.order.slice(i, j + 1).forEach((x) => S.sel.add(x)); markSel(); return true; }
   }
-  if (e.ctrlKey || e.metaKey || S.sel.size) { S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); S.lastIdx = id; markSel(); return true; }
+  if (e.ctrlKey || e.metaKey) { S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); S.lastIdx = id; markSel(); return true; }
   S.lastIdx = id; return false;
 }
 function markSel() {
-  $$(".cell").forEach((c) => c.classList.toggle("on", S.sel.has(+c.dataset.id)));
+  $$(".pc[data-id]").forEach((c) => c.classList.toggle("on", S.sel.has(+c.dataset.id)));
   $$("tr[data-id]").forEach((r) => { const on = S.sel.has(+r.dataset.id); r.classList.toggle("on", on); const cb = $("input", r); if (cb) cb.checked = on; });
   updSel();
 }
-function updSel() { $("#selbar").hidden = !S.sel.size; $("#selN").textContent = S.sel.size; }
+function updSel() { $("#selbar").hidden = !S.sel.size; $("#selN").textContent = nf(S.sel.size); }
 $("#selbar").addEventListener("click", async (e) => {
   const a = e.target.closest("[data-act]"); if (!a) return;
-  const ids = [...S.sel];
+  const ids = [...S.sel]; const m = S.devMap || new Map();
+  const copy = (f, what) => { const t = ids.map((i) => m.get(i)).filter(Boolean).map(f).filter(Boolean); navigator.clipboard.writeText(t.join("\n")).then(() => toast(`Скопировано ${what}: ${t.length}`)); };
   if (a.dataset.act === "clear") { S.sel.clear(); markSel(); }
-  if (a.dataset.act === "export") { download("/farm/errors/export.xlsx?ids=" + ids.join(",")); }
-  if (a.dataset.act === "copy") { const m = new Map((S.devs || []).map((d) => [d.id, d])); const t = ids.map((i) => (m.get(i) || {}).ip).filter(Boolean).join("\n"); navigator.clipboard.writeText(t).then(() => toast(`Скопировано IP: ${t.split("\n").length}`)); }
+  if (a.dataset.act === "list") { resetF(); S.f.ids = ids; go("asics", true); }
+  if (a.dataset.act === "export") xlsx(ids);
+  if (a.dataset.act === "copy") copy((d) => d.ip, "IP");
+  if (a.dataset.act === "workers") copy((d) => d.worker, "воркеров");
   if (a.dataset.act === "compare") compare(ids);
 });
 async function compare(ids) {
@@ -226,51 +393,66 @@ async function compare(ids) {
   const list = ids.map((i) => m.get(i)).filter(Boolean).slice(0, 500);
   const avg = (f) => { const v = list.map(f).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
   $("#mdIn").innerHTML = `<div class="dr-h"><h2>Сравнение · ${list.length} асиков</h2><span class="sp"></span><button class="btn" id="mdX">Закрыть</button></div>
-   <div class="fbar"><span class="pill">средний хешрейт <b class="num">${nf(avg((d) => d.status === "working" ? d.ths : null), 1)} TH/s</b></span><span class="pill">средняя t° <b class="num">${nf(avg((d) => d.temp), 1)}</b></span><span class="pill">работают <b class="num">${list.filter((d) => d.status === "working").length}</b></span><span class="hint">Пакетная смена пула, воркера и режима появится, когда в CROFT будет учётка с правом управления.</span></div>
-   <div class="scroll"><table class="tbl"><thead><tr><th>Модель</th><th>IP</th><th>Статус</th><th class="r">TH/s</th><th class="r">% паспорта</th><th class="r">t°</th><th class="r">Вт</th><th>Режим</th><th>Пул</th><th>Воркер</th><th>Ошибки</th></tr></thead><tbody>
-   ${list.map((d) => `<tr data-id="${d.id}"><td class="lnk" data-card="${d.id}">${esc(d.model)}</td><td class="num">${esc(d.ip || "—")}</td><td>${stPill(d.status)}</td><td class="r num">${nf(d.ths, 1)}</td><td class="r num">${d.nominal && d.ths ? nf(d.ths / d.nominal * 100, 0) + "%" : "—"}</td><td class="r num">${nf(d.temp, 0)}</td><td class="r num">${nf(d.w, 0)}</td><td>${esc(d.mode || "")}</td><td>${esc(shortPool(d.pool))}</td><td>${esc(d.worker || "")}</td><td>${d.alarms.map((a) => `<span class="lv${a.level}">${esc(a.msg)}</span>`).join(", ")}</td></tr>`).join("")}
+   <div class="fbar"><span class="pill">средний хешрейт <b class="num">${nf(avg((d) => d.status === "working" ? d.ths : null), 1)} TH/s</b></span><span class="pill">средняя t° <b class="num">${nf(avg((d) => d.temp), 1)}</b></span><span class="pill">работают <b class="num">${list.filter((d) => d.status === "working").length}</b></span></div>
+   <div class="scroll"><table class="tbl"><thead><tr><th>Модель</th><th>Место</th><th>IP</th><th>Статус</th><th class="r">TH/s</th><th class="r">% завод.</th><th class="r">t°</th><th class="r">Вт</th><th>Режим</th><th>Воркер</th><th>Ошибки</th></tr></thead><tbody>
+   ${list.map((d) => `<tr data-id="${d.id}"><td class="lnk" data-card="${d.id}">${esc(d.model)}</td><td>${esc(placeTxt(d, true))}</td><td class="num">${esc(d.ip || "—")}</td><td>${stPill(d.status)}</td><td class="r num">${nf(d.ths, 1)}</td><td class="r num">${d.nominal && d.ths ? nf(d.ths / d.nominal * 100, 0) + "%" : "—"}</td><td class="r num">${nf(d.temp, 0)}</td><td class="r num">${nf(d.w, 0)}</td><td>${esc(modeRu(d.mode))}</td><td>${esc(d.worker || "")}</td><td>${d.alarms.map((a) => `<span class="lv${a.level}">${esc(a.msg)}</span>`).join(", ")}</td></tr>`).join("")}
    </tbody></table></div>`;
   $("#modal").hidden = false; $("#mdX").onclick = () => ($("#modal").hidden = true);
   $$("[data-card]", $("#mdIn")).forEach((x) => x.onclick = () => { $("#modal").hidden = true; openCard(+x.dataset.card); });
 }
 
 // ---------- asics ----------
+const QUICK = { low: ["Ниже 85% заводского", isLow], hot: ["Горячие 80°+", isHot], noplace: ["Без места", (d) => d.container_id && !placeOf(d)] };
+function resetF() { Object.assign(S.f, { q: "", status: "", cls: "", container: "", model: "", alarms: false, quick: "", ids: null }); }
 async function pageAsics() {
   await loadSummary();
-  const devs = await loadDevices(true);
+  const [devs] = await Promise.all([loadDevices(true), loadLayouts()]);
   const f = S.f; const q = f.q.trim().toLowerCase();
-  let list = devs.filter((d) => (!f.status || d.status === f.status) && (!f.container || String(d.container_id) === f.container) && (!f.model || d.model === f.model) && (!f.alarms || d.alarms.length) && (!f.cls || d.alarms.some((a) => a.cls === f.cls))
-    && (!q || [d.ip, d.mac, d.serial, d.worker, d.num, d.model, d.container].some((x) => x && String(x).toLowerCase().includes(q))));
+  const idset = f.ids ? new Set(f.ids) : null;
+  const base = (d, skip) => (!idset || idset.has(d.id)) && (skip === "c" || !f.container || String(d.container_id) === f.container) && (skip === "m" || !f.model || d.model === f.model) && (!f.cls || d.alarms.some((a) => a.cls === f.cls))
+    && (skip === "k" || !f.quick || QUICK[f.quick][1](d)) && (!q || [d.ip, d.mac, d.serial, d.worker, d.num, d.model, d.container, d.client].some((x) => x && String(x).toLowerCase().includes(q)));
+  const pre = devs.filter((d) => base(d));
+  let list = pre.filter((d) => (!f.status || d.status === f.status) && (!f.alarms || d.alarms.length));
   const key = f.sort.replace("-", ""), desc = f.sort[0] === "-";
   const ipn = (ip) => (ip || "").split(".").reduce((a, x) => a * 256 + (+x || 0), 0);
-  list.sort((a, b) => { let x = a[key], y = b[key]; if (key === "ip") { x = ipn(x); y = ipn(y); } if (key === "alarms") { x = a.alarms.length; y = b.alarms.length; } if (x == null) return 1; if (y == null) return -1; return (typeof x === "number" ? x - y : String(x).localeCompare(String(y), "ru")) * (desc ? -1 : 1); });
-  S.order = list.map((d) => d.id); S.view = list;
-  const cnt = (fn) => devs.filter(fn).length;
-  const models = [...new Set(devs.map((d) => d.model).filter(Boolean))].sort();
-  const conts = filtSum().conts;
+  const pk = (d) => { const p = placeOf(d); return p ? p.si * 1e6 + p.rack * 1e4 + p.shelf * 100 + p.num / 1000 : 9e9; };
+  list.sort((a, b) => { if (key === "place") return ((a.container || "").localeCompare(b.container || "", "ru", { numeric: true }) || pk(a) - pk(b)) * (desc ? -1 : 1); let x = a[key], y = b[key]; if (key === "ip") { x = ipn(x); y = ipn(y); } if (key === "alarms") { x = a.alarms.length; y = b.alarms.length; } if (x == null) return 1; if (y == null) return -1; return (typeof x === "number" ? x - y : String(x).localeCompare(String(y), "ru", { numeric: true })) * (desc ? -1 : 1); });
+  S.order = list.map((d) => d.id);
+  const cnt = (fn) => pre.filter(fn).length;
+  const models = [...new Set(devs.filter((d) => base(d, "m")).map((d) => d.model).filter(Boolean))].sort();
+  const conts = filtConts().filter((c) => c.id).sort((a, b) => a.name.localeCompare(b.name, "ru", { numeric: true }));
   const show = list.slice(0, 1500);
   const th = (k, t, r) => `<th class="${r ? "r" : ""}" data-sort="${k}">${t}${key === k ? (desc ? " ↓" : " ↑") : ""}</th>`;
+  const cname = f.container && (conts.find((c) => String(c.id) === f.container) || {}).name;
+  const why = !list.length ? (pre.length ? `Под этот фильтр ничего: ${f.status ? `в выборке нет асиков со статусом «${ST[f.status]}»` : "нет асиков с ошибками"}${cname ? ` в контейнере «${cname}»` : ""}. Всего в выборке ${nf(pre.length)}: работают ${nf(cnt((d) => d.status === "working"))}, не работают ${nf(cnt((d) => d.status === "offline"))}.` : "Ничего не нашлось по поиску и фильтрам.") : "";
   if (S.page !== "asics") return;
   $("#main").innerHTML = `
-   <div class="fbar"><input type="search" id="q" placeholder="IP, MAC, серийник, воркер, номер…" value="${esc(f.q)}">
-    <div class="chips">${[["", "Все", devs.length], ["working", "Работают", cnt((d) => d.status === "working")], ["offline", "Офлайн", cnt((d) => d.status === "offline")], ["suspended", "Пауза", cnt((d) => d.status === "suspended")]].map(([v, t, n]) => `<button class="chip ${f.status === v ? "on" : ""}" data-st="${v}">${t} <b>${nf(n)}</b></button>`).join("")}
+   <div class="fbar"><input type="search" id="q" placeholder="IP, воркер, серийник, клиент…" value="${esc(f.q)}">
+    <div class="chips">${[["", "Все", pre.length], ["working", "Работают", cnt((d) => d.status === "working")], ["offline", "Не работают", cnt((d) => d.status === "offline")], ["suspended", "Пауза", cnt((d) => d.status === "suspended")]].map(([v, t, n]) => `<button class="chip ${f.status === v ? "on" : ""}" data-st="${v}" ${n || !v ? "" : "disabled"}>${t} <b>${nf(n)}</b></button>`).join("")}
      <button class="chip ${f.alarms ? "on" : ""}" id="onlyAl">С ошибками <b>${nf(cnt((d) => d.alarms.length))}</b></button></div>
+    <div class="chips">${Object.entries(QUICK).map(([k, [t, fn]]) => { const n = devs.filter((d) => base(d, "k") && fn(d)).length; return `<button class="chip q ${f.quick === k ? "on" : ""}" data-qk="${k}">${t} <b>${nf(n)}</b></button>`; }).join("")}</div>
     <select class="sel" id="fCont"><option value="">Все контейнеры</option>${conts.map((c) => `<option value="${c.id}" ${String(c.id) === f.container ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
     <select class="sel" id="fModel"><option value="">Все модели</option>${models.map((m) => `<option ${m === f.model ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>
-    <span class="sp"></span><span class="hint">${nf(list.length)} в выборке</span>
-    <button class="btn" id="selAll">Выделить отфильтрованные</button><button class="btn" id="csv">CSV</button></div>
-   <div class="w"><div class="scroll"><table class="tbl" id="tA"><thead><tr><th class="cb"><input type="checkbox" id="cbAll" aria-label="Выделить всё"></th>${th("model", "Модель")}${th("ip", "IP")}${th("status", "Статус")}${th("ths", "TH/s", 1)}${th("temp", "t°", 1)}${th("w", "Вт", 1)}${th("container", "Контейнер")}${th("client", "Клиент")}${th("worker", "Воркер")}${th("uptime", "Аптайм", 1)}${th("alarms", "Ошибки")}</tr></thead><tbody>
-   ${show.map((d) => `<tr data-id="${d.id}"><td class="cb"><input type="checkbox" aria-label="выбрать"></td><td class="lnk" data-card="${d.id}">${esc(d.model)}</td><td class="num">${esc(d.ip || "—")}</td><td>${stPill(d.status)}</td><td class="r num">${d.status === "working" ? nf(d.ths, 1) : "—"}</td><td class="r num ${d.temp >= 80 ? "warn" : ""}">${nf(d.temp, 0)}</td><td class="r num">${nf(d.w, 0)}</td><td title="${esc(d.container)}">${esc(d.container || "—")}</td><td>${esc(d.client || "—")}</td><td title="${esc(d.worker)}">${esc(d.worker || "—")}</td><td class="r num">${d.status === "working" ? dur(d.uptime) : "—"}</td><td>${d.alarms.map((a) => `<span class="lv${a.level}" title="${esc(a.code)}">${esc(a.msg)}</span>`).join(", ")}</td></tr>`).join("")}
-   </tbody></table>${list.length > show.length ? `<div class="empty">Показаны первые ${nf(show.length)} из ${nf(list.length)} — уточните фильтр или выгрузите CSV.</div>` : ""}${!list.length ? '<div class="empty">Ничего не найдено</div>' : ""}</div></div>`;
+    ${f.ids ? `<span class="pill">только выделенные ${nf(f.ids.length)} <button class="x" id="idsX" aria-label="убрать">✕</button></span>` : ""}
+    ${f.q || f.status || f.container || f.model || f.alarms || f.quick || f.ids ? '<button class="btn ghost" id="fReset">Сбросить фильтры</button>' : ""}
+    <span class="sp"></span><span class="hint">${nf(list.length)} асиков</span><button class="btn" id="csv">Выгрузить в Excel</button></div>
+   <div class="w"><div class="scroll"><table class="tbl" id="tA"><thead><tr><th class="cb"><input type="checkbox" id="cbAll" aria-label="Выделить все на экране"></th>${th("model", "Модель")}${th("place", "Контейнер и место")}${th("status", "Статус")}${th("ths", "TH/s", 1)}${th("temp", "t°", 1)}${th("w", "Вт", 1)}${th("ip", "IP")}${th("client", "Клиент")}${th("worker", "Воркер")}${th("uptime", "Без перезагрузки", 1)}${th("alarms", "Ошибки")}</tr></thead><tbody>
+   ${show.map((d) => `<tr data-id="${d.id}"><td class="cb"><input type="checkbox" aria-label="выбрать"></td><td class="lnk">${esc(d.model)}</td><td title="${esc(d.container)}"><span class="cn">${esc((d.container || "—").split(" ").slice(0, 2).join(" "))}</span> <span class="faint">${esc(placeTxt(d, true))}</span></td><td>${stPill(d.status)}</td><td class="r num">${d.status === "working" ? nf(d.ths, 1) : "—"}${isLow(d) ? ' <span class="warn" title="ниже 85% заводского">↓</span>' : ""}</td><td class="r num ${d.temp >= 80 ? "warn" : ""}">${nf(d.temp, 0)}</td><td class="r num">${nf(d.w, 0)}</td><td class="num">${esc(d.ip || "—")}</td><td>${esc(d.client || "—")}</td><td class="num" title="${esc(d.worker)}">${esc(d.worker || "—")}</td><td class="r num">${d.status === "working" ? dur(d.uptime) : "—"}</td><td>${d.alarms.map((a) => `<span class="lv${a.level}" title="${esc(a.code)}">${esc(a.msg)}</span>`).join(", ")}</td></tr>`).join("")}
+   </tbody></table>${list.length > show.length ? `<div class="empty">Показаны первые ${nf(show.length)} из ${nf(list.length)} — уточните фильтр или выгрузите в Excel.</div>` : ""}${why ? `<div class="empty">${esc(why)}<br><button class="btn" id="fReset2" style="margin-top:10px">Сбросить статус</button></div>` : ""}</div></div>`;
   let qt; $("#q").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { f.q = e.target.value; pageAsics().then(() => { const i = $("#q"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); };
   $$(".chip[data-st]").forEach((c) => c.onclick = () => { f.status = c.dataset.st; pageAsics(); });
+  $$(".chip[data-qk]").forEach((c) => c.onclick = () => { f.quick = f.quick === c.dataset.qk ? "" : c.dataset.qk; pageAsics(); });
   $("#onlyAl").onclick = () => { f.alarms = !f.alarms; pageAsics(); };
   $("#fCont").onchange = (e) => { f.container = e.target.value; pageAsics(); };
   $("#fModel").onchange = (e) => { f.model = e.target.value; pageAsics(); };
+  const r1 = $("#fReset"); if (r1) r1.onclick = () => { resetF(); pageAsics(); };
+  const r2 = $("#fReset2"); if (r2) r2.onclick = () => { f.status = ""; f.alarms = false; pageAsics(); };
+  const ix = $("#idsX"); if (ix) ix.onclick = () => { f.ids = null; pageAsics(); };
   $$("th[data-sort]").forEach((h) => h.onclick = () => { const k = h.dataset.sort; f.sort = f.sort === k ? "-" + k : k; pageAsics(); });
-  $("#selAll").onclick = () => { list.forEach((d) => S.sel.add(d.id)); markSel(); };
   $("#cbAll").onchange = (e) => { show.forEach((d) => e.target.checked ? S.sel.add(d.id) : S.sel.delete(d.id)); markSel(); };
-  $("#csv").onclick = () => csv(list);
+  $("#csv").onclick = () => list.length ? xlsx(list.map((d) => d.id)) : toast("Список пуст");
+  $("#pageAside").innerHTML = list.length ? `<button class="btn" id="selAll">Выделить все ${nf(list.length)}</button>` : "";
+  const sa = $("#selAll"); if (sa) sa.onclick = () => { list.forEach((d) => S.sel.add(d.id)); markSel(); };
   tableClicks("#tA");
   markSel();
 }
@@ -284,58 +466,57 @@ function tableClicks(sel) {
 }
 const stPill = (s) => `<span class="pill st-${s}"><i></i>${ST[s] || s}</span>`;
 const shortPool = (u) => (u || "").replace(/^stratum\+tcp:\/\//, "");
-function csv(list) {
-  const head = ["Модель", "IP", "MAC", "Серийный", "Статус", "TH/s", "t", "Вт", "Площадка", "Контейнер", "Клиент", "Воркер", "Пул", "Ошибки"];
-  const rows = list.map((d) => [d.model, d.ip, d.mac, d.serial, ST[d.status], d.ths, d.temp, d.w, d.site, d.container, d.client, d.worker, d.pool, d.alarms.map((a) => a.msg).join("; ")]);
-  const t = "\ufeff" + [head, ...rows].map((r) => r.map((x) => `"${String(x == null ? "" : x).replace(/"/g, '""')}"`).join(";")).join("\n");
-  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([t], { type: "text/csv" })); a.download = "kirka_asics.csv"; a.click();
+async function xlsx(ids) {
+  if (!ids.length) return toast("Ничего не выбрано");
+  toast(`Готовлю Excel: ${nf(ids.length)} асиков…`);
+  const t = tok.get();
+  const r = await fetch(API + "/farm/devices/export.xlsx", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (t && t.access_token) }, body: JSON.stringify({ ids }) });
+  if (!r.ok) return toast("Не удалось выгрузить");
+  saveBlob(await r.blob(), r.headers.get("Content-Disposition"));
 }
+function saveBlob(b, cd) { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = ((cd || "").split('filename="')[1] || "kirka.xlsx").replace(/"/g, ""); document.body.appendChild(a); a.click(); a.remove(); }
 
-// ---------- errors ----------
+// ---------- problems ----------
 async function pageErrors() {
   await loadSummary();
+  await loadLayouts();
+  if (!S.devs) await loadDevices();
   const ef = S.ef;
-  const r = await api("/farm/errors?" + qs({ site: site(), client: client(), cls: ef.cls, container: ef.container, model: ef.model, group: ef.group, q: ef.q, level: ef.level }));
-  S.errItems = r.items;
-  const conts = filtSum().conts;
-  const models = [...new Set(S.sum.containers.length ? r.items.map((x) => x.model).filter(Boolean) : [])].sort();
-  const all = S.sum.classes;
-  const maxg = Math.max(1, ...r.groups.map((g) => g.count));
-  const show = r.items.slice(0, 1500);
+  const r = await api("/farm/errors?" + qs({ site: site(), client: client(), cls: ef.cls, container: ef.container, model: ef.model, group: "code", q: ef.q, level: ef.level }));
+  const conts = filtConts().filter((c) => c.id).sort((a, b) => a.name.localeCompare(b.name, "ru", { numeric: true }));
+  const models = [...new Set(r.items.map((x) => x.model).filter(Boolean))].sort();
+  // groups computed here: error → devices, top containers, oldest
+  const gm = {};
+  r.items.forEach((x) => { const k = x.code + " · " + x.msg; const g = gm[k] = gm[k] || { k, code: x.code, msg: x.msg, cls: x.cls_label, lvl: x.lvl, ids: new Set(), conts: {}, since: null }; g.ids.add(x.id); g.conts[x.container || "—"] = (g.conts[x.container || "—"] || 0) + 1; if (x.since && (!g.since || x.since < g.since)) g.since = x.since; });
+  const groups = Object.values(gm).sort((a, b) => b.lvl - a.lvl || b.ids.size - a.ids.size);
+  const items = ef.gk ? r.items.filter((x) => x.code + " · " + x.msg === ef.gk) : r.items;
+  const show = items.slice(0, 1500);
   S.order = [...new Set(show.map((x) => x.id))];
+  const all = S.sum.classes.filter((c) => c.count);
   if (S.page !== "errors") return;
   $("#main").innerHTML = `
+  <div class="cls-row"><button class="clsc ${!ef.cls ? "on" : ""}" data-cls=""><span>Все проблемы</span><b class="num">${nf(S.sum.with_alarms)}</b><i>асиков</i></button>${all.map((c) => `<button class="clsc ${ef.cls === c.key ? "on" : ""} c-${c.key}" data-cls="${c.key}"><span>${esc(c.label)}</span><b class="num">${nf(c.count)}</b><i>ошибок</i></button>`).join("")}</div>
   <div class="fbar"><input type="search" id="eq" placeholder="IP, воркер, серийник…" value="${esc(ef.q)}">
-   <div class="chips"><button class="chip ${!ef.cls ? "on" : ""}" data-cls="">Все классы</button>${all.filter((c) => c.count).map((c) => `<button class="chip ${ef.cls === c.key ? "on" : ""}" data-cls="${c.key}">${esc(c.label)} <b>${nf(c.count)}</b></button>`).join("")}</div>
    <select class="sel" id="eCont"><option value="">Все контейнеры</option>${conts.map((c) => `<option value="${c.id}" ${String(c.id) === ef.container ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
    <select class="sel" id="eModel"><option value="">Все модели</option>${models.map((m) => `<option ${m === ef.model ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>
-   <select class="sel" id="eLvl"><option value="">Любой уровень</option><option value="1" ${ef.level === "1" ? "selected" : ""}>от предупреждения</option><option value="2" ${ef.level === "2" ? "selected" : ""}>от «опасно»</option><option value="3" ${ef.level === "3" ? "selected" : ""}>только критичные</option></select>
-   <span class="sp"></span><button class="btn" id="eSelAll">Выделить все ${nf(r.devices)}</button><button class="btn pri" id="eXls">Выгрузить Excel</button></div>
-  <div class="grid">
-   <div class="w c4"><div class="wh">Группировать<span class="sp"></span><span class="seg" id="eGrp">${[["code", "ошибка"], ["cls", "класс"], ["container", "контейнер"], ["client", "клиент"], ["model", "модель"]].map(([k, t]) => `<button data-g="${k}" class="${ef.group === k ? "on" : ""}">${t}</button>`).join("")}</span></div>
-    <div class="wb"><div class="hint" style="margin-bottom:8px">${nf(r.total)} ошибок на ${nf(r.devices)} асиках. Клик по группе — фильтр.</div><div class="hl">
-    ${r.groups.slice(0, 40).map((g) => `<div class="row" data-gk="${esc(g.key)}"><span class="nm" title="${esc(g.key)}">${esc(g.key)}</span><span class="num">${nf(g.devices)}</span><div class="tr"><span style="width:${g.count / maxg * 100}%"></span></div></div>`).join("") || '<div class="hint">Ошибок нет</div>'}</div></div></div>
-   <div class="w c8"><div class="scroll"><table class="tbl" id="tE"><thead><tr><th class="cb"><input type="checkbox" id="ecbAll" aria-label="Выделить все"></th><th>Ошибка</th><th>Класс</th><th>Уровень</th><th>С какого времени</th><th>Модель</th><th>IP</th><th>Контейнер</th><th>Клиент</th><th class="r">t°</th></tr></thead><tbody>
-    ${show.map((x) => `<tr data-id="${x.id}" data-gk="${esc(x.code + " · " + x.msg)}"><td class="cb"><input type="checkbox" aria-label="выбрать"></td><td><span class="lv${x.lvl}">${esc(x.msg)}</span> <span class="faint num">${esc(x.code)}</span></td><td>${esc(x.cls_label)}</td><td class="lv${x.lvl}">${LV[x.lvl] || "—"}</td><td class="num">${tfmt(x.since)}</td><td>${esc(x.model || "")}</td><td class="num">${esc(x.ip || "—")}</td><td title="${esc(x.container)}">${esc(x.container || "—")}</td><td>${esc(x.client || "—")}</td><td class="r num">${nf(x.temp, 0)}</td></tr>`).join("")}
-    </tbody></table>${r.items.length > show.length ? `<div class="empty">Показаны первые ${nf(show.length)} из ${nf(r.items.length)}. Полный список — в Excel.</div>` : ""}</div></div>
-  </div>`;
+   <select class="sel" id="eLvl"><option value="">Любая важность</option><option value="1" ${ef.level === "1" ? "selected" : ""}>от предупреждения</option><option value="2" ${ef.level === "2" ? "selected" : ""}>от «опасно»</option><option value="3" ${ef.level === "3" ? "selected" : ""}>только критичные</option></select>
+   <span class="sp"></span><button class="btn pri" id="eXls">Выгрузить в Excel</button></div>
+  <div class="w"><div class="wh">Какие ошибки · ${groups.length}<span class="sp"></span><span class="mini">клик по строке — показать асики с этой ошибкой ниже</span></div><div class="scroll" style="max-height:360px"><table class="tbl" id="tG"><thead><tr><th>Ошибка</th><th>Код</th><th>Класс</th><th>Важность</th><th class="r">Асиков</th><th>Где больше всего</th><th>Самая давняя</th></tr></thead><tbody>
+   ${groups.map((g) => { const top = Object.entries(g.conts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([n, c]) => `${esc(n.split(" ").slice(0, 2).join(" "))} <span class="faint">${c}</span>`).join(", "); return `<tr data-gk="${esc(g.k)}" class="${ef.gk === g.k ? "on" : ""}"><td class="lnk"><span class="lv${g.lvl}">${esc(g.msg)}</span></td><td class="num faint">${esc(g.code)}</td><td>${esc(g.cls)}</td><td class="lv${g.lvl}">${LV[g.lvl] || "—"}</td><td class="r num"><b>${nf(g.ids.size)}</b></td><td>${top}</td><td class="num">${tfmt(g.since)}</td></tr>`; }).join("") || '<tr><td colspan="7"><div class="empty">Ошибок нет</div></td></tr>'}
+  </tbody></table></div></div>
+  <div class="w" style="margin-top:10px"><div class="wh">${ef.gk ? `Асики с ошибкой «${esc(ef.gk.split(" · ").slice(1).join(" · "))}» · ${nf(new Set(items.map((x) => x.id)).size)} <button class="btn ghost" id="gkX" style="height:22px;margin-left:6px">показать все</button>` : `Все асики с ошибками · ${nf(r.devices)}`}<span class="sp"></span><button class="btn" id="eSel" style="height:24px">Выделить эти асики</button></div><div class="scroll"><table class="tbl" id="tE"><thead><tr><th class="cb"><input type="checkbox" id="ecbAll" aria-label="Выделить все"></th><th>Ошибка</th><th>Важность</th><th>С какого времени</th><th>Модель</th><th>Контейнер и место</th><th>IP</th><th>Клиент</th><th class="r">t°</th></tr></thead><tbody>
+    ${show.map((x) => { const d = S.devMap && S.devMap.get(x.id); return `<tr data-id="${x.id}"><td class="cb"><input type="checkbox" aria-label="выбрать"></td><td><span class="lv${x.lvl}">${esc(x.msg)}</span> <span class="faint num">${esc(x.code)}</span></td><td class="lv${x.lvl}">${LV[x.lvl] || "—"}</td><td class="num">${tfmt(x.since)}</td><td>${esc(x.model || "")}</td><td title="${esc(x.container)}"><span class="cn">${esc((x.container || "—").split(" ").slice(0, 2).join(" "))}</span> <span class="faint">${d ? esc(placeTxt(d, true)) : ""}</span></td><td class="num">${esc(x.ip || "—")}</td><td>${esc(x.client || "—")}</td><td class="r num">${nf(x.temp, 0)}</td></tr>`; }).join("")}
+    </tbody></table>${items.length > show.length ? `<div class="empty">Показаны первые ${nf(show.length)} из ${nf(items.length)}. Полный список — в Excel.</div>` : ""}</div></div>`;
   let qt; $("#eq").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { ef.q = e.target.value; pageErrors().then(() => { const i = $("#eq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300); };
-  $$(".chip[data-cls]").forEach((c) => c.onclick = () => { ef.cls = c.dataset.cls; pageErrors(); });
+  $$(".clsc").forEach((c) => c.onclick = () => { ef.cls = c.dataset.cls; ef.gk = ""; pageErrors(); });
   $("#eCont").onchange = (e) => { ef.container = e.target.value; pageErrors(); };
   $("#eModel").onchange = (e) => { ef.model = e.target.value; pageErrors(); };
   $("#eLvl").onchange = (e) => { ef.level = e.target.value; pageErrors(); };
-  $$("#eGrp button").forEach((b) => b.onclick = () => { ef.group = b.dataset.g; pageErrors(); });
-  $$(".hl .row[data-gk]").forEach((row) => row.onclick = () => {
-    const k = row.dataset.gk;
-    if (ef.group === "container") { const c = conts.find((x) => x.name === k); ef.container = c ? String(c.id) : ""; return pageErrors(); }
-    if (ef.group === "model") { ef.model = k; return pageErrors(); }
-    if (ef.group === "cls") { const c = all.find((x) => x.label === k); ef.cls = c ? c.key : ""; return pageErrors(); }
-    if (ef.group === "client") { const c = S.sum.clients.find((x) => (x.name || "").trim() === k.trim()); if (c && c.id) { $("#clientSel").value = c.id; } return pageErrors(); }
-    const ids = r.items.filter((x) => `${x.code} · ${x.msg}` === k).map((x) => x.id); ids.forEach((i) => S.sel.add(i)); markSel(); toast(`Выделено асиков: ${new Set(ids).size}`);
-  });
-  $("#eSelAll").onclick = () => { r.items.forEach((x) => S.sel.add(x.id)); markSel(); };
+  $$("#tG tr[data-gk]").forEach((row) => row.onclick = () => { ef.gk = ef.gk === row.dataset.gk ? "" : row.dataset.gk; pageErrors().then(() => $("#tE") && $("#tE").closest(".w").scrollIntoView({ behavior: "smooth", block: "start" })); });
+  const gx = $("#gkX"); if (gx) gx.onclick = () => { ef.gk = ""; pageErrors(); };
+  $("#eSel").onclick = () => { items.forEach((x) => S.sel.add(x.id)); markSel(); };
   $("#ecbAll").onchange = (e) => { show.forEach((x) => e.target.checked ? S.sel.add(x.id) : S.sel.delete(x.id)); markSel(); };
-  $("#eXls").onclick = () => download("/farm/errors/export.xlsx?" + qs({ site: site(), client: client(), cls: ef.cls, container: ef.container, model: ef.model, ids: S.sel.size ? [...S.sel].join(",") : "" }));
+  $("#eXls").onclick = () => S.sel.size ? xlsx([...S.sel]) : ef.gk ? xlsx([...new Set(items.map((x) => x.id))]) : download("/farm/errors/export.xlsx?" + qs({ site: site(), client: client(), cls: ef.cls, container: ef.container, model: ef.model }));
   tableClicks("#tE");
   markSel();
 }
@@ -343,14 +524,16 @@ async function pageErrors() {
 // ---------- clients ----------
 async function pageClients() {
   await loadSummary();
-  const cl = S.sum.clients;
+  const devs = await loadDevices(true);
+  const m = {};
+  devs.forEach((d) => { const k = m[d.client_id || 0] = m[d.client_id || 0] || { id: d.client_id, name: d.client || "Без клиента", total: 0, working: 0, offline: 0, susp: 0, ths: 0, nom: 0, kw: 0, al: 0, conts: new Set(), models: {} }; k.total++; if (d.status === "working") { k.working++; k.ths += d.ths || 0; k.nom += d.nominal || 0; } if (d.status === "offline") k.offline++; if (d.status === "suspended") k.susp++; k.kw += (d.w || 0) / 1000; if (d.alarms.length) k.al++; if (d.container_id) k.conts.add(d.container_id); k.models[d.model] = (k.models[d.model] || 0) + 1; });
+  const cl = Object.values(m).sort((a, b) => b.total - a.total);
   if (S.page !== "clients") return;
-  $("#main").innerHTML = `<div class="w"><div class="wh">Клиенты хостинга · ${cl.length}<span class="sp"></span><span class="mini">Вид клиента — как в CROFT «человечек»: только его асики</span></div><div class="scroll"><table class="tbl"><thead><tr><th>Клиент</th><th class="r">Асиков</th><th class="r">Работают</th><th class="r">Офлайн</th><th class="r">Хешрейт, TH/s</th><th class="r">Доля работающих</th></tr></thead><tbody>
-   ${cl.map((c) => `<tr><td class="lnk" data-client="${c.id || ""}">${esc((c.name || "").trim())}</td><td class="r num">${nf(c.total)}</td><td class="r num ok">${nf(c.working)}</td><td class="r num ${c.offline ? "bad" : ""}">${nf(c.offline)}</td><td class="r num">${nf(c.ths, 0)}</td><td class="r num">${c.total ? nf(c.working / c.total * 100, 0) + "%" : "—"}</td></tr>`).join("")}
+  $("#main").innerHTML = `<div class="w"><div class="wh">Клиенты · ${cl.length}<span class="sp"></span><span class="mini">«В работе» — доля асиков клиента, которые майнят прямо сейчас. «% от заводского» — их хешрейт к паспортному</span></div><div class="scroll"><table class="tbl" id="tCl"><thead><tr><th>Клиент</th><th class="r">Асиков</th><th class="r">В работе</th><th class="r">Не работают</th><th class="r">С ошибками</th><th class="r">PH/s</th><th class="r">% от заводского</th><th class="r">кВт</th><th class="r">Контейнеров</th><th>Модели</th></tr></thead><tbody>
+   ${cl.map((c) => { const p = c.total ? c.working / c.total * 100 : 0; return `<tr data-client="${c.id || ""}"><td class="lnk">${esc((c.name || "").trim())}</td><td class="r num">${nf(c.total)}</td><td class="r"><span class="pct ${p >= 95 ? "p-ok" : p >= 80 ? "p-warn" : "p-bad"}">${nf(p, 0)}%</span></td><td class="r num ${c.offline ? "bad" : "faint"}">${nf(c.offline)}</td><td class="r num ${c.al ? "warn" : "faint"}">${nf(c.al)}</td><td class="r num">${nf(c.ths / 1000, 2)}</td><td class="r num">${c.nom ? nf(c.ths / c.nom * 100, 0) + "%" : "—"}</td><td class="r num">${nf(c.kw, 0)}</td><td class="r num">${c.conts.size}</td><td class="small">${Object.entries(c.models).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n, k]) => `${esc(n || "—")} <span class="faint">${k}</span>`).join(", ")}</td></tr>`; }).join("")}
    </tbody></table></div></div>`;
-  bindCommon();
+  $$("#tCl tr[data-client]").forEach((x) => x.onclick = () => { $("#clientSel").value = x.dataset.client; S.devs = null; go("today"); });
 }
-
 // ---------- ASIC card ----------
 async function openCard(id) {
   $("#drIn").innerHTML = '<div class="spin" style="margin:40px auto"></div>'; $("#drawer").hidden = false;
@@ -360,7 +543,7 @@ async function openCard(id) {
   const evTxt = (e) => e.kind === "status" ? `${ST[e.old] || e.old} → ${ST[e.new] || e.new}` : e.kind.startsWith("alarm") ? `${esc(e.new || e.old)} <span class="faint">${esc(e.code)} · ${CLS[e.cls] || ""}</span>` : `${esc(e.old || "—")} → ${esc(e.new || "—")}`;
   const ups = d.hourly.length ? d.hourly.reduce((a, h) => a + h.up, 0) / d.hourly.length : null;
   $("#drIn").innerHTML = `
-   <div class="dr-h"><div><h2>${esc(d.model)} ${d.num ? `<span class="faint">№ ${esc(d.num)}</span>` : ""}</h2><div class="mut small">${esc((d.site || "").trim())} · ${esc(d.container || "")}</div></div><span class="sp"></span>${stPill(d.status)}<button class="btn" id="drX">Закрыть</button></div>
+   <div class="dr-h"><div><h2>${esc(d.model)} ${d.num ? `<span class="faint">№ ${esc(d.num)}</span>` : ""}</h2><div class="mut small">${esc((d.site || "").trim())} · ${d.container_id ? `<a href="#cont/${d.container_id}" class="crumb-a" id="drCont">${esc(d.container || "")}</a>` : "без контейнера"}</div><div class="small"><b>${esc(placeTxt(d))}</b></div></div><span class="sp"></span>${stPill(d.status)}<button class="btn" id="drX">Закрыть</button></div>
    <div class="life">
     <div class="k"><div class="l">Хешрейт</div><div class="v">${d.status === "working" ? nf(d.ths, 1) : "—"}<small>TH/s</small></div><div class="s">паспорт ${nf(d.nominal, 0)}${d.nominal && d.ths ? " · " + nf(d.ths / d.nominal * 100, 0) + "%" : ""}</div></div>
     <div class="k"><div class="l">Без перезагрузки</div><div class="v">${d.status === "working" ? dur(d.uptime) : "—"}</div><div class="s">${d.status === "working" ? "сейчас в работе" : (ST[d.status] || "") + " с " + tfmt(d.since)}</div></div>
@@ -376,10 +559,11 @@ async function openCard(id) {
    <div class="sec"><h4>Хешрейт по часам, 72 ч</h4>${d.hourly.length > 1 ? lineChart(d.hourly.map((h) => [new Date(h.h).getTime(), h.ths]), "TH/s") : '<div class="hint">История копится с момента подключения Kirka.</div>'}</div>
    <div class="sec"><h4>История болезни</h4>${d.events.length ? `<ul class="tl">${d.events.map((e) => `<li><span class="d">${tfmt(e.at)}</span><span class="dot" style="background:${evCol[e.kind] || "var(--mut)"}"></span><span><b>${evName[e.kind] || e.kind}</b> · ${evTxt(e)}</span></li>`).join("")}</ul>` : '<div class="hint">Пока событий нет</div>'}</div>`;
   $("#drX").onclick = () => ($("#drawer").hidden = true);
+  const dc = $("#drCont"); if (dc) dc.onclick = (e) => { e.preventDefault(); $("#drawer").hidden = true; go("cont", false, d.container_id); };
 }
 $("#drawer").addEventListener("click", (e) => { if (e.target.id === "drawer") $("#drawer").hidden = true; });
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("#modal").hidden = true; });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { $("#drawer").hidden = true; $("#modal").hidden = true; } if ((e.ctrlKey || e.metaKey) && e.key === "a" && ["map", "asics", "errors"].includes(S.page) && !e.target.matches("input")) { e.preventDefault(); S.order.forEach((i) => S.sel.add(i)); markSel(); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { $("#drawer").hidden = true; $("#modal").hidden = true; } if ((e.ctrlKey || e.metaKey) && e.key === "a" && ["cont", "asics", "errors"].includes(S.page) && !e.target.matches("input")) { e.preventDefault(); S.order.forEach((i) => S.sel.add(i)); markSel(); } });
 
 // ---------- common ----------
 // ---------- pools ----------
@@ -482,34 +666,56 @@ async function openPool(id) {
   $$("#drIn tr[data-card]").forEach((r) => r.onclick = () => openCard(+r.dataset.card));
 }
 
-function bindCommon() {
-  $$("[data-go]").forEach((x) => x.onclick = (e) => { e.preventDefault(); if (x.dataset.st != null) { S.f.status = x.dataset.st; } go(x.dataset.go); });
-  $$("[data-cls]", $(".hl") || document).forEach((x) => { if (x.classList.contains("row")) x.onclick = () => { S.ef.cls = x.dataset.cls; go("errors"); }; });
-  $$("[data-cont]").forEach((x) => x.onclick = () => { S.f.container = x.dataset.cont; S.f.status = ""; go("asics"); });
-  $$("[data-client]").forEach((x) => x.onclick = () => { $("#clientSel").value = x.dataset.client; S.devs = null; go("asics"); });
-}
 async function download(path) {
   const t = tok.get(); const r = await fetch(API + path, { headers: { Authorization: "Bearer " + (t && t.access_token) } });
   if (!r.ok) return toast("Не удалось выгрузить");
-  const b = await r.blob(); const a = document.createElement("a"); a.href = URL.createObjectURL(b);
-  a.download = (r.headers.get("Content-Disposition") || "").split('filename="')[1]?.replace(/"/g, "") || "kirka.xlsx"; a.click();
+  saveBlob(await r.blob(), r.headers.get("Content-Disposition"));
 }
 function toast(t) { const el = $("#toast"); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (el.hidden = true), 2200); }
 
-$$(".nav[data-page]").forEach((n) => n.onclick = () => go(n.dataset.page));
-$("#siteSel").onchange = $("#clientSel").onchange = () => { S.devs = null; go(S.page, true); };
+// ---------- global search ----------
+(function () {
+  const inp = $("#gq"), box = $("#gqRes"); let items = [], hi = 0;
+  const norm = (s) => String(s || "").toLowerCase();
+  const run = async () => {
+    const q = norm(inp.value.trim()); if (q.length < 2) { box.hidden = true; return; }
+    const devs = await loadDevices(); await loadLayouts();
+    const qx = q.replace(/[.\s]/g, "x");
+    const score = (d) => { const w = norm(d.worker); if (norm(d.ip) === q) return 0; if (w.endsWith(qx) || w.endsWith(q)) return 1; if (norm(d.serial) === q || norm(d.num) === q) return 1; if (w.includes(qx)) return 2; if ([d.ip, d.serial, d.mac, d.num].some((x) => norm(x).includes(q))) return 3; if (norm(d.client).includes(q) || norm(d.model).includes(q)) return 5; return 9; };
+    items = devs.map((d) => [score(d), d]).filter((x) => x[0] < 9).sort((a, b) => a[0] - b[0]).slice(0, 8).map((x) => x[1]);
+    const cs = S.sum ? S.sum.containers.filter((c) => c.id && norm(c.name).includes(q)).slice(0, 3) : [];
+    hi = 0;
+    box.innerHTML = cs.map((c) => `<button class="gr" data-gc="${c.id}"><span class="kind k-air">Контейнер</span> <b>${esc(c.name)}</b></button>`).join("") + items.map((d, i) => `<button class="gr ${i === 0 && !cs.length ? "hi" : ""}" data-gd="${d.id}">${stPill(d.status)} <b>${esc(d.model || "")}</b> <span class="num">${esc(d.worker || d.ip || "")}</span><br><span class="faint">${esc((d.container || "").split(" ").slice(0, 2).join(" "))} · ${esc(placeTxt(d, true))} · ${esc(d.ip || "без IP")}${d.client ? " · " + esc(d.client) : ""}</span></button>`).join("") || '<div class="gr faint">Ничего не нашлось</div>';
+    box.hidden = false;
+  };
+  let t; inp.oninput = () => { clearTimeout(t); t = setTimeout(run, 180); };
+  inp.onfocus = () => inp.value.trim().length >= 2 && run();
+  inp.onkeydown = (e) => { if (e.key === "Enter") { const b = $(".gr.hi", box) || $(".gr[data-gd],.gr[data-gc]", box); if (b) b.click(); } if (e.key === "Escape") { box.hidden = true; inp.blur(); } };
+  box.onclick = (e) => { const b = e.target.closest(".gr"); if (!b) return; box.hidden = true; if (b.dataset.gc) go("cont", false, b.dataset.gc); if (b.dataset.gd) openCard(+b.dataset.gd); };
+  document.addEventListener("click", (e) => { if (!e.target.closest(".gsearch")) box.hidden = true; });
+})();
+
+$$(".tab[data-page]").forEach((n) => n.onclick = () => { if (n.dataset.page === "asics") resetF(); go(n.dataset.page); });
+$("#siteSel").onchange = $("#clientSel").onchange = () => { S.devs = null; go(S.page, true, S.arg); };
 $("#themeBtn").onclick = () => { const h = document.documentElement; h.dataset.theme = h.dataset.theme === "dark" ? "light" : "dark"; localStorage.setItem("kirka_theme", h.dataset.theme); };
 $("#logoutBtn").onclick = () => { tok.clear(); showLogin(); };
 document.documentElement.dataset.theme = localStorage.getItem("kirka_theme") || "dark";
+window.addEventListener("hashchange", () => { const [p, a] = location.hash.slice(1).split("/"); if (p !== S.page || (a || null) !== S.arg) go(p, false, a); });
 
 let tick = null;
 async function boot() {
+  // one-time login link from the bot: /#s=<session_id>
+  const m = location.hash.match(/[#&]s=([\w-]+)/);
+  if (m) {
+    try { const st = await (await fetch(API + "/auth/qr/status/" + encodeURIComponent(m[1]))).json(); if (st.status === "approved" && st.access_token) tok.set(st); } catch (e) { /* ignore */ }
+    history.replaceState(null, "", "#today");
+  }
   if (!tok.get()) return showLogin();
   $("#login").hidden = true; $("#app").hidden = false;
   try { const me = await api("/auth/me"); $("#av").textContent = ((me.full_name || me.email || "K")[0] || "K").toUpperCase(); } catch (e) { if (e.message === "auth") return showLogin(); }
-  const p = (location.hash || "#today").slice(1);
-  await go(PAGES[p] ? p : "today");
+  const [p, a] = (location.hash || "#today").slice(1).split("/");
+  await go(PAGES[p] ? p : "today", false, a);
   clearInterval(tick);
-  tick = setInterval(() => { if (document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size) return; S.devs = null; go(S.page, true); }, 60000);
+  tick = setInterval(() => { if (document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select")) return; S.devs = null; go(S.page, true, S.arg); }, 60000);
 }
 boot();
