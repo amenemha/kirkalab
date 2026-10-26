@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.db import farm_models as fm
 from app.services.farm.classes import classify
 from app.services.farm.croft import CroftClient
+from app.services.farm.settings import get_settings, low_hash_alarm
 
 log = logging.getLogger("kirka.farm.sync")
 
@@ -98,6 +99,12 @@ def _apply(db: Session, raw: list[dict]) -> int:
     hour = now.replace(minute=0, second=0, microsecond=0)
     sites, conts, clients = {}, {}, {}
     existing = {d.ext_id: d for d in db.scalars(select(fm.FarmDevice))}
+    # Low hashrate считаем по среднему за последний час (прошлый + текущий час из почасовой таблицы).
+    low_pct = float(get_settings(db)["lowhash_pct"])
+    H = fm.FarmDeviceHourly
+    hr_acc = {dev_id: (hs or 0.0, n or 0) for dev_id, hs, n in db.execute(
+        select(H.device_id, func.sum(H.hashrate_sum), func.sum(H.online_samples))
+        .where(H.hour >= hour - timedelta(hours=1)).group_by(H.device_id))}
     events: list[dict] = []
     hourly: list[dict] = []
     per_cont: dict[int, dict] = {}
@@ -112,6 +119,15 @@ def _apply(db: Session, raw: list[dict]) -> int:
         alive = next((p for p in pools if p.get("alive")), pools[0] if pools else None)
         alarms = _alarms(d)
         st = d.get("status") or "unknown"
+        prev_dev = existing.get(d["uniqId"])
+        if st == "working":
+            cur = _ths(d.get("hashRateMHS"))
+            hs, n = hr_acc.get(prev_dev.id, (0.0, 0)) if prev_dev else (0.0, 0)
+            avg = ((hs + (cur or 0.0)) / (n + 1)) if cur is not None else None
+            prev_low = next((a for a in (prev_dev.alarms or []) if a.get("code") == "LOWHASH"), None) if prev_dev else None
+            low = low_hash_alarm(prev_low, avg, _ths(d.get("factoryHashRateMHS")), low_pct, now.isoformat())
+            if low:
+                alarms.append(low)
         vals = dict(
             mac=d.get("mac"), serial=_attr(d, "serialNumber"), user_number=_attr(d, "userNumber"),
             model=d.get("type"), algo=d.get("hashAlgo"), site_id=site_id, container_id=cont_id,

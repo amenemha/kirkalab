@@ -34,9 +34,24 @@ def pools_loop(every: int) -> None:
         time.sleep(max(30, every - (time.time() - t0)))
 
 
+def retention_loop() -> None:
+    from app.services.farm.retention import run_retention
+
+    while True:
+        db = SessionLocal()
+        try:
+            run_retention(db)
+        except Exception:
+            log.exception("retention failed")
+        finally:
+            db.close()
+        time.sleep(6 * 3600)
+
+
 def main() -> None:
     s = get_settings()
     threading.Thread(target=pools_loop, args=(s.pools_sync_seconds,), daemon=True).start()
+    threading.Thread(target=retention_loop, daemon=True).start()
     if not (s.croft_login and s.croft_password):
         log.warning("CROFT_LOGIN/CROFT_PASSWORD not set — farm sync idle")
         while True:

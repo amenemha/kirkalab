@@ -71,7 +71,7 @@ def format_device_card(model: dict) -> str:
 
     if _has(model.get("source_url")):
         lines.append("")
-        lines.append(f"🔗 Источник: {model['source_url']}")
+        lines.append("📋 Данные завода")
 
     return "\n".join(lines)
 

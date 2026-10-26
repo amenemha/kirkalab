@@ -56,34 +56,55 @@ def short_name(name: str, limit: int = 30) -> str:
     return cut + "…"
 
 
-def farm_text(s: dict) -> str:
+NUM = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"]
+
+
+def blocks(title: str, parts: list[tuple[str, list[str]]], foot: str | None = None) -> str:
+    """Сообщение блоками: заголовок, нумерованные разделы, внутри — цитата.
+    Длинные списки сворачиваются (expandable), чтобы экран не превращался в простыню."""
+    out = [title]
+    i = 0
+    for head, rows in parts:
+        rows = [r for r in rows if r]
+        if not rows:
+            continue
+        body = "\n".join(rows)
+        tag = "blockquote expandable" if len(rows) > 4 else "blockquote"
+        out += ["", f"{NUM[i] if i < len(NUM) else '▪️'} <b>{head}</b>", f"<{tag}>{body}</blockquote>"]
+        i += 1
+    if foot:
+        out += ["", f"<i>{foot}</i>"]
+    return "\n".join(out)
+
+
+def _when(iso: str | None) -> str:
     from datetime import datetime, timedelta, timezone
 
-    when = ""
-    if s.get("synced_at"):
-        when = datetime.fromisoformat(s["synced_at"]).astimezone(timezone(timedelta(hours=3))).strftime("%H:%M")
+    if not iso:
+        return "—"
+    return datetime.fromisoformat(iso).astimezone(timezone(timedelta(hours=3))).strftime("%H:%M")
+
+
+def farm_text(s: dict) -> str:
     total, work, off = s.get("total") or 0, s.get("working") or 0, s.get("offline") or 0
     susp, al = s.get("suspended") or 0, s.get("with_alarms") or 0
     head = "🟢" if not off else ("🔴" if off > total * 0.05 else "🟡")
     pct = work / total * 100 if total else 0
-    lines = [f"🏭 <b>Ферма</b> · <i>{when} МСК</i>", "",
-             f"{head} В работе <b>{_n(work)}</b> из {_n(total)} ({_n(pct)}%)",
-             f"⛏ Хешрейт <b>{_n((s.get('ths') or 0) / 1000, 2)} PH/s</b>"
-             + (f" · {_n(s.get('efficiency'))}% от паспорта" if s.get("efficiency") else ""),
-             f"⚡ Мощность <b>{_n((s.get('kw') or 0) / 1000, 2)} МВт</b>", ""]
-    lines.append(f"🔴 Не работают: <b>{_n(off)}</b> {plural(off, 'асик', 'асика', 'асиков')}" if off else "✅ Все асики на связи")
-    if susp:
-        lines.append(f"⏸ На паузе: {_n(susp)}")
-    if al:
-        lines.append(f"🟡 С ошибками: {_n(al)} {plural(al, 'асик', 'асика', 'асиков')}")
+    now = [f"{head} В работе <b>{_n(work)}</b> из {_n(total)} · {_n(pct)}%",
+           f"⛏ Хешрейт <b>{_n((s.get('ths') or 0) / 1000, 2)} PH/s</b>"
+           + (f" · {_n(s.get('efficiency'))}% от заводского" if s.get("efficiency") else ""),
+           f"⚡ Потребление <b>{_n((s.get('kw') or 0) / 1000, 2)} МВт</b>"]
+    idle = [f"🔴 Нет связи — <b>{_n(off)}</b>" if off else "✅ Все асики на связи",
+            f"💤 Сон — {_n(susp)}" if susp else "",
+            f"🟡 С ошибками — {_n(al)} {plural(al, 'асик', 'асика', 'асиков')}" if al else ""]
     inc = [i for i in s.get("incidents") or [] if not i.get("ended")]
-    if inc:
-        lines += ["", "🚨 <b>Аварии сейчас</b>"] + [f"• {short_name(i['scope'])}: {i['down']} из {i['total']}" for i in inc[:5]]
     sites = [x for x in s.get("sites") or [] if x.get("total")]
+    parts = [("Сейчас", now), ("Не в работе", idle),
+             ("Аварии", [f"🚨 {short_name(i['scope'])} — {_n(i['down'])} из {_n(i['total'])}" for i in inc[:8]])]
     if len(sites) > 1:
-        lines += ["", "<b>Площадки</b>"] + [f"• {short_name(x['name'])}: {_n(x.get('working'))} из {_n(x['total'])}" for x in sites]
-    lines += ["", "Подробности по ошибкам — в «Проблемах»."]
-    return "\n".join(lines)
+        parts.append(("Площадки", [f"🏗 {short_name(x['name'])} — {_n(x.get('working'))} из {_n(x['total'])}"
+                                   f" · {_n((x.get('working') or 0) / x['total'] * 100)}%" for x in sites]))
+    return blocks(f"🏭 <b>Ферма</b> · <i>{_when(s.get('synced_at'))} МСК</i>", parts, "Ошибки по типам — в «Проблемах».")
 
 
 def btn(text: str, cb: str | None = None, url: str | None = None, style: str | None = None) -> InlineKeyboardButton:
@@ -132,24 +153,18 @@ def farm_kb(url: str) -> InlineKeyboardMarkup:
 
 
 def problems_text(s: dict) -> str:
-    n = lambda x: f"{x:,}".replace(",", " ")  # noqa: E731
-    lines = ["⚠️ <b>Проблемы сейчас</b>", "",
-             f"🔴 Не работают: <b>{n(s.get('offline') or 0)}</b> из {n(s.get('total') or 0)}",
-             f"🟡 С ошибками: <b>{n(s.get('with_alarms') or 0)}</b> {plural(s.get('with_alarms') or 0, 'асик', 'асика', 'асиков')}"]
+    total, off, al = s.get("total") or 0, s.get("offline") or 0, s.get("with_alarms") or 0
     inc = [i for i in s.get("incidents") or [] if not i.get("ended")]
-    if inc:
-        lines += ["", "<b>🚨 Аварии</b>"] + [f"• {i['scope']}: {i['down']} из {i['total']} не работают" for i in inc[:5]]
     cls = sorted((c for c in s.get("classes") or [] if c.get("count")), key=lambda c: -c["count"])
-    if cls:
-        lines += ["", "<b>Ошибки по типу</b>"] + [f"• {c['label']} — {n(c['count'])}" for c in cls]
     worst = sorted((c for c in s.get("containers") or [] if c.get("total") and c.get("offline")),
-                   key=lambda c: c["offline"] / c["total"], reverse=True)[:6]
-    if worst:
-        lines += ["", "<b>Где больше всего не работает</b>"] + [
-            f"• {short_name(c['name'])} — {c['offline']} из {c['total']}" for c in worst]
-    if len(lines) <= 4 and not (s.get("offline") or s.get("with_alarms")):
-        lines += ["", "✅ Всё спокойно."]
-    return "\n".join(lines)
+                   key=lambda c: c["offline"] / c["total"], reverse=True)[:8]
+    parts = [("Сводка", [f"🔴 Не работают — <b>{_n(off)}</b> из {_n(total)}",
+                         f"🟡 С ошибками — <b>{_n(al)}</b> {plural(al, 'асик', 'асика', 'асиков')}"]),
+             ("Аварии", [f"🚨 {short_name(i['scope'])} — {_n(i['down'])} из {_n(i['total'])}" for i in inc[:8]]),
+             ("Ошибки по типу", [f"• {c['label']} — <b>{_n(c['count'])}</b>" for c in cls]),
+             ("Где больше всего не работает", [f"• {short_name(c['name'])} — {_n(c['offline'])} из {_n(c['total'])}" for c in worst])]
+    foot = "✅ Всё спокойно." if not (off or al or inc) else None
+    return blocks("⚠️ <b>Проблемы сейчас</b>", parts, foot)
 
 
 def problems_kb(url: str) -> InlineKeyboardMarkup:

@@ -28,7 +28,7 @@ def _fmt(s: dict) -> str:
     lines = [
         f"<b>Ферма · сейчас</b>  <i>{when} МСК</i>",
         "",
-        f"Работают <b>{_n(s['working'])}</b> из {_n(s['total'])} · офлайн {_n(s['offline'])} · пауза {_n(s['suspended'])}",
+        f"Работают <b>{_n(s['working'])}</b> из {_n(s['total'])} · офлайн {_n(s['offline'])} · во сне {_n(s['suspended'])}",
         f"Хешрейт <b>{_n(ph, 2)} PH/s</b> · {_n(s.get('efficiency'), 1)}% от паспорта",
         f"Мощность {_n((s.get('kw') or 0) / 1000, 2)} МВт",
         f"С ошибками {_n(s['with_alarms'])} асиков",

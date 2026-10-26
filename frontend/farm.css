@@ -248,3 +248,55 @@ input[type=date].sel{height:30px}
 .cstats { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 14px 0; font-size: 12px; color: var(--mut); }
 .cstats b { color: var(--text); font-size: 15px; font-weight: 600; margin: 0 2px; }
 @media (max-width: 700px) { .grid > .ovr { height: auto; } .ovr .chartbox { height: 230px; flex: none; } .ovr .att { max-height: 380px; } }
+
+/* ---- мультивыбор площадок и клиентов ---- */
+.msel{position:relative}
+.msb{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;padding-right:24px;cursor:pointer}
+.msb::after{content:"▾";position:absolute;right:9px;top:50%;transform:translateY(-50%);color:var(--mut);font-size:11px}
+.msb.on{border-color:var(--acc);color:var(--tx)}
+.msp{position:absolute;z-index:60;top:calc(100% + 4px);left:0;min-width:280px;max-width:360px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:6px}
+.msq{width:100%;height:30px;margin-bottom:4px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--tx);padding:0 8px}
+.msl{max-height:320px;overflow:auto}
+.msi{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:5px;cursor:pointer;font-size:13px}
+.msi:hover{background:var(--hover,rgba(127,127,127,.1))}
+.msi span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msi b{font-weight:500;color:var(--mut);font-variant-numeric:tabular-nums}
+.msi[hidden]{display:none}
+.msall{border-bottom:1px solid var(--line);border-radius:0;margin-bottom:4px}
+.msf{display:flex;gap:6px;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px}
+.btn.sm{height:26px;padding:0 10px;font-size:12px}
+.back{height:28px;margin-right:4px}
+
+/* ---- общая таблица ---- */
+.dt .tbl th.srt{cursor:pointer;user-select:none;white-space:nowrap}
+.dt .tbl th.srt .ar{font-style:normal;color:var(--faint,var(--mut));margin-left:4px;font-size:10px;opacity:.6}
+.dt .tbl th.srt:hover .ar{opacity:1}
+.dt .frow th{padding:3px 4px;background:var(--panel2);top:31px;text-transform:none;letter-spacing:0;cursor:default}
+.dtf{width:100%;min-width:56px;height:24px;font:inherit;font-size:12px;font-weight:400;background:var(--bg);border:1px solid var(--line);border-radius:5px;color:var(--tx);padding:0 6px}
+select.dtf{padding:0 2px}
+.dtf:focus{outline:none;border-color:var(--acc)}
+.dt-foot{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid var(--line)}
+.dt-foot .sp{flex:1}
+
+/* ---- легенда-фильтр ---- */
+.lgb{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border:1px solid var(--line);border-radius:12px;background:transparent;color:var(--mut);font:inherit;font-size:12px;cursor:pointer}
+.lgb i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:2px}
+.lgb b{font-weight:500;color:var(--tx)}
+.lgb:hover{border-color:var(--line2)}
+.lgb.on{border-color:var(--acc);color:var(--tx);background:color-mix(in srgb,var(--acc) 14%,transparent)}
+.lgb.off{opacity:.5}
+.lgb:disabled{opacity:.35;cursor:default}
+.pc.dim{opacity:.16;filter:saturate(.3)}
+.cerr{margin-top:10px}
+.lowset input{width:56px;height:26px;margin:0 4px;background:var(--bg);border:1px solid var(--line);border-radius:5px;color:var(--tx);text-align:center}
+
+/* ---- выбор периода ---- */
+.btn.per.on{border-color:var(--acc);color:var(--tx)}
+.perpop{position:absolute;z-index:70;width:290px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:8px;font-size:13px}
+.pp-l{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.pp-i{display:flex;justify-content:space-between;align-items:center;height:30px;padding:0 8px;border:0;border-radius:5px;background:transparent;color:var(--tx);font:inherit;cursor:pointer;text-align:left}
+.pp-i:hover,.pp-i.on{background:color-mix(in srgb,var(--acc) 14%,transparent)}
+.pp-d{display:flex;gap:6px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:8px;margin-bottom:6px}
+.pp-d label{display:flex;gap:4px;align-items:center;color:var(--mut)}
+.pp-d input{height:28px;background:var(--bg);border:1px solid var(--line);border-radius:5px;color:var(--tx);padding:0 4px;color-scheme:dark light}
+@media (max-width:700px){.msb{max-width:170px}.msp{min-width:240px}.dt-foot{flex-wrap:wrap}}

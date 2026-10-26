@@ -154,3 +154,11 @@ class FarmSyncRun(Base):
     devices: Mapped[int] = mapped_column(Integer, default=0)
     events: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class FarmSetting(Base):
+    """Настройки фермы, общие для сайта и бота (порог Low hashrate и т.п.)."""
+    __tablename__ = "farm_settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict | list | int | float | str | None] = mapped_column(JSONType)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

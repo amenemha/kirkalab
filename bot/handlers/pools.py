@@ -24,22 +24,27 @@ def _hr(ths: float) -> str:
 
 
 def _fmt(s: dict) -> str:
+    from bot.handlers.hub import blocks, short_name
+
     when = datetime.fromisoformat(s["updated"]).astimezone(MSK).strftime("%H:%M") if s.get("updated") else "—"
     y = datetime.fromisoformat(s["yesterday"]).strftime("%d.%m")
-    lines = [f"🌊 <b>Пулы</b> · <i>{when} МСК</i>", ""]
+    parts = []
     for c in s["coins"]:
         if not (c.get("ths_1h") or c.get("ths_1d") or c.get("yesterday") or c.get("w_active")):
             continue
-        lines.append(f"<b>{c['coin']}</b> · {_hr(c['ths_1h'])} за час · {_hr(c['ths_1d'])} за сутки")
-        lines.append(f"   воркеров {_n(c['w_active'])} в работе, {_n(c['w_inactive'])} без хешрейта · ссылок {c['links']}")
-        lines.append(f"   {y}: в среднем {_hr(c['yesterday'])}")
+        parts.append((f"{c['coin']} · {_hr(c['ths_1h'])}", [
+            f"⏱ За час <b>{_hr(c['ths_1h'])}</b> · за сутки {_hr(c['ths_1d'])}",
+            f"📅 {y}: в среднем {_hr(c['yesterday'])}",
+            f"👷 Воркеров в работе {_n(c['w_active'])} · без хешрейта {_n(c['w_inactive'])}",
+            f"🔗 Ссылок наблюдателя {_n(c['links'])}"]))
     if s["drops"]:
-        lines += ["", f"<b>Просели за час</b> ({s['drops_total']})"]
-        lines += [f"• {d['account']} ({d['group'] or '—'}): {_hr(d['ths_1h'] or 0)} при {_hr(d['ths_1d'])} за сутки" for d in s["drops"]]
+        parts.append((f"Просели за час · {s['drops_total']}", [
+            f"📉 <b>{d['account']}</b> <i>{short_name(d['group'] or '—', 24)}</i>\n      {_hr(d['ths_1h'] or 0)} сейчас · {_hr(d['ths_1d'])} за сутки"
+            for d in s["drops"]]))
     if s["broken"]:
-        lines += ["", f"<b>Ссылки не читаются</b> ({s['broken_total']})"]
-        lines += [f"• {b['account'] or '—'} ({b['group'] or '—'})" for b in s["broken"]]
-    return "\n".join(lines)
+        parts.append((f"Ссылки не читаются · {s['broken_total']}", [
+            f"⚠️ {b['account'] or '—'} <i>{short_name(b['group'] or '—', 24)}</i>" for b in s["broken"]]))
+    return blocks(f"🌊 <b>Пулы</b> · <i>{when} МСК</i>", parts)
 
 
 def _kb() -> InlineKeyboardMarkup:

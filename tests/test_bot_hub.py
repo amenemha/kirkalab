@@ -51,3 +51,12 @@ def test_no_forbidden_words_in_bot_texts():
                 if bad.search(lit) and not lit.startswith(("profile:", "billing:")):
                     hits.append(f"{p}:{i}: {lit}")
     assert not hits, "\n".join(hits)
+
+
+def test_farm_text_blocks_and_sleep_word():
+    t = hub.farm_text({"total": 100, "working": 80, "offline": 15, "suspended": 5, "with_alarms": 7, "ths": 9000, "kw": 300,
+                       "sites": [{"name": "A", "total": 60, "working": 50}, {"name": "B", "total": 40, "working": 30}],
+                       "incidents": [{"scope": "1а 0-1", "down": 10, "total": 10, "ended": None}]})
+    assert "<blockquote>" in t and "1️⃣" in t and "Сон — 5" in t and "Площадки" in t and "Аварии" in t
+    assert "пауз" not in t.lower()
+    assert t.count("<blockquote") == t.count("</blockquote>")
