@@ -18,6 +18,7 @@ const CLS = { offline: "Нет связи", power: "Питание", temperature
 // ---------- auth ----------
 const tok = { get() { try { return JSON.parse(localStorage.getItem(TOKENS)); } catch (e) { return null; } }, set(t) { localStorage.setItem(TOKENS, JSON.stringify(t)); }, clear() { localStorage.removeItem(TOKENS); } };
 async function api(path, opts = {}, retry) {
+  if (opts.method && opts.method !== "GET" && typeof S !== "undefined") { S.sumAt = 0; S.devAt = 0; }
   opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
   const t = tok.get();
   if (t && t.access_token) opts.headers.Authorization = "Bearer " + t.access_token;
@@ -62,8 +63,9 @@ const setClient = (id) => { MS.client = new Set(id ? [String(id)] : []); msSave(
 const qs = (o) => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
 const KIND = { air: "Воздух", hydro: "Гидро", bath: "Ванны" };
 
-async function loadSummary() {
-  S.sum = await api("/farm/summary");
+async function loadSummary(force) {
+  // Сводку берём из кэша, если ей меньше 20 с: клик по фильтру не ждёт сеть. Таймер обновления сбрасывает кэш.
+  if (force || !S.sum || !S.sumAt || Date.now() - S.sumAt >= 20000) { S.sum = await api("/farm/summary"); S.sumAt = Date.now(); }
   const s = S.sum;
   if (S.all) scope(); else msRender({}, {}, 0, 0);
   const age = s.synced_at ? (Date.now() - new Date(s.synced_at)) / 1000 : 1e9;
@@ -369,11 +371,13 @@ async function pageMap() {
 }
 
 // ---------- one container ----------
-async function pageCont() {
+async function pageCont(fast) {
   const seq = S.seq = (S.seq || 0) + 1;
   const cid = +S.arg;
   await loadSummary();
-  const [devs, L] = await Promise.all([loadDevices(), api(`/farm/containers/${cid}/layout`)]);
+  const lc = S.lc && S.lc.cid === cid && Date.now() - S.lc.at < 55000 && fast ? S.lc.L : null;
+  const [devs, L] = await Promise.all([loadDevices(), lc || api(`/farm/containers/${cid}/layout`)]);
+  if (!lc) S.lc = { cid, L, at: Date.now() };
   S.lay = S.lay || {}; S.lay[cid] = L;
   // Контейнер — физический вид: показываем все его места, без фильтра клиента.
   void devs; await loadCfg(); const list = S.all.filter((d) => d.container_id === cid);
@@ -430,8 +434,8 @@ async function pageCont() {
   <div class="fbar cerr"><span class="lbl">Ошибки</span><div class="chips"><button class="chip ${!cl.err ? "on" : ""}" data-err="">Все <b>${nf(list.length)}</b></button>${Object.entries(ERR).map(([k, [t, fn]]) => { const n = list.filter(fn).length; return n || cl.err === k ? `<button class="chip ${cl.err === k ? "on" : ""}" data-err="${k}">${esc(t)} <b>${nf(n)}</b></button>` : ""; }).join("")}</div>${cl.lf.size || cl.err ? '<button class="btn ghost sm" id="cfX">Сбросить фильтр</button>' : ""}<span class="sp"></span><span class="hint">Low hashrate — ниже ${lowPct()}% заводского в среднем за час</span></div>
   <div class="w" style="margin-top:10px"><div class="wh">Асики контейнера<span class="sp"></span><span class="mini">${cl.lf.size || cl.err ? "по фильтру выше · " : ""}клик — карточка · Ctrl/Shift — выделить</span></div><div id="dtL"></div></div>
   <div class="w" style="margin-top:10px"><div class="wh">Контейнер за период<span class="sp"></span><span class="seg" id="ccH"><button data-h="24" class="on">24 ч</button><button data-h="168">7 дней</button><button data-h="720">30 дней</button></span><span class="seg" id="ccS"><button data-s="online" class="on">Асики в работе</button><button data-s="ths">Хешрейт</button><button data-s="kw">Потребление</button></span></div><div class="wb chartbox" id="cChart" style="height:220px"></div></div>`;
-  $$("#cLayer button").forEach((b) => b.onclick = () => { cl.layer = b.dataset.l; pageCont(); });
-  $("#selMode").onchange = (e) => { cl.selMode = e.target.checked; pageCont(); };
+  $$("#cLayer button").forEach((b) => b.onclick = () => { cl.layer = b.dataset.l; pageCont(true); });
+  $("#selMode").onchange = (e) => { cl.selMode = e.target.checked; pageCont(true); };
   $("#lEdit").onclick = () => editLayout(cid, L);
   $(".layout").addEventListener("click", (e) => {
     const rk = e.target.closest("[data-rack]"), sh = e.target.closest("[data-shelf]");
@@ -440,9 +444,9 @@ async function pageCont() {
     if (cl.selMode) { if (e.shiftKey && S.lastIdx != null) return pickId(id, e); S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); S.lastIdx = id; markSel(); return; }
     pickId(id, e) || openCard(id);
   });
-  $$(".lgb[data-lf]").forEach((b) => b.onclick = () => { const k = b.dataset.lf; cl.lf.has(k) ? cl.lf.delete(k) : cl.lf.add(k); pageCont(); });
-  $$("[data-err]").forEach((b) => b.onclick = () => { cl.err = b.dataset.err; pageCont(); });
-  const cfx = $("#cfX"); if (cfx) cfx.onclick = () => { cl.lf.clear(); cl.err = ""; pageCont(); };
+  $$(".lgb[data-lf]").forEach((b) => b.onclick = () => { const k = b.dataset.lf; cl.lf.has(k) ? cl.lf.delete(k) : cl.lf.add(k); pageCont(true); });
+  $$("[data-err]").forEach((b) => b.onclick = () => { cl.err = b.dataset.err; pageCont(true); });
+  const cfx = $("#cfX"); if (cfx) cfx.onclick = () => { cl.lf.clear(); cl.err = ""; pageCont(true); };
   const pk = (d) => { const p = placeOf(d); return p ? p.si * 1e6 + p.rack * 1e4 + p.shelf * 100 + p.num / 1000 : 9e9; };
   DT($("#dtL"), { id: "tL", title: L.name + " — асики", rows: list.filter(match), sort: "place", cb: true, selId: (d) => d.id, rowAttr: (d) => `data-id="${d.id}"`, devIds: (r) => r.map((d) => d.id), cols: devCols(pk, { noCont: true }) });
   tableClicks("#tL"); S.order = S.order.concat([]);
@@ -1026,6 +1030,6 @@ async function boot() {
   const [p, a] = (location.hash || "#today").slice(1).split("/");
   await go(PAGES[p] ? p : "today", false, a);
   clearInterval(tick);
-  tick = setInterval(() => { if (document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select") || $(".msel.open") || $(".perpop")) return; S.devs = null; go(S.page, true, S.arg); }, 60000);
+  tick = setInterval(() => { if (document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select") || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
 }
 boot();
