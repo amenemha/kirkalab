@@ -806,3 +806,4 @@ class TaxDeduction(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 from app.db.farm_models import *  # noqa: F401,F403,E402
 from app.db.pool_models import *  # noqa: F401,F403,E402
+from app.db.energy_models import *  # noqa: F401,F403,E402
