@@ -900,10 +900,12 @@ function DT(host, cfg) {
   body();
   return { get list() { return list; }, refresh: body };
 }
-const plainCell = (c, r) => { const v = c.p ? c.p(r) : c.h ? c.h(r).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : c.v(r); return v == null ? "" : String(v).replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'"); };
+// Текст ячейки без разметки — через DOM, а не регулярками.
+const txtOf = (html) => { const t = document.createElement("template"); t.innerHTML = String(html ?? ""); return t.content.textContent.replace(/\s+/g, " ").trim(); };
+const plainCell = (c, r) => { const v = c.p ? c.p(r) : c.h ? txtOf(c.h(r)) : c.v(r); return v == null ? "" : String(v); };
 function csvSave(name, cols, rows) {
   const q = (s) => /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  const txt = [cols.map((c) => q(c.t.replace(/<[^>]+>/g, ""))).join(";"), ...rows.map((r) => cols.map((c) => q(plainCell(c, r))).join(";"))].join("\r\n");
+  const txt = [cols.map((c) => q(txtOf(c.t))).join(";"), ...rows.map((r) => cols.map((c) => q(plainCell(c, r))).join(";"))].join("\r\n");
   const stamp = new Date().toLocaleString("sv-SE", MSK).slice(0, 16).replace(/[-: ]/g, "").replace(/^(\d{8})/, "$1_");
   saveBlob(new Blob(["\ufeff" + txt], { type: "text/csv;charset=utf-8" }), `filename="${name}_${stamp}.csv"`);
 }
@@ -916,7 +918,7 @@ function printTable(title, cols, rows) {
    table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #ddd;padding:3px 6px;text-align:left;vertical-align:top}th{background:#f2f4f5;font-weight:600}
    tr:nth-child(even) td{background:#fafafa}@page{size:A4 landscape;margin:10mm}</style></head><body>
    <h1>${esc(title)}</h1><div class="m">Kirka · ${esc(when)} МСК · строк: ${rows.length}</div>
-   <table><thead><tr>${cols.map((c) => `<th>${esc(c.t.replace(/<[^>]+>/g, ""))}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td>${esc(plainCell(c, r))}</td>`).join("")}</tr>`).join("")}</tbody></table>
+   <table><thead><tr>${cols.map((c) => `<th>${esc(txtOf(c.t))}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td>${esc(plainCell(c, r))}</td>`).join("")}</tr>`).join("")}</tbody></table>
    <script>onload=()=>setTimeout(()=>print(),200)<\/script></body></html>`);
   w.document.close();
 }
