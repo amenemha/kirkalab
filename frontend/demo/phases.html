@@ -1,0 +1,88 @@
+<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><style>
+:root{--font-ui:'Inter','Segoe UI',system-ui,sans-serif;--font-num:'JetBrains Mono','SF Mono',ui-monospace,Menlo,monospace}
+[data-theme=dark]{--bg:#0E0F10;--panel:#15171A;--panel2:#1B1E22;--line:#262A2F;--line2:#30353B;--tx:#D9DBDD;--mut:#8A9096;--faint:#5C6268;--acc:#4F98A3;--acc2:#6FB7C1;--accbg:rgba(79,152,163,.13);--ok:#5FB878;--warn:#E0A33A;--bad:#E0525A;--susp:#6E5A9E;--off:#3A3F45;--pa:#E8C33A;--pb:#4FB06A;--pc:#E0525A}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:13px var(--font-ui);width:1600px}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+.top{display:flex;align-items:center;gap:22px;height:48px;padding:0 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px}.logo i{width:24px;height:24px;border-radius:5px;background:var(--acc);display:inline-block}
+.tab{color:var(--mut);padding:14px 0}.tab.on{color:var(--tx);border-bottom:2px solid var(--acc)}
+.sub{display:flex;gap:6px;padding:12px 18px 0}
+.st{padding:7px 12px;border:1px solid var(--line2);border-radius:6px;color:var(--mut);background:var(--panel)}.st.on{color:var(--tx);border-color:var(--acc);background:var(--accbg)}
+.hd{display:flex;align-items:center;gap:10px;padding:12px 18px}
+.hd h1{font-size:18px;margin:0 8px 0 0}.chip{padding:5px 10px;border:1px solid var(--line2);border-radius:14px;color:var(--mut)}.chip.on{color:var(--tx);border-color:var(--acc);background:var(--accbg)}
+.sp{flex:1}.seg{display:flex;border:1px solid var(--line2);border-radius:6px;overflow:hidden}.seg b{padding:6px 12px;font-weight:500;color:var(--mut)}.seg b.on{background:var(--accbg);color:var(--tx)}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;padding:0 18px}
+.k{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px}.k s{display:block;text-decoration:none;font-size:11px;letter-spacing:.06em;color:var(--mut);text-transform:uppercase;font-weight:600}
+.k b{font:600 24px var(--font-num)}.k small{color:var(--mut);margin-left:4px}.k em{display:block;font-style:normal;color:var(--mut);font-size:12px;margin-top:2px}
+.main{padding:10px 18px}.bot{display:grid;grid-template-columns:1fr 330px 300px;gap:10px;padding:0 18px 16px}
+.canvas{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:8px;height:560px;overflow:hidden;
+ background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:20px 20px}
+svg.w{position:absolute;left:0;top:0;width:100%;height:100%}
+.node{position:absolute;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:8px 10px}
+.node .t{font-weight:600}.node .m{color:var(--mut);font-size:11px}
+.meter{white-space:nowrap;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--mut);border:1px solid var(--line2);border-radius:10px;padding:2px 7px;background:var(--bg)}
+.meter:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--acc2)}
+.meter.no:before{background:var(--faint)}
+.bus{position:absolute;height:8px;border-radius:4px;background:var(--acc)}
+.ktp{width:142px}.bar{height:5px;background:var(--line);border-radius:3px;margin:6px 0 4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc)}
+.ph{display:flex;gap:3px;margin-top:5px}.ph span{flex:1;height:14px;border-radius:3px;font:600 9px/14px var(--font-num);text-align:center;color:#111}
+.ct{position:absolute;width:68px;height:56px;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:4px 6px;font-size:11px}
+.ct .n{font-weight:700}.ct .kw{font-family:var(--font-num);color:var(--mut);font-size:10px}
+.ct .sb{position:absolute;left:6px;right:6px;bottom:5px;height:5px;border-radius:2px;display:flex;overflow:hidden;background:var(--off)}
+.ct .ty{position:absolute;right:5px;top:4px;font-size:9px;color:var(--faint)}
+.ct.sel{outline:2px solid var(--acc2)}
+.lbl{position:absolute;font-size:11px;color:var(--mut);letter-spacing:.05em;text-transform:uppercase;font-weight:600}
+.side{display:flex;flex-direction:column;gap:10px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.box h3{margin:0 0 8px;font-size:13px}.box .r{display:flex;justify-content:space-between;padding:3px 0;color:var(--mut)}.box .r b{color:var(--tx);font:500 12px var(--font-num)}
+.pr{display:grid;grid-template-columns:22px 1fr 64px;align-items:center;gap:8px;margin:6px 0}
+.pr i{display:block;height:10px;border-radius:3px}.pr .bg{background:var(--line);border-radius:3px;overflow:hidden}
+.btn{display:inline-block;padding:6px 10px;border:1px solid var(--line2);border-radius:6px;margin:6px 6px 0 0;font-size:12px}
+.btn.p{background:var(--acc);border-color:var(--acc);color:#fff}
+.chart{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;position:relative}
+.lg{display:flex;gap:14px;color:var(--mut);font-size:12px}.lg i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:5px}
+.tip{position:absolute;left:12px;bottom:10px;font-size:11px;color:var(--faint)}
+</style><style>
+body{width:1600px}.wrap{display:grid;grid-template-columns:1fr 420px;gap:10px;padding:10px 18px 18px}
+.rk{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:10px}
+.rk h4{margin:0 0 8px;font-size:13px}.rk h4 span{color:var(--faint);font:400 12px var(--font-num);margin-left:8px}
+.grid{display:grid;grid-template-columns:22px repeat(16,1fr);gap:4px;align-items:center}
+.pl{height:30px;border-radius:4px;position:relative;font:600 10px/30px var(--font-num);text-align:center;color:#141414}
+.pl small{position:absolute;right:3px;top:1px;font-size:7px;line-height:9px;opacity:.75}
+.pl.e{background:var(--empty,#202328);color:var(--faint)}
+.rn{color:var(--faint);font:11px var(--font-num);text-align:right;padding-right:4px}
+.pdu{display:flex;gap:6px;margin:8px 0 2px 26px}.pdu span{font-size:11px;color:var(--mut);border:1px solid var(--line2);border-radius:4px;padding:2px 6px}
+.lgd{display:flex;gap:12px;align-items:center;color:var(--mut);font-size:12px;margin-left:8px}.lgd i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-2px}
+table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:5px 4px;border-bottom:1px solid var(--line);text-align:right}th{color:var(--mut);font-weight:600;font-size:11px}td:first-child,th:first-child{text-align:left}
+.card{display:grid;grid-template-columns:120px 1fr;gap:4px 10px;font-size:12px}.card span{color:var(--mut)}
+.plug{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--acc);background:var(--accbg);border-radius:5px;padding:2px 8px;font-weight:600}
+.tg{background:#17212b;border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.45;color:#e7eef5}
+.tg q{display:block;border-left:3px solid #6ab3f3;padding-left:8px;margin:6px 0;color:#cfd8e1;quotes:none}
+</style></head><body>
+<div class="top"><span class="logo"><i></i>Kirka</span><span class="tab">Обзор</span><span class="tab">Контейнеры</span><span class="tab">Асики</span><span class="tab on">Энергетика</span><span class="tab">Проблемы</span><span class="tab">Клиенты</span><span class="tab">Пулы</span></div>
+<div class="sub"><span class="st">Карта объекта</span><span class="st">Счётчики</span><span class="st">Почасовки</span><span class="st on">Фазы</span><span class="st">Фото и ввод</span><span class="st">Конструктор</span></div>
+<div class="hd"><h1>3а 4-5 · КТП 2 · Ф-6</h1><span class="chip on">Ввод 1</span><span class="chip on">Ввод 2</span><span class="chip on">Ввод 3</span><span class="chip">Вентиляция</span><span class="sp"></span>
+<span style="color:var(--mut)">Чем красить:</span><div class="seg"><b>Статус</b><b>Температура</b><b class="on">Фаза</b><b>Клиент</b></div><span style="color:var(--mut)">В углу:</span><div class="seg"><b class="on">Кабель</b><b>Гнездо PDU</b><b>Ничего</b></div>
+<span style="color:var(--mut);margin-left:10px">Цвета фаз:</span><div class="seg"><b class="on">ПУЭ</b><b>ГОСТ/IEC</b><b>США</b><b>Китай</b></div></div>
+<div class="wrap"><div id="racks"></div>
+<div>
+<div class="rk"><h4>Баланс фаз · контейнер</h4><table><tr><th>Линия</th><th style="color:var(--pa)">A</th><th style="color:var(--pb)">B</th><th style="color:var(--pc)">C</th><th>Перекос</th></tr>
+<tr><td>Ввод 1 · счётчик 0112</td><td class="num">72,4</td><td class="num">71,1</td><td class="num">73,0</td><td class="num" style="color:var(--ok)">2,6%</td></tr>
+<tr><td>Ввод 2 · счётчик 0113</td><td class="num">70,8</td><td class="num">74,9</td><td class="num">66,5</td><td class="num" style="color:var(--warn)">11,9%</td></tr>
+<tr><td>Ввод 3 · счётчик 0114</td><td class="num">69,9</td><td class="num">70,2</td><td class="num">70,6</td><td class="num" style="color:var(--ok)">1,0%</td></tr>
+<tr><td>Вентиляция</td><td class="num">4,1</td><td class="num">4,1</td><td class="num">4,0</td><td class="num" style="color:var(--ok)">2,4%</td></tr>
+<tr><td><b>Итого, кВт</b></td><td class="num"><b>217,2</b></td><td class="num"><b>220,3</b></td><td class="num"><b>214,1</b></td><td class="num">2,8%</td></tr></table>
+<div style="color:var(--mut);font-size:12px;margin-top:8px">Подсказка: перенести 2 асика с B на C в ряду 3 стеллажа 2 — перекос ввода 2 станет 3%.</div></div>
+<div class="rk"><h4>Карточка асика · место 2-3-07</h4><div class="card">
+<span>Модель</span><b>Whatsminer M30S++</b><span>Разъём асика</span><div><span class="plug">C20</span> кабель C19, 16 А</div>
+<span>Розетка</span><b>PDU 2 · гнездо 7 · фаза <span style="color:var(--pc)">C</span></b><span>Ввод</span><b>Ввод 2 · КТП 2</b><span>Питание</span><b>220–240 В · 1 фаза</b><span>Данные завода</span><b>3 472 Вт</b></div></div>
+<div class="rk"><h4>Ввод счётчика через бот</h4><div class="tg">📷 Фото принято<q>Счётчик <b>0113</b> · 3а · Ввод 2<br>Показание <b>184 562,3</b> кВт·ч<br>С прошлого раза: <b>+1 712,4</b> кВт·ч за 24 ч</q>Всё верно? &nbsp;[ Да ] &nbsp;[ Исправить ]</div></div>
+</div></div>
+<script>
+const R=document.getElementById('racks');const ph=['a','b','c'];
+const mk=(title,ip,rows,cols,plug,off)=>{let h=`<div class="rk"><h4>${title}<span>${ip}</span></h4><div class="lgd" style="margin:0 0 8px"><span><i style="background:var(--pa)"></i>A</span><span><i style="background:var(--pb)"></i>B</span><span><i style="background:var(--pc)"></i>C</span><span><i style="background:#202328;border:1px solid #30353B"></i>пусто</span><span>· в углу — кабель к PDU</span></div><div class="grid">`;
+ let n=1;for(let r=1;r<=rows;r++){h+=`<div class="rn">${r}</div>`;for(let c=0;c<cols;c++){const k=(r*7+c+off)%3;const e=(r==rows&&c>=cols-2)||(off&&r==3&&c==5&&false);
+  h+=e?`<div class="pl e">—</div>`:`<div class="pl" style="background:var(--p${ph[Math.floor(c/ (cols/3))%3]})">${n}<small>${plug}</small></div>`;n++}}
+ return h+`</div><div class="pdu"><span>PDU 1 · фаза A · 24 гнезда</span><span>PDU 2 · фаза B · 20 гнёзд</span><span>PDU 3 · фаза C · 18 гнёзд</span></div></div>`};
+R.innerHTML=mk('Стеллаж 1 · Ввод 1','10.x.4.1–64',4,16,'C19',0)+mk('Стеллаж 2 · Ввод 2','10.x.4.65–128',4,16,'C19',1)+mk('Стеллаж 3 · Ввод 3','10.x.4.129–187',4,16,'C19',2);
+</script></body></html>
