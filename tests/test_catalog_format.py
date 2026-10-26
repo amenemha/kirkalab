@@ -42,7 +42,7 @@ def test_card_skips_empty_fields():
     assert "ℹ️" not in text  # notes label
     # Present fields still render.
     assert "Алгоритм: SHA-256" in text
-    assert "Источник:" in text
+    assert "Данные завода" in text and "example.com" not in text
 
 
 def test_card_without_variant():

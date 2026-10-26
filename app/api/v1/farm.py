@@ -17,6 +17,7 @@ from app.api.v1.auth import get_current_admin
 from app.db import farm_models as fm
 from app.db.session import get_db
 from app.services.farm.classes import CLASSES
+from app.services.farm.settings import get_settings, set_settings
 
 router = APIRouter(prefix="/farm", tags=["farm"], dependencies=[Depends(get_current_admin)])
 
@@ -40,6 +41,19 @@ def _dev_row(d: fm.FarmDevice, sites, conts, clients) -> dict:
         "level": d.worst_level, "tags": [t.get("label") for t in (d.tags or []) if t.get("label")],
         "since": d.status_since.isoformat() if d.status_since else None,
     }
+
+
+@router.get("/settings")
+def farm_settings(db: Session = Depends(get_db)):
+    return get_settings(db)
+
+
+@router.put("/settings")
+def farm_settings_put(body: dict, db: Session = Depends(get_db)):
+    try:
+        return set_settings(db, body)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @router.get("/summary")
@@ -78,7 +92,7 @@ def summary(db: Session = Depends(get_db)):
     containers.sort(key=lambda x: (x["site"] or "", x["name"]))
     cl = [dict(id=k, name=clients.get(k, "Без клиента"), **{a: (round(b, 2) if isinstance(b, float) else b) for a, b in v.items()}) for k, v in by_client.items()]
     cl.sort(key=lambda x: -x["total"])
-    incidents = [dict(id=i.id, scope=i.scope_name, started=i.started_at.isoformat(), ended=i.ended_at.isoformat() if i.ended_at else None, total=i.devices_total, down=i.devices_down)
+    incidents = [dict(id=i.id, scope=i.scope_name, kind=i.scope, scope_id=i.scope_id, started=i.started_at.isoformat(), ended=i.ended_at.isoformat() if i.ended_at else None, total=i.devices_total, down=i.devices_down)
                  for i in db.scalars(select(fm.FarmIncident).order_by(fm.FarmIncident.started_at.desc()).limit(20))]
     return {
         "synced_at": last.finished_at.isoformat() if last else None,
@@ -194,7 +208,7 @@ def errors(
     return {"total": len(rows), "devices": len({r["id"] for r in rows}), "groups": grp, "items": rows}
 
 
-ST_RU = {"working": "Работает", "offline": "Не работает", "suspended": "Пауза", "unknown": "Нет данных"}
+ST_RU = {"working": "Работает", "offline": "Не работает", "suspended": "Сон", "unknown": "Нет данных"}
 LV_RU = {0: "Инфо", 1: "Предупреждение", 2: "Опасно", 3: "Критично"}
 
 
@@ -305,21 +319,47 @@ def errors_export(site: str | None = None, container: str | None = None, client:
 
 @router.get("/containers/{cid}/history")
 def container_history(cid: int, hours: int = 24, db: Session = Depends(get_db)):
+    hours = max(1, min(int(hours), 24 * 400))
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
-    rows = db.scalars(select(fm.FarmContainerSample).where(fm.FarmContainerSample.container_id == cid, fm.FarmContainerSample.at >= since).order_by(fm.FarmContainerSample.at))
-    return [dict(at=r.at.isoformat(), online=r.online, offline=r.offline, total=r.total, ths=r.hashrate_ths, kw=r.power_kw) for r in rows]
+    rows = list(db.scalars(select(fm.FarmContainerSample).where(fm.FarmContainerSample.container_id == cid, fm.FarmContainerSample.at >= since).order_by(fm.FarmContainerSample.at)))
+    pts = [dict(at=r.at.isoformat(), online=r.online, offline=r.offline, total=r.total, ths=r.hashrate_ths, kw=r.power_kw) for r in rows]
+    if len(pts) <= 400:
+        return pts
+    # длинные периоды — усредняем по интервалам, чтобы график оставался лёгким
+    step = len(pts) / 300
+    out = []
+    for i in range(300):
+        ch = pts[int(i * step):int((i + 1) * step)] or [pts[-1]]
+        n = len(ch)
+        out.append(dict(at=ch[n // 2]["at"], online=round(sum(p["online"] or 0 for p in ch) / n), offline=round(sum(p["offline"] or 0 for p in ch) / n),
+                        total=round(sum(p["total"] or 0 for p in ch) / n), ths=sum(p["ths"] or 0 for p in ch) / n, kw=sum(p["kw"] or 0 for p in ch) / n))
+    return out
 
 
 @router.get("/history")
-def farm_history(hours: int = 24, site: str | None = None, db: Session = Depends(get_db)):
-    """Ферма по времени, усреднённая по интервалам (~300 точек), как графики пулов."""
-    hours = max(1, min(int(hours), 24 * 31))
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+def farm_history(hours: int = 24, site: str | None = None, start: str | None = None, end: str | None = None,
+                 db: Session = Depends(get_db)):
+    """Ферма по времени, усреднённая по интервалам (~300 точек), как графики пулов.
+    Период: последние `hours` часов или календарные дни start..end (МСК, с 00:00 до 00:00)."""
+    msk = timezone(timedelta(hours=3))
+    if start:
+        d0 = datetime.fromisoformat(start[:10]).replace(tzinfo=msk)
+        d1 = datetime.fromisoformat((end or start)[:10]).replace(tzinfo=msk) + timedelta(days=1)
+        if d1 <= d0 or d1 - d0 > timedelta(days=400):
+            raise HTTPException(422, "период: от 1 до 400 дней")
+        since, until = d0, d1
+        hours = int((d1 - d0).total_seconds() // 3600)
+    else:
+        hours = max(1, min(int(hours), 24 * 400))
+        since, until = datetime.now(timezone.utc) - timedelta(hours=hours), None
     S = fm.FarmContainerSample
     q = (select(S.at, func.sum(S.hashrate_ths), func.sum(S.online), func.sum(S.total), func.sum(S.power_kw))
          .where(S.at >= since))
-    if site:
-        q = q.join(fm.FarmContainer, fm.FarmContainer.id == S.container_id).where(fm.FarmContainer.site_id == int(site))
+    if until is not None:
+        q = q.where(S.at < until)
+    sites = [int(x) for x in (site or "").split(",") if x.strip().isdigit()]
+    if sites:
+        q = q.join(fm.FarmContainer, fm.FarmContainer.id == S.container_id).where(fm.FarmContainer.site_id.in_(sites))
     q = q.group_by(S.at).order_by(S.at)
     step = max(60, hours * 3600 // 300)
     buckets: dict[int, list] = {}
