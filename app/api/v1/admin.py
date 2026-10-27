@@ -23,9 +23,14 @@ track_router = APIRouter(tags=["activity"])
 def admin_users(db: Session = Depends(get_db)):
     rows = act.users_summary(db)
     unread, last, mgr = sup.unread(db), sup.last_in(db), set(sup.managers(db))
+    from app.services import connections as cn
+    conns = cn.summary_all(db)
+    server = cn.server_croft()
     for r in rows:
         u = db.get(models.User, r["user_id"]) if r["user_id"] else None
         r["access"] = sup.access_info(db, u)
+        c = conns.get(r["user_id"]) or {"croft": [], "pools": {}}
+        r["conn"] = {**c, "server": bool(server and u is not None and u.is_admin)}
         r["unread"] = unread.get(r["tg_id"], 0)
         r["last_msg"] = last.get(r["tg_id"])
         r["manager"] = r["tg_id"] in mgr

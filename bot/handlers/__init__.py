@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from aiogram import Router
 
-from bot.handlers import account, billing, calc, catalog, farm, history, hub, menu, notify, pools, qr, support
+from bot.handlers import account, billing, calc, catalog, conn, farm, history, hub, menu, notify, pools, qr, support
 
 routers: tuple[Router, ...] = (
   qr.router,
@@ -24,6 +24,7 @@ routers: tuple[Router, ...] = (
   menu.router,
   billing.router,
   account.router,
+  conn.router,  # до support: узнаёт ссылки пулов в свободном тексте
   support.router,  # последним: ловит свободный текст
 )
 
