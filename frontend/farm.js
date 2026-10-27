@@ -146,8 +146,8 @@ function placeTxt(d, short) {
 }
 
 // ---------- routing ----------
-const PAGES = { today: pageToday, map: pageMap, cont: pageCont, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools, calc: pageCalc, notify: pageNotify };
-const TITLES = { today: "Обзор фермы", map: "Контейнеры", cont: "Контейнер", asics: "Асики", errors: "Проблемы", clients: "Клиенты хостинга", pools: "Пулы", calc: "Калькулятор доходности", notify: "Уведомления" };
+const PAGES = { today: pageToday, map: pageMap, cont: pageCont, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools, calc: pageCalc, notify: pageNotify, energy: pageEnergy };
+const TITLES = { today: "Обзор фермы", map: "Контейнеры", cont: "Контейнер", asics: "Асики", errors: "Проблемы", clients: "Клиенты хостинга", pools: "Пулы", calc: "Калькулятор доходности", notify: "Уведомления", energy: "Энергетика" };
 const NAVOF = { cont: "map" };
 async function go(p, keep, arg) {
   if (!PAGES[p]) p = "today";
@@ -155,7 +155,7 @@ async function go(p, keep, arg) {
   if (!keep) { $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; S.sel.clear(); updSel(); }
   $$(".tab[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === (NAVOF[p] || p)));
   $("#pageTitle").textContent = TITLES[p];
-  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify";
+  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify" || p === "energy";
   $("#pageAside").innerHTML = "";
   // Каждый переход — шаг в истории браузера: «Назад» (кнопка или браузерная) возвращает на прошлую страницу с её фильтрами.
   const h = "#" + p + (S.arg ? "/" + S.arg : ""), depth = (history.state && history.state.d) || 0;
@@ -1119,6 +1119,144 @@ async function pageNotify() {
 }
 $$("[data-go]").forEach((b) => b.onclick = () => go(b.dataset.go));
 
+// ---------- Энергетика: схема питания (живые данные CROFT), 3D, почасовки, счётчики ----------
+// Топология Диагонали — реестр счётчиков 26.10 + схема расстановки (подтверждено).
+const EN_FEED = [
+  { id: 0, n: "Ф-1", full: "ГПП-2 · Ф-1 · РП №2", site: "Диагональ", meter: "49049738-23", color: "#2F7FD0", ktp: [1, 2, 3, 4, 5] },
+  { id: 1, n: "Ф-24", full: "РП №2 · Ф-24", site: "Hydro Диагональ", meter: "49049736-23", color: "#D97A1E", ktp: [6, 7, 8, 9, 10] },
+];
+const EN_KTPM = { 1: "49603054-24", 2: "49602919-24", 3: "49603111-24", 4: "49603081-24", 5: "49716752-24", 6: "49602900-24", 7: "49615046-24", 8: "49558811-24", 9: "49615266-24", 10: "49558813-24" };
+const EN_CAP = 2500; // кВА на КТП
+// Контейнер → КТП по вводам (ключ — первое слово имени в CROFT).
+const EN_CT = { "1а": [1], "2к": [1], "3а": [2], "4к": [2], "5а": [3], "6к": [3], "7К": [4], "8к": [4], "9К": [5], "10к": [5], "11К": [3], "А": [2, 3, 3], "Б": [1, 4, 4],
+  "11к": [7], "12к": [7], "13к": [6], "14к": [6], "15к": [10], "16к": [8], "17к": [8], "18к": [9], "19к": [9], "20к": [10] };
+const EN = { sub: "scheme", feed: "", hg: "day", hr: null };
+function enKtpOf(name) {
+  const key = String(name || "").trim().split(/\s+/)[0];
+  if (EN_CT[key]) return EN_CT[key];
+  if (/^модуль/i.test(name)) { const m = /КТП\s*(\d+)/i.exec(name); if (m) return [+m[1]]; }
+  return null;
+}
+function enModel(sum) {
+  const ktp = {}; for (let k = 1; k <= 10; k++) ktp[k] = { k, kw: 0, items: [] };
+  const other = [];
+  for (const c of sum.containers || []) {
+    const ks = enKtpOf(c.name);
+    if (!ks) { other.push(c); continue; }
+    const share = 1 / ks.length;
+    const cnt = {}; ks.forEach((k) => cnt[k] = (cnt[k] || 0) + 1);
+    Object.entries(cnt).forEach(([k, n]) => { ktp[k].kw += (c.kw || 0) * share * n; ktp[k].items.push({ c, part: ks.length > 1 ? `${n} из ${ks.length} вводов` : "", kw: (c.kw || 0) * share * n }); });
+  }
+  const feeds = EN_FEED.map((f) => ({ ...f, kw: f.ktp.reduce((s, k) => s + ktp[k].kw, 0), cont: new Set(f.ktp.flatMap((k) => ktp[k].items.map((i) => i.c.id))).size }));
+  return { ktp, feeds, other };
+}
+const enShort = (n) => { const s = String(n || ""); const m = /^(\S+)/.exec(s); return /^модуль/i.test(s) ? s.replace(/\s*\(Распределительный пункт\)/, "").replace(/\s*\(КТП[^)]*\)/, "") : (m ? m[1] : s); };
+// Пользователь мог переключить вкладку, пока грузились данные: устаревший ответ не перерисовывает страницу.
+const enStale = (q) => q !== EN.seq || S.page !== "energy";
+async function pageEnergy() {
+  const sub = EN.sub; EN.seq = (EN.seq || 0) + 1;
+  $("#pageAside").innerHTML = `<span class="seg" id="enSub">${[["scheme", "Схема питания"], ["3d", "3D площадка"], ["hourly", "Почасовки"], ["meters", "Счётчики"]].map(([k, v]) => `<button data-s="${k}" class="${sub === k ? "on" : ""}">${v}</button>`).join("")}</span>`;
+  $$("#enSub button").forEach((b) => b.onclick = () => { EN.sub = b.dataset.s; go("energy", true); });
+  if (sub === "3d") return enPage3d();
+  if (sub === "hourly") return enPageHourly();
+  if (sub === "meters") return enPageMeters();
+  return enPageScheme();
+}
+async function enPageScheme() {
+  const q = EN.seq;
+  const sum = await api("/farm/summary");
+  if (enStale(q)) return;
+  const M = enModel(sum);
+  const tot = M.feeds.reduce((s, f) => s + f.kw, 0);
+  const pct = (kw) => Math.round(kw / EN_CAP * 100);
+  const lc = (p) => p >= 90 ? "var(--bad)" : p >= 75 ? "var(--warn)" : "var(--ok)";
+  const stc = (c) => c.total && c.working === 0 ? "var(--faint)" : c.offline / Math.max(1, c.total) > 0.1 ? "var(--warn)" : "var(--ok)";
+  const chip = (it) => { const c = it.c; return `<button class="enc" data-cid="${c.id}" title="${esc(c.name)}"><i style="background:${stc(c)}"></i><b>${esc(enShort(c.name))}</b><span class="num">${nf(it.kw, 0)} кВт</span><span class="faint num">${nf(c.working)}/${nf(c.total)}</span>${it.part ? `<em>${esc(it.part)}</em>` : ""}</button>`; };
+  const feedCard = (f) => `
+    <div class="w c6 enf" style="--fc:${f.color}"><div class="wh"><span class="enfl"></span><b>${esc(f.n)}</b>&nbsp;<span class="mut">${esc(f.full)} · ${esc(f.site)}</span><span class="sp"></span><span class="num"><b>${nf(f.kw / 1000, 2)}</b> МВт</span></div>
+    <div class="wb"><div class="hint" style="margin-bottom:8px">Счётчик фидера ${esc(f.meter)} · ${nf(f.cont)} контейнеров · КТП ${f.ktp[0]}–${f.ktp[f.ktp.length - 1]}</div>
+    ${f.ktp.map((k) => { const K = M.ktp[k], p = pct(K.kw); return `
+      <div class="enk"><div class="enkh"><b>КТП ${k}</b><span class="faint">сч. ${EN_KTPM[k]}</span><span class="sp"></span><span class="num">${nf(K.kw, 0)} кВт</span><span class="enbar"><i style="width:${Math.min(100, p)}%;background:${lc(p)}"></i></span><span class="num" style="width:38px;text-align:right;color:${lc(p)}">${p}%</span></div>
+      <div class="encs">${K.items.length ? K.items.sort((a, b) => b.kw - a.kw).map(chip).join("") : '<span class="hint">нет контейнеров</span>'}</div></div>`; }).join("")}
+    </div></div>`;
+  $("#main").innerHTML = `
+    <div class="kpis">
+      <div class="k"><div class="lbl">Расчёт по асикам · сейчас</div><div class="num" style="font-size:20px">${nf(tot / 1000, 2)} МВт</div><div class="hint">сумма потребления асиков CROFT</div></div>
+      ${M.feeds.map((f) => `<div class="k"><div class="lbl"><i class="dot" style="background:${f.color}"></i> ${esc(f.n)} · ${esc(f.site)}</div><div class="num" style="font-size:20px">${nf(f.kw / 1000, 2)} МВт</div><div class="hint">${f.ktp.length} КТП по ${EN_CAP} кВА</div></div>`).join("")}
+      <div class="k"><div class="lbl">Самая загруженная КТП</div>${(() => { const k = Object.values(M.ktp).sort((a, b) => b.kw - a.kw)[0]; const p = pct(k.kw); return `<div class="num" style="font-size:20px;color:${lc(p)}">КТП ${k.k} · ${p}%</div><div class="hint">${nf(k.kw, 0)} из ${EN_CAP} кВА</div>`; })()}</div>
+    </div>
+    <div class="grid">${M.feeds.map(feedCard).join("")}</div>
+    ${M.other.length ? `<div class="hint" style="margin-top:10px">Без привязки к КТП: ${M.other.map((c) => esc(c.name)).join(", ")}</div>` : ""}
+    <div class="hint" style="margin-top:10px">Нагрузка — по асикам из CROFT, обновляется раз в минуту. Контейнеры с несколькими вводами делятся по вводам (А: ввод 1 — КТП 2, вводы 2–3 — КТП 3; Б: ввод 1 — КТП 1, вводы 2–3 — КТП 4). Клик по контейнеру — карта контейнера.</div>`;
+  $$("#main .enc").forEach((b) => b.onclick = () => go("cont", false, b.dataset.cid));
+}
+async function enPage3d() {
+  const q = EN.seq;
+  await api("/farm/summary"); // обновит токен: 3D читает живые данные тем же входом
+  if (enStale(q)) return;
+  $("#main").innerHTML = `<div class="w" style="height:calc(100vh - 150px);min-height:520px;overflow:hidden"><iframe id="en3d" src="/demo/energy3d.html?embed=1&live=1&v=5" style="border:0;width:100%;height:100%;display:block" title="3D площадка"></iframe></div>`;
+}
+async function enPageHourly() {
+  const q = EN.seq;
+  const [meters, h] = await Promise.all([api("/energy/meters"), api("/energy/hourly?group=" + EN.hg)]);
+  if (enStale(q)) return;
+  const S2 = h.series || [];
+  const max = Math.max(1, ...S2.map((s) => s.kwh));
+  const W = Math.max(320, Math.round(($("#main").clientWidth || 1000) - 60)), Hh = 220, bw = W / Math.max(1, S2.length);
+  const cols = ["#2F7FD0", "#D97A1E", "#3FA96B", "#9B6BD6"];
+  const ids = meters.map((m) => String(m.id));
+  // По суткам — столбики; по часам (сотни точек) — сложенные области по счётчикам, чтобы не было «шума» из тонких полосок.
+  const yv = (v) => Hh - v / max * (Hh - 10);
+  let bars;
+  if (S2.length > 120) {
+    const acc = S2.map(() => 0);
+    bars = ids.map((id, j) => {
+      const lo = acc.slice(); S2.forEach((s, i) => { acc[i] += (s.by && s.by[id]) || 0; });
+      const top = S2.map((s, i) => `${(i * bw).toFixed(1)},${yv(acc[i]).toFixed(1)}`), bot = S2.map((s, i) => `${(i * bw).toFixed(1)},${yv(lo[i]).toFixed(1)}`).reverse();
+      return `<polygon points="${top.concat(bot).join(" ")}" fill="${cols[j % 4]}" fill-opacity=".85"><title>${esc(meters[j].name)}</title></polygon>`;
+    }).join("");
+  } else bars = S2.map((s, i) => { let y = Hh; return ids.map((id, j) => { const v = (s.by && s.by[id]) || 0; const hh = v / max * (Hh - 10); y -= hh; return `<rect x="${(i * bw).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.6, bw - (bw > 4 ? 1 : 0)).toFixed(1)}" height="${hh.toFixed(1)}" fill="${cols[j % 4]}"><title>${esc(s.t)} · ${esc(meters[j].name)}: ${nf(v, 0)} кВт·ч</title></rect>`; }).join(""); }).join("");
+  const unit = EN.hg === "day" ? "МВт·ч/сутки" : "кВт·ч/час";
+  const tick = S2.length ? [0, Math.floor(S2.length / 2), S2.length - 1].map((i, n) => `<text x="${(i * bw).toFixed(0)}" y="${Hh + 14}" class="tk" text-anchor="${["start", "middle", "end"][n]}">${esc(S2[i].t)}</text>`).join("") : "";
+  $("#main").innerHTML = `
+    <div class="kpis">
+      <div class="k"><div class="lbl">Всего за период</div><div class="num" style="font-size:20px">${nf(h.total_kwh / 1000, 1)} МВт·ч</div></div>
+      <div class="k"><div class="lbl">Средняя мощность</div><div class="num" style="font-size:20px">${nf((h.avg_kw || 0) / 1000, 2)} МВт</div></div>
+      <div class="k"><div class="lbl">Пик</div><div class="num" style="font-size:20px">${h.peak ? nf(h.peak.kwh / (EN.hg === "day" ? 24000 : 1000), 2) + " МВт" : "—"}</div><div class="hint">${h.peak ? esc(h.peak.t) : ""}</div></div>
+      <div class="k"><div class="lbl">Счётчиков</div><div class="num" style="font-size:20px">${nf(meters.length)}</div><div class="hint">${esc([...new Set(meters.map((m) => m.substation).filter(Boolean))].join(", ") || "")}</div></div>
+    </div>
+    <div class="w"><div class="wh">Почасовки энергокомпании<span class="sp"></span><span class="seg" id="enHg"><button data-g="hour" class="${EN.hg === "hour" ? "on" : ""}">По часам</button><button data-g="day" class="${EN.hg === "day" ? "on" : ""}">По суткам</button></span>
+      <label class="btn sm" style="margin-left:8px;cursor:pointer">Загрузить файл<input type="file" id="enFile" accept=".xls,.xlsx" hidden></label></div>
+    <div class="wb"><div class="legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px">${meters.map((m, j) => `<span><i class="dot" style="background:${cols[j % 4]}"></i> ${esc(m.name)} <span class="faint num">${nf(m.kwh / 1000, 0)} МВт·ч</span></span>`).join("")}<span class="sp"></span><span class="faint">${unit}</span></div>
+      <svg viewBox="0 0 ${W} ${Hh + 18}" class="enh" style="width:100%;height:auto;display:block">${bars}${tick}</svg>
+      <div class="hint">Файл почасовок от энергокомпании (.xls/.xlsx). Повторная загрузка не задваивает часы, введённые вручную показания не перезаписываются.</div></div></div>`;
+  $$("#enHg button").forEach((b) => b.onclick = () => { EN.hg = b.dataset.g; go("energy", true); });
+  $("#enFile").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("file", f);
+    const t = tok.get();
+    const r = await fetch(API + "/energy/import", { method: "POST", body: fd, headers: t ? { Authorization: "Bearer " + t.access_token } : {} });
+    const j = await r.json().catch(() => ({}));
+    toast(r.ok ? `Загружено: ${nf(j.rows || j.inserted || 0)} часов` : (j.detail || "Не удалось загрузить"));
+    if (r.ok) go("energy", true);
+  };
+}
+async function enPageMeters() {
+  const q = EN.seq;
+  const meters = await api("/energy/meters");
+  if (enStale(q)) return;
+  const reg = [...EN_FEED.map((f) => ({ serial: f.meter, name: `${f.n} (${f.full})`, where: f.site, kind: "фидер" })),
+    ...Object.entries(EN_KTPM).map(([k, s]) => ({ serial: s, name: `КТП ${k}`, where: EN_FEED[k <= 5 ? 0 : 1].n, kind: "КТП" }))];
+  const have = new Set(meters.map((m) => m.serial));
+  $("#main").innerHTML = `
+    <div class="w"><div class="wh">Счётчики с почасовками</div><div class="wb scroll"><table class="tbl"><thead><tr><th>Номер</th><th>Название</th><th>Подстанция</th><th>Тип</th><th class="num">Часов</th><th class="num">Всего, МВт·ч</th><th>Период</th></tr></thead><tbody>
+      ${meters.map((m) => `<tr><td class="num">${esc(m.serial)}</td><td>${esc(m.name)}</td><td>${esc(m.substation || "—")}</td><td>${m.kind === "commercial" ? "коммерческий" : "технический"}</td><td class="num">${nf(m.hours)}</td><td class="num">${nf(m.kwh / 1000, 1)}</td><td>${m.start ? tfmt(m.start) + " – " + tfmt(m.end) : "—"}</td></tr>`).join("") || '<tr><td colspan="7" class="hint">Пока нет</td></tr>'}
+    </tbody></table></div></div>
+    <div class="w" style="margin-top:12px"><div class="wh">Реестр счётчиков Диагонали</div><div class="wb scroll"><table class="tbl"><thead><tr><th>Номер</th><th>Узел</th><th>Фидер / площадка</th><th>Почасовки</th></tr></thead><tbody>
+      ${reg.map((r) => `<tr><td class="num">${esc(r.serial)}</td><td>${esc(r.name)}</td><td>${esc(r.where)}</td><td>${have.has(r.serial) ? "есть" : '<span class="faint">ждём файл</span>'}</td></tr>`).join("")}
+    </tbody></table><div class="hint" style="margin-top:8px">Почасовки ГПП-16 (Ф-6, Ф-75, Ф-76) относятся к другому объекту — привяжем к площадке после подтверждения.</div></div></div>`;
+}
+
 // ---------- global search ----------
 (function () {
   const inp = $("#gq"), box = $("#gqRes"); let items = [], hi = 0;
@@ -1169,6 +1307,6 @@ async function boot() {
   const [p, a] = (location.hash || "#today").slice(1).split("/");
   await go(PAGES[p] ? p : "today", false, a);
   clearInterval(tick);
-  tick = setInterval(() => { if (S.page === "calc" || S.page === "notify" || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select") || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
+  tick = setInterval(() => { if (S.page === "calc" || S.page === "notify" || (S.page === "energy" && EN.sub !== "scheme") || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select") || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
 }
 boot();
