@@ -853,10 +853,11 @@ def internal_support(
 
     tg = int(body.get("telegram_user_id") or 0)
     text = str(body.get("text") or "").strip()
-    if not tg or not text:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="telegram_user_id и text обязательны")
+    file = body.get("file") if isinstance(body.get("file"), dict) and body["file"].get("file_id") else None
+    if not tg or not (text or file):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="telegram_user_id и text/file обязательны")
     meta = {k: body.get(k) for k in ("username", "name") if body.get(k)}
-    m = sup.incoming(db, tg, text, meta)
+    m = sup.incoming(db, tg, text, meta, file=file)
     return {"ok": True, "id": m.id, "managers": len((m.meta or {}).get("fwd") or {})}
 
 
@@ -875,9 +876,10 @@ def internal_support_reply(
     text = str(body.get("text") or "").strip()
     if mgr not in sup.managers(db):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not a manager")
+    file = body.get("file") if isinstance(body.get("file"), dict) and body["file"].get("file_id") else None
     src = sup.find_by_forward(db, mgr, rid)
-    if not src or not text:
+    if not src or not (text or file):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not a support thread")
     by = db.scalar(select(models.User.id).where(models.User.telegram_user_id == mgr))
-    r = sup.send_out(db, [src.tg_id], text, by_user_id=by)
+    r = sup.send_out(db, [src.tg_id], text, by_user_id=by, file=file)
     return {"ok": bool(r["sent"]), "to": src.tg_id}

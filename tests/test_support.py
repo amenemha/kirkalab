@@ -85,3 +85,52 @@ def test_managers_setting(client, db, monkeypatch):
     h, _ = _setup(client, db, monkeypatch)
     assert client.get("/api/v1/admin/managers", headers=h).json()["tg_ids"] == [555]
     assert client.put("/api/v1/admin/managers", json={"tg_ids": [777]}, headers=h).json()["tg_ids"] == [777]
+
+
+MEDIA: list = []
+
+
+def _fake_media(chat_id, file, caption="", reply_button=True):
+    MEDIA.append((chat_id, dict(file), caption))
+    return 2000 + len(MEDIA), {"type": file.get("type"), "file_id": file.get("file_id") or f"up{len(MEDIA)}", "name": file.get("name")}
+
+
+def test_files_both_ways(client, db, monkeypatch):
+    h, _ = _setup(client, db, monkeypatch)
+    MEDIA.clear()
+    monkeypatch.setattr(sup, "tg_media", _fake_media)
+    # человек прислал скриншот с подписью
+    r = client.post("/api/v1/internal/support", json={"telegram_user_id": 777, "text": "Вот ошибка", "file": {"type": "photo", "file_id": "AgPH"}}, headers={"X-Bot-Secret": "sek"})
+    assert r.status_code == 200 and r.json()["managers"] == 1
+    assert MEDIA[-1][0] == 555 and MEDIA[-1][1]["file_id"] == "AgPH" and "Вот ошибка" in MEDIA[-1][2]
+    # файл без текста тоже принимается
+    assert client.post("/api/v1/internal/support", json={"telegram_user_id": 777, "text": "", "file": {"type": "document", "file_id": "DOC", "name": "log.txt"}}, headers={"X-Bot-Secret": "sek"}).status_code == 200
+    j = client.get("/api/v1/admin/users", headers=h).json()
+    row = next(x for x in j["users"] if x["tg_id"] == 777)
+    assert row["unread"] == 2 and "log.txt" in row["last_msg"]["text"]
+    th = client.get("/api/v1/admin/messages?tg=777", headers=h).json()["items"]
+    assert th[0]["file"]["type"] == "photo" and "file_id" not in th[0]["file"]
+    # менеджер ответил в Telegram фотографией на пересланное (message_id 2001)
+    r = client.post("/api/v1/internal/support/reply", json={"manager_tg": 555, "reply_to_message_id": 2001, "text": "", "file": {"type": "photo", "file_id": "ANS"}}, headers={"X-Bot-Secret": "sek"})
+    assert r.status_code == 200 and r.json()["ok"] and MEDIA[-1][0] == 777 and MEDIA[-1][1]["file_id"] == "ANS"
+    # из админки: файл двоим — загрузка один раз, второму по file_id
+    n = len(MEDIA)
+    r = client.post("/api/v1/admin/messages/upload", data={"tg_ids": "777,555", "text": "Инструкция"}, files={"file": ("guide.pdf", b"%PDF-1.4 test", "application/pdf")}, headers=h)
+    assert r.status_code == 200 and r.json()["sent"] == 2
+    assert MEDIA[n][1].get("data") == b"%PDF-1.4 test" and MEDIA[n][2] == "Инструкция"
+    assert "data" not in MEDIA[n + 1][1] and MEDIA[n + 1][1]["file_id"] == f"up{n + 1}"
+    th = client.get("/api/v1/admin/messages?tg=555", headers=h).json()["items"]
+    assert th[-1]["file"]["name"] == "guide.pdf"
+    # скачать файл: Telegram недоступен в тестах → 502, несуществующий → 404
+    mid = th[-1]["id"]
+    monkeypatch.setattr(sup, "tg_download", lambda fid: (b"PDFDATA", "file_1.pdf"))
+    d = client.get(f"/api/v1/admin/messages/{mid}/file", headers=h)
+    assert d.status_code == 200 and d.content == b"PDFDATA" and d.headers["content-type"].startswith("application/pdf")
+    assert client.get("/api/v1/admin/messages/999999/file", headers=h).status_code == 404
+    # пустое без файла — нельзя
+    assert client.post("/api/v1/internal/support", json={"telegram_user_id": 777, "text": ""}, headers={"X-Bot-Secret": "sek"}).status_code == 422
+
+
+def test_upload_needs_admin(client, db, monkeypatch):
+    _setup(client, db, monkeypatch)
+    assert client.post("/api/v1/admin/messages/upload", data={"tg_ids": "777"}, files={"file": ("a.png", b"x", "image/png")}).status_code in (401, 403)

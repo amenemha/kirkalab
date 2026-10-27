@@ -1,7 +1,9 @@
 """Админка: кто пользуется ботом и сайтом, что смотрели; журнал страниц сайта."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+import mimetypes
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -50,6 +52,47 @@ def admin_send(body: OutMsg, db: Session = Depends(get_db), admin=Depends(get_cu
         return sup.send_out(db, body.tg_ids, body.text, by_user_id=admin.id)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+
+
+@router.post("/messages/upload")
+async def admin_send_file(
+    tg_ids: str = Form(...),
+    text: str = Form(""),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin=Depends(get_current_admin),
+):
+    """Сообщение с файлом (скриншот, документ, видео) выбранным людям."""
+    ids = [int(x) for x in tg_ids.replace(" ", "").split(",") if x.strip().lstrip("-").isdigit()]
+    if not ids or len(ids) > 500:
+        raise HTTPException(422, "Не выбраны получатели")
+    data = await file.read(sup.MAX_FILE + 1)
+    if len(data) > sup.MAX_FILE:
+        raise HTTPException(413, "Файл больше 20 МБ")
+    mime = file.content_type or "application/octet-stream"
+    kind = "photo" if mime in ("image/jpeg", "image/png", "image/webp") and len(data) <= 10 * 1024 * 1024 else \
+        "video" if mime == "video/mp4" else "document"
+    f = {"type": kind, "data": data, "name": file.filename or "file", "mime": mime}
+    try:
+        return sup.send_out(db, ids, text[:4000], by_user_id=admin.id, file=f)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@router.get("/messages/{msg_id}/file")
+def admin_file(msg_id: int, db: Session = Depends(get_db)):
+    """Файл из переписки (через Telegram, до 20 МБ)."""
+    f = sup.file_of(db, msg_id)
+    if not f or not f.get("file_id"):
+        raise HTTPException(404, "Файла нет")
+    got = sup.tg_download(f["file_id"])
+    if not got:
+        raise HTTPException(502, "Telegram не отдал файл (возможно, больше 20 МБ — откройте в Telegram)")
+    data, tg_name = got
+    name = f.get("name") or tg_name or "file"
+    mime = f.get("mime") or mimetypes.guess_type(name)[0] or ("image/jpeg" if f.get("type") == "photo" else "application/octet-stream")
+    from urllib.parse import quote
+    return Response(content=data, media_type=mime, headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(name)}", "Cache-Control": "private, max-age=86400"})
 
 
 class TgOnly(BaseModel):
