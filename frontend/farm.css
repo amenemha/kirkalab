@@ -359,3 +359,15 @@ svg.enh{stroke:none}svg.enh .tk{font:11px var(--font-num);fill:var(--faint)}
 .pill.ok{color:var(--ok);background:var(--okbg);border-color:transparent}
 .pill.bad{color:var(--bad);background:var(--badbg);border-color:transparent}
 .cnrow .tbl tbody tr{cursor:default}
+/* цитата в переписке */
+.bub .bq{border-left:3px solid var(--acc);background:var(--panel2);border-radius:4px;padding:5px 8px;margin:0 0 6px;font-size:12px;color:var(--mut);max-height:140px;overflow:auto;white-space:normal}
+.bub .bq .bqh{font-size:11px;font-weight:600;color:var(--acc);margin-bottom:2px}
+.bub .bq a{color:var(--acc)}
+.evtxt{white-space:pre-wrap;font:12.5px/1.5 var(--mono,ui-monospace,monospace);margin:0;color:var(--tx)}
+code.cp{cursor:copy;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+code.cp:hover{border-color:var(--acc)}
+/* советы по пулу */
+.tips{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.tips li{padding:6px 9px;border-radius:6px;border-left:3px solid var(--line);background:var(--panel2);font-size:12.5px;line-height:1.45}
+.tips .tip-bad{border-left-color:var(--bad)}.tips .tip-warn{border-left-color:var(--warn)}.tips .tip-ok{border-left-color:var(--ok)}.tips .tip-info{border-left-color:var(--info,var(--acc))}
+.padd .crow{display:flex;gap:8px}

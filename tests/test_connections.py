@@ -140,3 +140,19 @@ def test_internal_bot(client, db, monkeypatch):
     assert r["is_admin"] and "server" in r
     assert client.post("/api/v1/internal/connections", json={"action": "recognize", "text": "https://www.f2pool.com/btc/x"}, headers=H).json()["pool"]["provider"] == "f2pool"
     assert client.post("/api/v1/internal/connections", json={"action": "list", "tg_id": 777}, headers={"X-Bot-Secret": "no"}).status_code in (401, 403)
+
+
+def test_admin_adds_shared_pool_and_manages(client, db, monkeypatch):
+    ha, _ = _setup(client, db, monkeypatch)
+    from app.services.pools import viabtc
+    monkeypatch.setattr(viabtc, "ViaBTC", FakeVia)
+    r = client.post("/api/v1/pools/add", json={"url": "https://www.viabtc.com/observer/dashboard?access_key=zz1&coin=BTC", "label": "Клиент Иванов"}, headers=ha)
+    assert r.status_code == 200, r.text
+    aid = r.json()["account"]["id"]
+    items = client.get("/api/v1/pools/accounts", headers=ha).json()["items"]
+    me = next(x for x in items if x["id"] == aid)
+    assert me["user"] == "Клиент Иванов" and me["owner_user_id"] is None and "group" in me
+    assert client.patch(f"/api/v1/pools/accounts/{aid}", json={"label": "10к", "active": False}, headers=ha).json()["user"] == "10к"
+    assert client.get("/api/v1/pools/daily?coin=BTC", headers=ha).status_code == 200
+    assert client.post("/api/v1/pools/add", json={"url": "https://www.viabtc.com/user/x"}, headers=ha).status_code == 400
+    assert client.delete(f"/api/v1/pools/accounts/{aid}", headers=ha).json()["ok"]

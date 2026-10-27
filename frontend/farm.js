@@ -154,7 +154,7 @@ function placeTxt(d, short) {
 // ---------- routing ----------
 const PAGES = { today: pageToday, map: pageMap, cont: pageCont, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools, calc: pageCalc, notify: pageNotify, energy: pageEnergy, admin: pageAdmin };
 const TITLES = { today: "Обзор фермы", map: "Контейнеры", cont: "Контейнер", asics: "Асики", errors: "Проблемы", clients: "Клиенты хостинга", pools: "Пулы", calc: "Калькулятор доходности", notify: "Уведомления", energy: "Энергетика", admin: "Админка", conn: "Подключения" };
-const NAVOF = { cont: "map" };
+const NAVOF = { cont: "map", ev: "notify" };
 const OPEN = new Set(["conn", "calc"]);  // страницы, доступные без прав администратора
 async function go(p, keep, arg) {
   if (!PAGES[p]) p = "today";
@@ -163,7 +163,7 @@ async function go(p, keep, arg) {
   if (!keep) { $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; S.sel.clear(); updSel(); }
   $$(".tab[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === (NAVOF[p] || p)));
   $("#pageTitle").textContent = TITLES[p];
-  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify" || p === "energy" || p === "admin" || p === "conn";
+  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify" || p === "energy" || p === "admin" || p === "conn" || p === "ev";
   $("#pageAside").innerHTML = "";
   // Каждый переход — шаг в истории браузера: «Назад» (кнопка или браузерная) возвращает на прошлую страницу с её фильтрами.
   const h = "#" + p + (S.arg ? "/" + S.arg : ""), depth = (history.state && history.state.d) || 0;
@@ -735,28 +735,25 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") { $("#draw
 // ---------- pools ----------
 const mskToday = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400e3).toISOString().slice(0, 10);
-S.pf = { from: null, to: null, group: "", q: "", empty: false };
+S.pf = { from: null, to: null, coin: "", q: "", empty: false };
 function fh(ths) { if (ths == null) return "—"; if (ths === 0) return "0"; if (ths >= 1e6) return nf(ths / 1e6, 2) + " EH"; if (ths >= 1000) return nf(ths / 1000, 2) + " PH"; if (ths >= 1) return nf(ths, 1) + " TH"; return nf(ths * 1000, 0) + " GH"; }
 const dm = (iso) => iso.slice(8, 10) + "." + iso.slice(5, 7);
 async function pagePools() {
   const pf = S.pf; pf.to = pf.to || mskToday(); pf.from = pf.from || addDays(pf.to, -6);
-  const [acc, daily] = await Promise.all([api("/pools/accounts"), api("/pools/daily?" + qs({ d_from: pf.from, d_to: pf.to, group: pf.group }))]);
-  const groups = [...new Set(acc.items.map((a) => a.group || "Без группы"))];
+  const [acc, daily] = await Promise.all([api("/pools/accounts"), api("/pools/daily?" + qs({ d_from: pf.from, d_to: pf.to, coin: pf.coin }))]);
+  const coins = [...new Set(acc.items.map((a) => a.coin).filter(Boolean))].sort();
   const q = pf.q.toLowerCase();
   const alive = (it) => (it.account.ths_1d || 0) > 0 || (it.account.ths_10m || 0) > 0 || it.days.some((d) => d.ths);
-  const found = daily.items.filter((it) => !q || [it.account.account, it.account.user, it.account.group].some((x) => x && x.toLowerCase().includes(q)));
+  const found = daily.items.filter((it) => !q || [it.account.account, it.account.user, it.account.coin].some((x) => x && x.toLowerCase().includes(q)));
   const hidden = found.filter((it) => !alive(it)).length;
-  const gi = {}; found.forEach((it, i) => { const g = it.account.group || ""; if (!(g in gi)) gi[g] = i; });
-  const items = found.filter((it) => pf.empty || alive(it)).sort((x, y) => gi[x.account.group || ""] - gi[y.account.group || ""] || (y.account.ths_1d || 0) - (x.account.ths_1d || 0));
+  const items = found.filter((it) => pf.empty || alive(it)).sort((x, y) => (y.account.ths_1d || 0) - (x.account.ths_1d || 0));
   const byCoin = {}; found.forEach((it) => { const c = byCoin[it.account.coin] = byCoin[it.account.coin] || { h10: 0, h24: 0, n: 0 }; c.h10 += it.account.ths_10m || 0; c.h24 += it.account.ths_1d || 0; if (alive(it)) c.n++; });
   const coinLine = (k) => Object.entries(byCoin).filter(([, v]) => v[k] > 0).sort((a, b) => b[1][k] - a[1][k]).map(([c, v]) => `<span class="num">${esc(c)} ${fh(v[k])}</span>`).join(" · ") || "—";
   const days = items.length ? items[0].days.map((d) => d.day) : [];
   const tot = items.reduce((a, it) => { a.h10 += it.account.ths_10m || 0; a.h24 += it.account.ths_1d || 0; a.wa += it.account.w_active || 0; a.wi += it.account.w_inactive || 0; return a; }, { h10: 0, h24: 0, wa: 0, wi: 0 });
   const errs = acc.items.filter((a) => a.error).length;
-  let lastG = null;
   const rowsHtml = items.map((it) => {
-    const a = it.account; const g = a.group || "Без группы"; let head = "";
-    if (g !== lastG) { lastG = g; head = `<tr class="grp"><td colspan="${7 + days.length}">${esc(g)}</td></tr>`; }
+    const a = it.account; const head = "";
     const vals = it.days.map((d) => d.ths); const ok = vals.filter((v) => v != null);
     const avg = ok.length ? ok.reduce((x, y) => x + y, 0) / ok.length : null;
     const prof = it.days.reduce((x, d) => x + (d.profit || 0), 0);
@@ -774,25 +771,31 @@ async function pagePools() {
    <div class="k"><div class="l">Хешрейт за 24 ч</div><div class="v" style="font-size:14px;white-space:normal;overflow:visible;line-height:1.4">${coinLine("h24")}</div><div class="s">ссылок с хешрейтом ${nf(found.filter(alive).length)}</div></div>
    <div class="k"><div class="l">Воркеры в пуле</div><div class="v"><span class="ok">${nf(tot.wa)}</span></div><div class="s">неактивны ${nf(tot.wi)}</div></div>
   </div>
-  <div class="fbar" style="margin-top:10px"><input type="search" id="pq" placeholder="Аккаунт, группа…" value="${esc(pf.q)}">
-   <select class="sel" id="pGrp"><option value="">Все группы</option>${groups.map((g) => `<option ${g === pf.group ? "selected" : ""}>${esc(g)}</option>`).join("")}</select>
+  <div class="fbar" style="margin-top:10px"><input type="search" id="pq" placeholder="Аккаунт, название…" value="${esc(pf.q)}">
+   <select class="sel" id="pGrp"><option value="">Все монеты</option>${coins.map((g) => `<option ${g === pf.coin ? "selected" : ""}>${esc(g)}</option>`).join("")}</select>
    <label class="mini">с <input type="date" id="pFrom" class="sel" value="${pf.from}"></label><label class="mini">по <input type="date" id="pTo" class="sel" value="${pf.to}"></label>
    <span class="seg" id="pQuick"><button data-n="7">7 дн</button><button data-n="30">30 дн</button><button data-n="m">месяц</button></span>
    <label class="mini"><input type="checkbox" id="pEmpty" ${pf.empty ? "checked" : ""}> пустые (${hidden})</label>
-   <span class="sp"></span><button class="btn" id="pImp">Загрузить таблицу</button><button class="btn pri" id="pXls">Выгрузить Excel</button></div>
+   <span class="sp"></span><button class="btn pri" id="pAdd">+ Ссылка наблюдателя</button><button class="btn" id="pImp">Загрузить таблицу</button><button class="btn" id="pXls">Выгрузить Excel</button></div>
+  <div class="w padd" id="pAddBox" hidden style="margin-top:10px"><div class="wb"><div class="crow"><input class="in" id="paU" placeholder="https://… ссылка наблюдателя (Observer / Watcher) из кабинета пула" style="flex:2"><input class="in" id="paL" placeholder="Название, например «Клиент Иванов» или «10к»" style="flex:1"><button class="btn pri" id="paGo">Добавить</button></div><div class="hint" id="paMsg" style="margin-top:6px">ViaBTC — сразу читается хешрейт и воркеры, дальше Kirka сама копит часы и считает сутки МСК. Antpool, F2Pool, EMCD, NiceHash и другие — ссылка сохраняется в «Другие пулы», чтение подключаю следующим шагом. Ссылку можно и просто прислать боту в чат.</div></div></div>
   <div class="w" style="margin-top:10px"><div class="wh">Средний хешрейт по суткам МСК (00:00–24:00)<span class="sp"></span><span class="mini">Kirka сама копит часы — пул хранит только 72 ч. Жёлтым — сутки собраны не полностью. Наведите на число — как посчитано.</span></div>
    <div class="scroll"><table class="tbl" id="tP"><thead><tr><th>Аккаунт</th><th>Монета</th><th class="r">10 мин</th><th class="r">24 ч</th><th class="r">Воркеры</th>${days.map((d) => `<th class="r">${dm(d)}</th>`).join("")}<th class="r">Среднее</th><th class="r">Начислено</th></tr></thead>
    <tbody>${rowsHtml || `<tr><td colspan="${7 + days.length}"><div class="empty">Ссылок пулов пока нет. Нажмите «Загрузить таблицу» и выберите файл Mining Monitor.</div></td></tr>`}</tbody></table></div></div>
-  ${acc.other.length ? `<div class="w" style="margin-top:10px"><div class="wh">Другие пулы · ${acc.other.length}<span class="sp"></span><span class="mini">Ссылки сохранены, чтение подключаю по очереди</span></div><div class="wb"><div class="hl">${acc.other.map((o) => `<div class="row"><span class="nm">${esc(o.group || "")} · <b>${esc(o.provider)}</b> <span class="faint">${esc((o.url || "").replace(/^https?:\/\//, "").slice(0, 70))}</span></span><span class="mini">ждёт</span></div>`).join("")}</div></div></div>` : ""}`;
+  ${acc.items.some((x) => !x.active) ? `<div class="w" style="margin-top:10px"><div class="wh">Выключенные ссылки · ${acc.items.filter((x) => !x.active).length}<span class="sp"></span><span class="mini">не обновляются; нажмите, чтобы включить</span></div><div class="wb"><div class="hl">${acc.items.filter((x) => !x.active).map((o) => `<div class="row lnk" data-pacc="${o.id}"><span class="nm"><b>${esc(o.account || o.user || "—")}</b> ${esc(o.coin || "")}${o.user ? " · " + esc(o.user) : ""}</span><span class="mini">выключена</span></div>`).join("")}</div></div></div>` : ""}
+  ${acc.other.length ? `<div class="w" style="margin-top:10px"><div class="wh">Другие пулы · ${acc.other.length}<span class="sp"></span><span class="mini">Ссылки сохранены, чтение подключаю по очереди</span></div><div class="wb"><div class="hl">${acc.other.map((o) => `<div class="row"><span class="nm"><b>${esc(o.name || o.provider)}</b>${o.coin ? " " + esc(o.coin) : ""}${o.user ? " · " + esc(o.user) : ""} <span class="faint">${esc((o.url || "").replace(/^https?:\/\//, "").slice(0, 70))}</span></span><span class="mini">ждёт чтения</span><button class="btn sm ghost" data-podel="${o.id}">Убрать</button></div>`).join("")}</div></div></div>` : ""}`;
   let qt; $("#pq").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { pf.q = e.target.value; pagePools().then(() => { const i = $("#pq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300); };
-  $("#pGrp").onchange = (e) => { pf.group = e.target.value; pagePools(); };
+  $("#pGrp").onchange = (e) => { pf.coin = e.target.value; pagePools(); };
+  $("#pAdd").onclick = () => { const bx = $("#pAddBox"); bx.hidden = !bx.hidden; if (!bx.hidden) $("#paU").focus(); };
+  $("#paGo").onclick = async () => { const url = $("#paU").value.trim(), m = $("#paMsg"); if (!url) { m.textContent = "Вставьте ссылку наблюдателя"; m.classList.add("err"); return; } $("#paGo").disabled = true; m.classList.remove("err"); m.textContent = "Проверяю ссылку…"; try { const r = await api("/pools/add", { method: "POST", body: JSON.stringify({ url, label: $("#paL").value.trim() }) }); toast(r.already ? "Эта ссылка уже есть" : r.found ? `${r.name}: подключена, хешрейт читается` : `${r.name}: ссылка сохранена`); go("pools", true); if (r.account && r.account.id && r.live) setTimeout(() => openPool(r.account.id), 300); } catch (e) { m.textContent = e.message; m.classList.add("err"); $("#paGo").disabled = false; } };
+  $("#paU").onkeydown = (e) => { if (e.key === "Enter") $("#paGo").click(); };
   $("#pEmpty").onchange = (e) => { pf.empty = e.target.checked; pagePools(); };
   $("#pFrom").onchange = (e) => { pf.from = e.target.value; pagePools(); };
   $("#pTo").onchange = (e) => { pf.to = e.target.value; pagePools(); };
   $$("#pQuick button").forEach((b) => b.onclick = () => { const t = mskToday(); pf.to = t; pf.from = b.dataset.n === "m" ? t.slice(0, 8) + "01" : addDays(t, -(+b.dataset.n - 1)); pagePools(); });
-  $("#pXls").onclick = () => download("/pools/daily/export.xlsx?" + qs({ d_from: pf.from, d_to: pf.to, group: pf.group }));
+  $("#pXls").onclick = () => download("/pools/daily/export.xlsx?" + qs({ d_from: pf.from, d_to: pf.to, coin: pf.coin }));
   $("#pImp").onclick = () => $("#poolFile").click();
-  $$("#tP tr[data-pacc]").forEach((r) => r.onclick = () => openPool(+r.dataset.pacc));
+  $$("#tP tr[data-pacc], .row[data-pacc]").forEach((r) => r.onclick = () => openPool(+r.dataset.pacc));
+  $$("[data-podel]").forEach((b) => b.onclick = async () => { if (!confirm("Убрать эту ссылку?")) return; await api("/pools/accounts/" + b.dataset.podel, { method: "DELETE" }); toast("Ссылка убрана"); go("pools", true); });
 }
 $("#poolFile").onchange = async (e) => {
   const f = e.target.files[0]; if (!f) return; e.target.value = "";
@@ -807,17 +810,46 @@ $("#poolFile").onchange = async (e) => {
 async function openPool(id) {
   $("#drIn").innerHTML = '<div class="spin" style="margin:40px auto"></div>'; $("#drawer").hidden = false;
   const pf = S.pf;
-  const [d, w] = await Promise.all([api(`/pools/accounts/${id}/daily?` + qs({ d_from: pf.from, d_to: pf.to })), api(`/pools/accounts/${id}/workers`)]);
+  const span = Math.round((Date.parse(pf.to) - Date.parse(pf.from)) / 86400e3) + 1;
+  const pTo = addDays(pf.from, -1), pFrom = addDays(pf.from, -span);
+  const [d, w, pv] = await Promise.all([api(`/pools/accounts/${id}/daily?` + qs({ d_from: pf.from, d_to: pf.to })), api(`/pools/accounts/${id}/workers`), api(`/pools/accounts/${id}/daily?` + qs({ d_from: pFrom, d_to: pTo })).catch(() => null)]);
   const a = d.account;
+  // ---- советы и сравнение ----
+  const tips = [];
+  const pct = (x, y) => y ? Math.round((x / y - 1) * 100) : null;
+  if (a.ths_10m != null && a.ths_1d && a.ths_10m < a.ths_1d * 0.85) tips.push(["bad", `Сейчас ${fh(a.ths_10m)} — на ${Math.abs(pct(a.ths_10m, a.ths_1d))}% ниже суточного (${fh(a.ths_1d)}). Проверьте, не отвалились ли асики или пул.`]);
+  const idle = w.items.filter((x) => x.status !== "active");
+  if (idle.length) tips.push(["warn", `${idle.length} воркер(ов) без хешрейта: ${idle.slice(0, 6).map((x) => x.name).join(", ")}${idle.length > 6 ? "…" : ""}. Откройте их ниже — видно асик в CROFT и его статус.`]);
+  const unk = w.items.length - w.matched;
+  if (w.items.length && unk > 0) tips.push(["warn", `${unk} из ${w.items.length} воркеров не нашлись в CROFT по названию — чужие асики, опечатка в воркере или асик на другой ферме.`]);
+  const asicSum = w.items.reduce((s2, x) => s2 + (x.device && x.device.status === "working" ? (x.device.ths || 0) : 0), 0);
+  const poolSum = w.items.reduce((s2, x) => s2 + (x.device ? (x.ths_1d || 0) : 0), 0);
+  if (asicSum > 0 && poolSum > 0 && poolSum < asicSum * 0.92) tips.push(["warn", `Пул видит ${Math.round(poolSum / asicSum * 100)}% от того, что показывают сами асики (${fh(poolSum)} против ${fh(asicSum)}). Потери: отказы, перезагрузки или разгон «на бумаге».`]);
+  const rej = w.items.filter((x) => (x.reject_1h || 0) > 0.02);
+  if (rej.length) tips.push(["warn", `Высокие отказы (> 2%) у ${rej.length}: ${rej.slice(0, 5).map((x) => x.name + " " + nf(x.reject_1h * 100, 1) + "%").join(", ")}. Обычно это связь или далёкий сервер пула.`]);
+  const part = d.rows.filter((r) => r.hours && r.hours < 24 && r.avg_ths != null).length;
+  if (part) tips.push(["info", `${part} сут. собраны не полностью — Kirka копит часы с ${d.archive_since ? tfmt(d.archive_since) : "подключения"}, раньше пул отдаёт только последние 72 ч.`]);
+  if (!tips.length) tips.push(["ok", "Всё ровно: хешрейт стабилен, все воркеры в работе и найдены в CROFT."]);
+  let cmp = "";
+  if (pv && pv.total && pv.total.avg_ths != null && d.total.avg_ths != null) {
+    const dv = pct(d.total.avg_ths, pv.total.avg_ths), dp = pv.total.profit ? pct(d.total.profit, pv.total.profit) : null;
+    const sg = (v) => v == null ? "—" : `<span class="${v < -3 ? "bad" : v > 3 ? "ok" : "faint"}">${v > 0 ? "+" : ""}${v}%</span>`;
+    cmp = `<table class="tbl"><thead><tr><th></th><th class="r">${dm(pf.from)}–${dm(pf.to)}</th><th class="r">${dm(pFrom)}–${dm(pTo)}</th><th class="r">Разница</th></tr></thead><tbody>
+      <tr><td>Средний хешрейт</td><td class="r num">${fh(d.total.avg_ths)}</td><td class="r num">${fh(pv.total.avg_ths)}</td><td class="r num">${sg(dv)}</td></tr>
+      <tr><td>Начислено, ${esc(a.coin)}</td><td class="r num">${d.total.profit ? nf(d.total.profit, 8) : "—"}</td><td class="r num">${pv.total.profit ? nf(pv.total.profit, 8) : "—"}</td><td class="r num">${sg(dp)}</td></tr>
+      <tr><td>Сутки с данными</td><td class="r num">${d.total.days}</td><td class="r num">${pv.total.days}</td><td></td></tr></tbody></table>`;
+  } else cmp = `<div class="hint">Для сравнения нужен прошлый период (${dm(pFrom)}–${dm(pTo)}) — Kirka ещё не накопила по нему часы.</div>`;
   const pts = d.rows.filter((r) => r.avg_ths != null).map((r) => [Date.parse(r.day + "T00:00:00Z"), r.avg_ths]);
   const wsorted = w.items.slice().sort((x, y) => (x.status === "active") - (y.status === "active") || (x.ths_1h || 0) - (y.ths_1h || 0));
   $("#drIn").innerHTML = `
-   <div class="dr-h"><div><h2>${esc(a.account || a.user)} <span class="faint">${esc(a.coin)}</span></h2><div class="mut small">${esc(a.group || "")} · ViaBTC</div></div><span class="sp"></span><button class="btn" id="drX">Закрыть</button></div>
+   <div class="dr-h"><div><h2>${esc(a.account || a.user)} <span class="faint">${esc(a.coin)}</span></h2><div class="mut small">ViaBTC${a.user ? " · " + esc(a.user) : ""}${a.owner_user_id ? " · добавил пользователь" : ""}</div></div><span class="sp"></span><button class="btn" id="drX">Закрыть</button></div>
    <div class="life">
     <div class="k"><div class="l">Сейчас, 10 мин</div><div class="v">${fh(a.ths_10m)}<small>/s</small></div><div class="s">за час ${fh(a.ths_1h)}</div></div>
     <div class="k"><div class="l">Воркеры</div><div class="v"><span class="ok">${a.w_active ?? "—"}</span></div><div class="s">неактивны ${a.w_inactive ?? 0} · ошибочные ${a.w_invalid ?? 0}</div></div>
     <div class="k"><div class="l">Начислено за 24 ч</div><div class="v">${a.profit_24h != null ? nf(a.profit_24h, 8) : "—"}</div><div class="s">баланс ${a.balance != null ? nf(a.balance, 8) : "—"} ${esc(a.coin)}</div></div>
    </div>
+   <div class="sec"><h4>Советы</h4><ul class="tips">${tips.map(([k, t]) => `<li class="tip-${k}">${esc(t)}</li>`).join("")}</ul></div>
+   <div class="sec"><h4>Сравнение с прошлым таким же периодом</h4>${cmp}</div>
    ${a.error ? `<div class="sec"><div class="bad">Пул не отвечает: ${esc(a.error)}</div></div>` : ""}${a.note ? `<div class="sec"><div class="hint">По этой ссылке пул не показывает: ${esc(a.note)}</div></div>` : ""}
    <div class="sec"><h4>Средний хешрейт по суткам МСК</h4>${pts.length > 1 ? lineChart(pts, "TH/s") : ""}
     <table class="tbl"><thead><tr><th>Сутки</th><th class="r">Среднее</th><th class="r">Часов</th><th>Как посчитано</th><th class="r">Начислено</th><th class="r">≈ $</th></tr></thead><tbody>
@@ -827,9 +859,17 @@ async function openPool(id) {
    <div class="sec"><h4>Воркеры · ${w.items.length} · найдено в CROFT ${w.matched}</h4>
     <table class="tbl"><thead><tr><th>Воркер</th><th>Статус</th><th class="r">1 ч</th><th class="r">24 ч</th><th class="r">Отказ</th><th>Асик в CROFT</th></tr></thead><tbody>
     ${wsorted.slice(0, 400).map((x) => `<tr ${x.device ? `data-card="${x.device.id}" class="lnk"` : ""}><td class="num">${esc(x.name)}</td><td>${x.status === "active" ? '<span class="ok">в работе</span>' : `<span class="bad">${x.status === "unactive" ? "нет хешрейта" : esc(x.status || "—")}</span>`}</td><td class="r num">${fh(x.ths_1h)}</td><td class="r num">${fh(x.ths_1d)}</td><td class="r num">${x.reject_1h != null ? nf(x.reject_1h * 100, 2) + "%" : "—"}</td><td>${x.device ? `${esc(x.device.model || "")} <span class="faint num">${esc(x.device.ip || "")}</span> ${stPill(x.device.status)}` : '<span class="faint">—</span>'}</td></tr>`).join("")}
-    </tbody></table></div>`;
+    </tbody></table></div>
+   <div class="sec"><h4>Управление ссылкой</h4>
+    <div class="crow"><input class="in" id="poL" value="${esc(a.user || "")}" placeholder="Название (клиент, контейнер…)"><button class="btn" id="poLs">Сохранить</button></div>
+    <label class="tgl" style="margin-top:8px"><input type="checkbox" id="poA" ${a.active ? "checked" : ""}> обновлять и показывать в таблице</label>
+    <div class="hint" style="margin-top:6px">${a.url ? `Ссылка: <span class="num">${esc(a.url.replace(/access_key=([^&]{4})[^&]*/, "access_key=$1…"))}</span><br>` : ""}${a.created_at ? "Добавлена " + tfmt(a.created_at) + ". " : ""}Kirka читает пул раз в 10 минут и сама копит часы — так считаются точные сутки МСК и сравнение месяцев.</div>
+    <button class="btn ghost" id="poDel" style="margin-top:8px;color:var(--bad)">Убрать ссылку</button></div>`;
   $("#drX").onclick = () => ($("#drawer").hidden = true);
   $$("#drIn tr[data-card]").forEach((r) => r.onclick = () => openCard(+r.dataset.card));
+  $("#poLs").onclick = async () => { await api(`/pools/accounts/${id}`, { method: "PATCH", body: JSON.stringify({ label: $("#poL").value }) }); toast("Название сохранено"); go("pools", true); };
+  $("#poA").onchange = async (e) => { await api(`/pools/accounts/${id}`, { method: "PATCH", body: JSON.stringify({ active: e.target.checked }) }); toast(e.target.checked ? "Ссылка снова обновляется" : "Ссылка выключена — не обновляется и скрыта из таблицы"); go("pools", true); };
+  $("#poDel").onclick = async () => { if (!confirm("Убрать ссылку и её накопленную историю?")) return; await api(`/pools/accounts/${id}`, { method: "DELETE" }); $("#drawer").hidden = true; toast("Ссылка убрана"); go("pools", true); };
 }
 
 async function download(path) {
@@ -1110,7 +1150,7 @@ async function pageNotify() {
       <div class="sec"><h4>Утренняя сводка</h4><div class="crow"><span class="mut">Время (МСК)</span>${tsel("nDaily", p.daily_at)}</div></div>
       <div class="crow" style="margin-top:14px"><button class="btn pri" id="nSave">Сохранить</button><button class="btn" id="nTest" ${d.linked ? "" : "disabled"}>Прислать проверку</button><span class="hint" id="nMsg"></span></div>
     </div></div>
-    <div class="c5 ncol"><div class="w"><div class="wh">Что приходило в Telegram<span class="sp"></span><span class="faint" style="font-weight:400;text-transform:none;letter-spacing:0">${lg.items.length ? "последние " + lg.items.length : ""}</span></div><div class="wb nlog">${lg.items.length ? lg.items.map((x) => `<details class="nli"><summary><span class="num">${tfmt(x.ts)}</span><b>${esc({ digest: "Сводка", daily: "Утренняя сводка", test: "Проверка" }[x.action] || x.action)}</b><span class="mut">${esc((x.label || "").split("\n").slice(0, 2).join(" · ").slice(0, 110))}</span></summary><pre>${esc(x.text || x.label || "")}</pre></details>`).join("") : `<div class="hint">Пока ничего не отправлено. Сообщения появятся здесь, как только бот пришлёт первую сводку. Кнопка «Прислать проверку» — отправить пробное сейчас.</div>`}</div></div>
+    <div class="c5 ncol"><div class="w"><div class="wh">Что приходило в Telegram<span class="sp"></span><span class="faint" style="font-weight:400;text-transform:none;letter-spacing:0">${lg.items.length ? "последние " + lg.items.length : ""}</span></div><div class="wb nlog">${lg.items.length ? lg.items.map((x) => `<details class="nli"><summary><span class="num">${tfmt(x.ts)}</span><b>${esc({ digest: "Сводка", daily: "Утренняя сводка", test: "Проверка", power: "Вероятно питание" }[x.action] || x.action)}</b><span class="mut">${esc((x.label || "").split("\n").slice(0, 2).join(" · ").slice(0, 110))}</span></summary><pre>${esc(x.text || x.label || "")}</pre>${x.batch ? `<a href="#ev/${esc(x.batch)}" class="btn" data-evb="${esc(x.batch)}">Открыть эти асики</a>` : ""}</details>`).join("") : `<div class="hint">Пока ничего не отправлено. Сообщения появятся здесь, как только бот пришлёт первую сводку. Кнопка «Прислать проверку» — отправить пробное сейчас.</div>`}</div></div>
     <div class="w"><div class="wh">Как это работает</div><div class="wb"><div class="hint" style="font-size:12.5px;line-height:1.55">
       Бот не пересылает каждое событие CROFT — за сутки их тысячи. Раз в выбранный интервал он сравнивает состояние фермы с тем, о чём уже сообщил, и присылает одно сообщение: сколько асиков пропало и вернулось, какие ошибки появились, где больше всего (по контейнерам).<br><br>
       Ошибка или «нет связи» попадает в сообщение, только если держится дольше порога — короткое «мигание» не тревожит.<br><br>
@@ -1299,6 +1339,11 @@ async function fillNotifyStrip() {
 const ADM = { tg: null, src: "", sel: new Set(), draft: "", bdraft: "", notify: true, days: 30, file: null, bfile: null };
 const ADM_BLOB = {};
 const fsize = (n) => !n ? "" : n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + " КБ" : (n / 1048576).toFixed(1).replace(".", ",") + " МБ";
+function quoteBub(m) {
+  if (!m.quote) return "";
+  const ev = m.quote_link && (m.quote_link.match(/#ev\/([\w-]+)/) || [])[1];
+  return `<div class="bq"><div class="bqh">↪ в ответ на ${m.quote_bot ? "сообщение бота" : "своё сообщение"}${ev ? ` · <a href="#ev/${esc(ev)}" data-ev="${esc(ev)}">открыть эти асики</a>` : ""}</div>${esc(m.quote).replace(/\n/g, "<br>")}</div>`;
+}
 function fileBub(m) {
   const f = m.file; if (!f) return "";
   if (f.type === "photo") return `<div class="bimg" data-fid="${m.id}"><span class="faint">фото загружается…</span></div>`;
@@ -1338,7 +1383,7 @@ async function pageAdmin() {
   const person = sel ? `
   <div class="grid" style="margin-top:12px">
     <div class="w c7"><div class="wh">Переписка: ${who(sel)}<span class="sp"></span><button class="btn ghost" id="admClose" style="height:24px">закрыть ✕</button></div><div class="wb">
-      <div class="chat" id="admChat">${th.items.length ? th.items.map((m) => `<div class="bub b${m.dir}${m.status === "failed" ? " fail" : ""}">${fileBub(m)}${m.text ? `<div>${esc(m.text)}</div>` : ""}<span>${m.dir === "in" ? "от человека" : m.broadcast ? "рассылка" : "вы"} · ${tfmt(m.ts)}${m.status === "failed" ? " · не доставлено" : ""}</span></div>`).join("") : '<div class="hint">Сообщений пока нет. Напишите первым — сообщение придёт человеку от бота, он сможет ответить кнопкой «Ответить» и прислать скриншот или файл.</div>'}</div>
+      <div class="chat" id="admChat">${th.items.length ? th.items.map((m) => `<div class="bub b${m.dir}${m.status === "failed" ? " fail" : ""}">${quoteBub(m)}${fileBub(m)}${m.text ? `<div>${esc(m.text)}</div>` : ""}<span>${m.dir === "in" ? "от человека" : m.broadcast ? "рассылка" : "вы"} · ${tfmt(m.ts)}${m.status === "failed" ? " · не доставлено" : ""}</span></div>`).join("") : '<div class="hint">Сообщений пока нет. Напишите первым — сообщение придёт человеку от бота, он сможет ответить кнопкой «Ответить» и прислать скриншот или файл.</div>'}</div>
       <div class="crow" style="margin-top:10px;align-items:flex-end"><textarea class="in" id="admMsg" rows="3" placeholder="Сообщение человеку от бота… Скриншот можно вставить сюда (Ctrl+V) или перетащить файл" style="flex:1;resize:vertical">${esc(ADM.draft)}</textarea><label class="btn" title="Прикрепить файл">📎<input type="file" id="admFile" hidden></label><button class="btn pri" id="admSend">Отправить</button></div>
       <div id="admAtt" style="margin-top:6px">${attachChip(ADM.file, "admFileX")}</div>
       <div class="hint" style="margin-top:6px">Файлы до 20 МБ: скриншоты, фото, PDF, видео. Ответить можно и прямо в Telegram: бот пересылает сообщения и файлы людей менеджерам — нажмите «Ответить» на пересланном, можно с фото.</div>
@@ -1427,6 +1472,7 @@ async function pageAdmin() {
       try { ADM_BLOB[id] = ADM_BLOB[id] || URL.createObjectURL(await apiBlob(`/admin/messages/${id}/file`)); el.innerHTML = `<img src="${ADM_BLOB[id]}" alt="фото">`; el.onclick = () => window.open(ADM_BLOB[id], "_blank"); ch.scrollTop = ch.scrollHeight; }
       catch (e) { el.innerHTML = '<span class="faint">фото недоступно — откройте в Telegram</span>'; }
     });
+    $$("[data-ev]").forEach((a) => a.onclick = (e) => { e.preventDefault(); go("ev", false, a.dataset.ev); });
     $$("[data-fdl]").forEach((a) => a.onclick = async (e) => {
       e.preventDefault(); const id = a.dataset.fdl;
       try { ADM_BLOB["d" + id] = ADM_BLOB["d" + id] || URL.createObjectURL(await apiBlob(`/admin/messages/${id}/file`)); const l = document.createElement("a"); l.href = ADM_BLOB["d" + id]; l.download = a.dataset.name; l.click(); }
@@ -1510,6 +1556,35 @@ async function pageConn() {
   };
 }
 PAGES.conn = pageConn;
+
+// ---------- Из уведомления: ровно те асики, о которых написал бот ----------
+const EVW = { offline: ["Нет связи", "var(--bad)"], online: ["Вернулся в работу", "var(--ok)"], error: ["Ошибка", "var(--warn)"], lowhash: ["Low hashrate", "var(--warn)"], pool: ["Смена воркера / пула", "var(--acc)"], power: ["Вероятно питание", "var(--bad)"] };
+async function pageEv() {
+  const tokn = S.arg; if (!tokn) return go("notify");
+  const b = await api("/farm/notify/batch/" + encodeURIComponent(tokn));
+  if (S.page !== "ev") return;
+  const at = b.at ? new Date(b.at * 1000) : null;
+  const what = {}; b.items.forEach((d) => { const k = d.ev.what; what[k] = (what[k] || 0) + 1; });
+  const tech = (d) => {
+    const e = d.ev, L = [`${d.container || "—"} · ${placeTxt(d, true)} · ${d.model || ""} · ${d.ip || d.serial || ""}`];
+    if (e.what === "pool") { if (e.w_new !== undefined) { L.push(`было: ${e.w_old || "—"}`); L.push(`стало: ${e.w_new || "—"}`); } if (e.p_new !== undefined) L.push(`пул: ${shortPool(e.p_old) || "—"} → ${shortPool(e.p_new) || "—"}`); }
+    else L.push((EVW[e.what] || [e.what])[0] + (e.new ? ": " + e.new : "") + (d.worker ? ` · воркер ${d.worker}` : ""));
+    return L.join("\n");
+  };
+  const evCell = (d) => { const e = d.ev; if (e.what === "pool") return `${e.w_new !== undefined ? `<div class="num">было <code class="cp" title="нажмите — скопировать">${esc(e.w_old || "—")}</code></div><div class="num">стало <code class="cp" title="нажмите — скопировать">${esc(e.w_new || "—")}</code></div>` : ""}${e.p_new !== undefined ? `<div class="faint num">пул ${esc(shortPool(e.p_old) || "—")} → ${esc(shortPool(e.p_new) || "—")}</div>` : ""}`; return `${e.new ? esc(e.new) + " · " : ""}<span class="num">${esc(d.worker || "—")}</span>`; };
+  $("#main").innerHTML = `
+   <div class="w"><div class="wh">Уведомление ${at ? "· " + tfmt(at.toISOString()) : ""}<span class="sp"></span>${Object.entries(what).map(([k, v]) => `<span class="pill" style="color:${(EVW[k] || [, "var(--mut)"])[1]}">${(EVW[k] || [k])[0]}: ${v}</span>`).join(" ")}</div>
+    <div class="wb"><pre class="evtxt">${esc(b.text || "")}</pre></div></div>
+   <div class="w" style="margin-top:10px"><div class="wh">Асики из этого сообщения · ${b.items.length}<span class="sp"></span><button class="btn" id="evCp">Скопировать для техника</button><button class="btn" id="evCpW">Скопировать новые воркеры</button></div>
+    <div class="scroll"><table class="tbl" id="tEv"><thead><tr><th>Что случилось</th><th>Контейнер</th><th>Место</th><th>Модель</th><th>IP</th><th>Воркер: было → стало</th><th>Сейчас</th></tr></thead><tbody>
+    ${b.items.map((d, i) => `<tr data-i="${i}" data-card="${d.id}"><td><span style="color:${(EVW[d.ev.what] || [, "var(--mut)"])[1]}">●</span> ${(EVW[d.ev.what] || [d.ev.what])[0]}</td><td>${esc(d.container || "—")}</td><td>${esc(placeTxt(d, true))}</td><td>${esc(d.model || "")}</td><td class="num">${esc(d.ip || "—")}</td><td>${evCell(d)}</td><td>${stPill(d.status)}${d.status === "working" && d.ths ? ` <span class="num faint">${nf(d.ths, 1)} TH/s</span>` : ""}</td></tr>`).join("") || '<tr><td colspan="7"><div class="empty">Этих асиков уже нет в CROFT</div></td></tr>'}
+    </tbody></table></div></div>`;
+  $("#evCp").onclick = () => navigator.clipboard.writeText(b.items.map(tech).join("\n\n")).then(() => toast(`Скопировано: ${b.items.length}`));
+  $("#evCpW").onclick = () => { const w = b.items.map((d) => d.ev.w_new || d.worker).filter(Boolean); navigator.clipboard.writeText(w.join("\n")).then(() => toast(`Скопировано воркеров: ${w.length}`)); };
+  $$("#tEv tr[data-card]").forEach((r) => r.onclick = (e) => { const c = e.target.closest("code.cp"); if (c) { e.stopPropagation(); navigator.clipboard.writeText(c.textContent).then(() => toast("Скопировано: " + c.textContent)); return; } openCard(+r.dataset.card); });
+}
+PAGES.ev = pageEv;
+TITLES.ev = "Из уведомления";
 
 // ---------- global search ----------
 (function () {

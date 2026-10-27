@@ -200,7 +200,51 @@ def snapshot(db: Session, prefs: dict, now_ts: float) -> dict:
 def _dev_label(d: fm.FarmDevice, conts: dict) -> str:
     place = conts.get(d.container_id) or "—"
     name = d.worker or d.ip or d.serial or f"#{d.id}"
-    return f"{place} · {d.model or '?'} · {name}"
+    return _h(f"{place} · {d.model or '?'} · {name}")
+
+
+def _h(x) -> str:
+    import html  # noqa: PLC0415
+    return html.escape(str(x or ""), quote=False)
+
+
+def _pool_short(u: str | None) -> str:
+    import re  # noqa: PLC0415
+    return re.sub(r"^[a-z+]+://", "", (u or "").strip()) or "—"
+
+
+def _pool_lines(db: Session, evs: list, conts: dict, maxl: int, items: list) -> list[str]:
+    """Смена воркера/пула по каждому асику: было → стало, в цитате, воркер копируется нажатием."""
+    by: dict[int, dict] = {}
+    for e in evs:
+        r = by.setdefault(e.device_id, {})
+        k = "w" if e.kind == "worker" else "p"
+        if k + "_old" not in r:
+            r[k + "_old"] = e.old
+        r[k + "_new"] = e.new
+    devs = {d.id: d for d in db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.id.in_(list(by))))}
+    nw = sum(1 for r in by.values() if "w_new" in r)
+    np_ = sum(1 for r in by.values() if "p_new" in r)
+    head = "🔄 <b>Смена " + ", ".join(x for x in (f"воркера: {nw}" if nw else "", f"пула: {np_}" if np_ else "") if x) + "</b>"
+    out = [head]
+    for i, (did, r) in enumerate(by.items()):
+        d = devs.get(did)
+        items.append({"id": did, "what": "pool", "w_old": r.get("w_old"), "w_new": r.get("w_new"),
+                      "p_old": r.get("p_old"), "p_new": r.get("p_new")})
+        if i >= maxl or d is None:
+            continue
+        place = conts.get(d.container_id) or "—"
+        q = []
+        if "w_new" in r:
+            q.append(f"было: <code>{_h(r.get('w_old') or '—')}</code>")
+            q.append(f"стало: <code>{_h(r.get('w_new') or '—')}</code>")
+        if "p_new" in r:
+            q.append(f"пул: {_h(_pool_short(r.get('p_old')))} → {_h(_pool_short(r.get('p_new')))}")
+        out.append(f"   • {_h(place)} · {_h(d.model or '?')} · {_h(d.ip or d.serial or '#' + str(d.id))}")
+        out.append("<blockquote>" + "\n".join(q) + "</blockquote>")
+    if len(by) > maxl:
+        out.append(f"   … и ещё {len(by) - maxl} — все на сайте по кнопке «Открыть эти асики»")
+    return out
 
 
 def _top_places(devs: list, conts: dict, n: int = 4) -> str:
@@ -211,8 +255,12 @@ def _top_places(devs: list, conts: dict, n: int = 4) -> str:
     return ", ".join(parts)
 
 
-def build_digest(db: Session, prefs: dict, st: dict, now_ts: float) -> tuple[str | None, dict, int]:
-    """Текст дайджеста (или None), новое состояние, число новых offline."""
+def build_digest(db: Session, prefs: dict, st: dict, now_ts: float, items: list | None = None) -> tuple[str | None, dict, int]:
+    """Текст дайджеста (или None), новое состояние, число новых offline.
+
+    items — сюда складываются асики этого сообщения (для ссылки «Открыть эти асики»).
+    """
+    items = items if items is not None else []
     snap = snapshot(db, prefs, now_ts)
     conts, _ = _places(db)
     t = prefs["types"]
@@ -252,20 +300,27 @@ def build_digest(db: Session, prefs: dict, st: dict, now_ts: float) -> tuple[str
             lines.append(f"   • {_dev_label(d, conts)}")
         if len(new_off) > maxl:
             lines.append(f"   … и ещё {len(new_off) - maxl}")
+        items += [{"id": d.id, "what": "offline"} for d in new_off]
     if t["online"] and back:
         lines.append(f"🟢 <b>Вернулись в работу: {len(back)}</b> ({_top_places(back, conts)})")
+        for d in back[:maxl]:
+            lines.append(f"   • {_dev_label(d, conts)}")
+        if len(back) > maxl:
+            lines.append(f"   … и ещё {len(back) - maxl}")
+        items += [{"id": d.id, "what": "online"} for d in back]
     if t["errors"] and new_al:
         by_cls = Counter(CLASSES.get(a.get("cls"), (a.get("cls"), 0))[0] for _, a in new_al)
         lines.append("⚠️ <b>Новые ошибки: " + str(len(new_al)) + "</b> — " + ", ".join(f"{k} {v}" for k, v in by_cls.most_common()))
         for d, a in new_al[:maxl]:
-            lines.append(f"   • {_dev_label(d, conts)} — {a.get('msg')}")
+            lines.append(f"   • {_dev_label(d, conts)} — {_h(a.get('msg'))}")
         if len(new_al) > maxl:
             lines.append(f"   … и ещё {len(new_al) - maxl}")
+        items += [{"id": d.id, "what": "error", "new": a.get("msg")} for d, a in new_al]
     if t["lowhash"] and new_low:
         lines.append(f"📉 <b>Low hashrate: +{len(new_low)}</b> ({_top_places([d for d, _ in new_low], conts)})")
+        items += [{"id": d.id, "what": "lowhash"} for d, _ in new_low]
     if t["pool"] and pool_ev:
-        kinds = Counter("пул" if e.kind == "pool" else "воркер" for e in pool_ev)
-        lines.append("🔄 <b>Смена " + ", ".join(f"{k}: {v}" for k, v in kinds.items()) + "</b>")
+        lines += _pool_lines(db, pool_ev, conts, maxl, items)
     if not lines:
         return None, new_state, len(new_off)
     head = f"🔔 <b>Kirka · ферма</b> · {now_msk:%H:%M}"
@@ -406,7 +461,7 @@ def daily_text(db: Session, now_ts: float) -> str:
     return "\n".join(lines)
 
 
-def send_telegram(chat_id: int, text: str, *, buttons: bool = True) -> bool:
+def send_telegram(chat_id: int, text: str, *, buttons: bool = True, link: str | None = None) -> bool:
     token = get_settings().bot_token
     if not token:
         log.warning("BOT_TOKEN не задан — уведомление не отправлено")
@@ -414,7 +469,7 @@ def send_telegram(chat_id: int, text: str, *, buttons: bool = True) -> bool:
     payload: dict = {"chat_id": chat_id, "text": text[:4000], "parse_mode": "HTML", "disable_web_page_preview": True}
     if buttons:
         payload["reply_markup"] = {"inline_keyboard": [[
-            {"text": "🌐 Открыть ферму", "url": "https://kirkalab.ru/#map"},
+            {"text": "🔎 Открыть эти асики" if link else "🌐 Открыть ферму", "url": link or "https://kirkalab.ru/#map"},
             {"text": "⚙️ Настроить", "callback_data": "notif:open"},
         ]]}
     try:
@@ -455,9 +510,11 @@ def tick(db: Session, now_ts: float | None = None, sender=send_telegram) -> int:
             if ptext and can:
                 if sleeping:
                     ptext += "\n\n<i>Сообщение пришло во время сна: пропал контейнер целиком.</i>"
-                if sender(tg, ptext):
+                pids = [{"id": i, "what": "power"} for i in dev_ids if i > 0]
+                ptok = save_batch(db, tg, "power", ptext, pids, now_ts) if pids else None
+                if _send(sender, tg, ptext, ptok):
                     sent += 1
-                    _log_sent(db, tg, "power", ptext)
+                    _log_sent(db, tg, "power", ptext, ptok)
                     # асики этих контейнеров уже «сообщены» — сводка не повторит их списком
                     add = {i for i in dev_ids if i > 0}
                     drop = {-i for i in dev_ids if i < 0}
@@ -470,7 +527,8 @@ def tick(db: Session, now_ts: float | None = None, sender=send_telegram) -> int:
         due = now_ts - float(st.get("last") or 0) >= prefs["every_min"] * 60
         if not due and "off" in st:
             continue
-        text, new_state, n_off = build_digest(db, prefs, st, now_ts)
+        items: list = []
+        text, new_state, n_off = build_digest(db, prefs, st, now_ts, items)
         if sleeping:
             wake = prefs["wake_offline"] and n_off >= prefs["wake_offline"] and prefs["types"]["offline"]
             if not wake:
@@ -478,11 +536,48 @@ def tick(db: Session, now_ts: float | None = None, sender=send_telegram) -> int:
                     _save_state(db, tg, new_state)
                 continue
             text = (text or "") + "\n\n<i>Сообщение пришло во время сна: массовое отключение.</i>"
-        if text and sender(tg, text):
-            sent += 1
-            _log_sent(db, tg, "digest", text)
+        if text:
+            token = save_batch(db, tg, "digest", text, items, now_ts) if items else None
+            if _send(sender, tg, text, token):
+                sent += 1
+                _log_sent(db, tg, "digest", text, token)
         _save_state(db, tg, new_state)
     return sent
+
+
+SITE = "https://kirkalab.ru/"
+
+
+def _send(sender, tg: int, text: str, token: str | None) -> bool:
+    import inspect  # noqa: PLC0415
+    link = f"{SITE}#ev/{token}" if token else None
+    try:
+        if "link" in inspect.signature(sender).parameters:
+            return bool(sender(tg, text, link=link))
+    except (TypeError, ValueError):
+        pass
+    return bool(sender(tg, text))
+
+
+def save_batch(db: Session, tg: int, kind: str, text: str, items: list, now_ts: float) -> str:
+    """Запоминает асики одного сообщения: по ссылке #ev/<token> сайт откроет ровно их."""
+    import re  # noqa: PLC0415
+    import secrets  # noqa: PLC0415
+
+    token = secrets.token_urlsafe(6)
+    plain = re.sub(r"<[^>]+>", "", text or "").strip()
+    db.add(fm.FarmSetting(key=f"nb:{token}", value={"tg": tg, "kind": kind, "at": now_ts, "text": plain[:3000], "items": items[:2000]}))
+    # старше 30 дней — чистим
+    for row in db.scalars(select(fm.FarmSetting).where(fm.FarmSetting.key.like("nb:%"))):
+        if isinstance(row.value, dict) and now_ts - float(row.value.get("at") or 0) > 30 * 86400:
+            db.delete(row)
+    db.commit()
+    return token
+
+
+def get_batch(db: Session, token: str) -> dict | None:
+    row = db.get(fm.FarmSetting, f"nb:{token}")
+    return dict(row.value) if row and isinstance(row.value, dict) else None
 
 
 def send_test(db: Session, tg: int) -> bool:
@@ -500,11 +595,14 @@ def send_test(db: Session, tg: int) -> bool:
     return ok
 
 
-def _log_sent(db: Session, tg: int, kind: str, text: str) -> None:
+def _log_sent(db: Session, tg: int, kind: str, text: str, token: str | None = None) -> None:
     """Пишем отправленное в журнал: лента «Что приходило» на сайте и админка."""
     import re  # noqa: PLC0415
 
     from app.services import activity as act  # noqa: PLC0415
 
     plain = re.sub(r"<[^>]+>", "", text or "").strip()
-    act.record(db, source="notify", action=kind, tg_id=tg, label=plain[:300], meta={"text": plain[:1500]})
+    meta = {"text": plain[:1500]}
+    if token:
+        meta["batch"] = token
+    act.record(db, source="notify", action=kind, tg_id=tg, label=plain[:300], meta=meta)
