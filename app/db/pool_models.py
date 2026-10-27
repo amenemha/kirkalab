@@ -35,6 +35,8 @@ class PoolAccount(Base):
     track: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     client_id: Mapped[int | None] = mapped_column(ForeignKey("farm_clients.id"))
+    # чья ссылка: None — общая (админ/импорт), иначе человек, который её добавил
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     # last snapshot (H/s)
     hs_10m: Mapped[float | None] = mapped_column(Float)
     hs_1h: Mapped[float | None] = mapped_column(Float)

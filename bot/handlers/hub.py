@@ -30,8 +30,9 @@ HELP_TEXT = (
     "⚠️ <b>Проблемы</b> — ошибки по классам и контейнеры, где больше всего офлайна.\n"
     "🌊 <b>Пулы</b> — хешрейт по пулам и монетам за сутки.\n"
     "🧮 <b>Расчёт</b> — доходность и окупаемость асика.\n"
+    "🔌 <b>Подключения</b> — свой CROFT и ссылки наблюдателя пулов (ссылку можно просто прислать в чат).\n"
     "🌐 <b>Открыть Kirka</b> — сайт с картой контейнеров, стеллажами и полками.\n\n"
-    "Команды: /menu, /ferma, /problems, /pools, /site, /help"
+    "Команды: /menu, /ferma, /problems, /pools, /connect, /site, /help"
 )
 
 
@@ -140,8 +141,8 @@ def hub_kb(url: str) -> InlineKeyboardMarkup:
         [btn("🌊 Пулы", "pools:refresh"), btn("🔔 Уведомления", "notif:open")],
         [btn("🧮 Расчёт", "menu:calculator"), btn("📋 Каталог ASIC", "menu:catalog")],
         [btn("📊 Мои отчёты", "menu:reports"), btn("👤 Профиль", "menu:profile")],
-        [btn("✉️ Написать менеджеру", "sup:write"), btn("❓ Помощь", "hub:help")],
-        [btn("🌐 Открыть Kirka", url=url, style="success")],
+        [btn("🔌 Подключения", "conn:open"), btn("✉️ Написать менеджеру", "sup:write")],
+        [btn("🌐 Открыть Kirka", url=url, style="success"), btn("❓ Помощь", "hub:help")],
     ])
 
 
@@ -183,8 +184,19 @@ async def show_hub(message: Message, state: FSMContext, uid: int) -> None:
 async def show_farm(message: Message, state: FSMContext, uid: int) -> None:
     data = await farm_load(message.bot.kirkalab_client, uid)
     if data is None:
-        await edit_live_screen(message, state, "🏭 Ферма пока доступна только администраторам.",
-                               reply_markup=InlineKeyboardMarkup(inline_keyboard=[[btn("☰ Меню", "hub:menu")]]))
+        from bot.handlers.conn import call, croft_line  # noqa: PLC0415
+        d = await call(message.bot, {"action": "list", "tg_id": uid}) or {}
+        crofts = d.get("croft") or []
+        if crofts:
+            text = "🏭 <b>Ваша ферма</b>\n\n" + "\n".join(croft_line(c) for c in crofts)
+            for c in crofts:
+                for s in ((c.get("stats") or {}).get("sites") or [])[:8]:
+                    text += f"\n• {s['name']} — {s['devices']} асиков, в работе {s['working']}"
+        else:
+            text = ("🏭 <b>Ферма</b>\n\nПодключите свой CROFT — я покажу асики, площадки и хешрейт. "
+                    "Нужны логин и пароль CROFT, доступ только на чтение.")
+        await edit_live_screen(message, state, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [btn("🔌 Подключения", "conn:open")], [btn("☰ Меню", "hub:menu")]]))
         return
     await edit_live_screen(message, state, farm_text(data),
                            reply_markup=farm_kb(await site_link(message.bot, uid, "map")))

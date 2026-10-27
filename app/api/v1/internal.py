@@ -883,3 +883,44 @@ def internal_support_reply(
     by = db.scalar(select(models.User.id).where(models.User.telegram_user_id == mgr))
     r = sup.send_out(db, [src.tg_id], text, by_user_id=by, file=file)
     return {"ok": bool(r["sent"]), "to": src.tg_id}
+
+
+def _conn_user(db: Session, tg: int) -> models.User:
+    u = db.scalar(select(models.User).where(models.User.telegram_user_id == tg))
+    if not u:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Нажмите /start")
+    return u
+
+
+@router.post("/connections")
+def internal_connections(
+    body: dict,
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    db: Session = Depends(get_db),
+):
+    """Бот: подключения человека. action: list | croft | pool | recognize."""
+    _require_bot_secret(x_bot_secret)
+    from app.services import connections as cn
+
+    act = str(body.get("action") or "list")
+    if act == "recognize":
+        r = cn.recognize(str(body.get("text") or ""))
+        return {"pool": r}
+    u = _conn_user(db, int(body.get("tg_id") or 0))
+    try:
+        if act == "croft":
+            a = cn.croft_connect(db, u, str(body.get("login") or ""), str(body.get("password") or ""))
+            cn.notify_managers(db, u, f"подключил CROFT ({a.login}) — {cn.croft_text(a.stats or {})}")
+            return {"ok": True, "croft": cn.croft_view(a), "text": cn.croft_text(a.stats or {})}
+        if act == "pool":
+            if not cn.recognize(str(body.get("text") or "")):
+                return {"ok": False, "unknown": True, "error": "Не узнала ссылку пула"}
+            r = cn.pool_connect(db, u, str(body.get("text") or ""))
+            if not r.get("already"):
+                cn.notify_managers(db, u, f"добавил ссылку наблюдателя {r['name']}" + (f" {r['coin']}" if r.get("coin") else ""))
+            return {"ok": True, **r}
+    except cn.ConnError as e:
+        return {"ok": False, "error": e.text}
+    out = cn.of_user(db, u)
+    out["is_admin"] = u.is_admin
+    return out
