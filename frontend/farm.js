@@ -28,7 +28,7 @@ async function api(path, opts = {}, retry) {
     if (rr.ok) { tok.set(await rr.json()); return api(path, opts, true); }
   }
   if (r.status === 401 || r.status === 403) { const e = new Error("auth"); e.status = r.status; throw e; }
-  if (!r.ok) throw new Error("HTTP " + r.status);
+  if (!r.ok) { let m = "HTTP " + r.status; try { const j = await r.json(); if (typeof j.detail === "string") m = j.detail; } catch (e) { /* ignore */ } throw new Error(m); }
   return r.json();
 }
 async function apiBlob(path) {
@@ -153,15 +153,17 @@ function placeTxt(d, short) {
 
 // ---------- routing ----------
 const PAGES = { today: pageToday, map: pageMap, cont: pageCont, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools, calc: pageCalc, notify: pageNotify, energy: pageEnergy, admin: pageAdmin };
-const TITLES = { today: "Обзор фермы", map: "Контейнеры", cont: "Контейнер", asics: "Асики", errors: "Проблемы", clients: "Клиенты хостинга", pools: "Пулы", calc: "Калькулятор доходности", notify: "Уведомления", energy: "Энергетика", admin: "Админка" };
+const TITLES = { today: "Обзор фермы", map: "Контейнеры", cont: "Контейнер", asics: "Асики", errors: "Проблемы", clients: "Клиенты хостинга", pools: "Пулы", calc: "Калькулятор доходности", notify: "Уведомления", energy: "Энергетика", admin: "Админка", conn: "Подключения" };
 const NAVOF = { cont: "map" };
+const OPEN = new Set(["conn", "calc"]);  // страницы, доступные без прав администратора
 async function go(p, keep, arg) {
   if (!PAGES[p]) p = "today";
+  if (S.admin === false && !OPEN.has(p)) p = "conn";
   S.page = p; S.arg = arg != null ? String(arg) : null;
   if (!keep) { $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; S.sel.clear(); updSel(); }
   $$(".tab[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === (NAVOF[p] || p)));
   $("#pageTitle").textContent = TITLES[p];
-  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify" || p === "energy" || p === "admin";
+  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify" || p === "energy" || p === "admin" || p === "conn";
   $("#pageAside").innerHTML = "";
   // Каждый переход — шаг в истории браузера: «Назад» (кнопка или браузерная) возвращает на прошлую страницу с её фильтрами.
   const h = "#" + p + (S.arg ? "/" + S.arg : ""), depth = (history.state && history.state.d) || 0;
@@ -1306,6 +1308,15 @@ function fileBub(m) {
 const attachChip = (f, id) => f ? `<span class="chip attch">📎 ${esc(f.name)} <span class="faint">${fsize(f.size)}</span> <a href="#" id="${id}" title="убрать">✕</a></span>` : "";
 const SRC = { bot: ["Бот", "#2F7FD0"], site: ["Сайт", "#3FA96B"], notify: ["Бот → человеку", "#D97A1E"] };
 const ACC_KIND = { gift: "подарок", trial: "пробный", paid: "оплачен", manual: "вручную" };
+function connCell(c, full) {
+  c = c || { croft: [], pools: {} };
+  const parts = [];
+  if (c.server) parts.push(`<span class="pill ok" title="CROFT подключён на сервере — общая ферма">CROFT · сервер</span>`);
+  for (const x of c.croft || []) parts.push(`<span class="pill ${x.status === "ok" ? "ok" : "bad"}" title="${esc(x.error || "проверено " + (x.checked_at ? tfmt(x.checked_at) : "—"))}">CROFT ${esc(x.login)}${x.devices != null ? " · " + nf(x.devices) : ""}</span>`);
+  for (const [k, v] of Object.entries(c.pools || {})) parts.push(`<span class="pill">${esc(k)}${v > 1 ? " ×" + v : ""}</span>`);
+  if (!parts.length) return full ? '<div class="hint">Ничего не подключено: ни CROFT, ни ссылок наблюдателя. Человек подключает их сам — в боте «🔌 Подключения» или на сайте во вкладке «Подключения»; ссылку пула достаточно прислать боту в чат.</div>' : '<span class="faint">ничего</span>';
+  return `<span class="cnchips">${parts.join(" ")}</span>`;
+}
 function accChip(a) {
   if (!a || a.state === "none") return '<span class="faint">нет аккаунта</span>';
   if (a.state !== "pro") return '<span class="chip acc free">FREE</span>';
@@ -1346,6 +1357,7 @@ async function pageAdmin() {
       ${sel.access.trial_used ? '<div class="hint">Пробный период у человека уже был.</div>' : ""}
       ${sel.access.history.length ? `<div class="sec"><h4>История</h4>${sel.access.history.map((h) => `<div class="r2"><span>${esc(ACC_KIND[h.kind] || h.kind)}</span><span class="mut">${tfmt(h.from)} → ${tfmt(h.to)}</span><span class="${h.status === "active" ? "ok" : "faint"}">${{ active: "действует", expired: "истёк", revoked: "закрыт", refunded: "возврат" }[h.status] || h.status}</span></div>`).join("")}</div>` : ""}`
       : '<div class="hint">У человека ещё нет аккаунта — он появится после первого /start или расчёта в боте.</div>'}
+      <div class="sec"><h4>Подключения</h4>${connCell(sel.conn, true)}</div>
       <div class="sec"><h4>Сообщения людей</h4><label class="tgl"><input type="checkbox" id="admMgr" ${sel.manager ? "checked" : ""}> ${esc(nm(sel))} получает сообщения «Написать менеджеру»</label></div>
     </div></div>
   </div>` : "";
@@ -1360,12 +1372,12 @@ async function pageAdmin() {
     ${nsel ? `<span class="mut" style="text-transform:none;letter-spacing:0;font-weight:400">выбрано ${nsel}</span><button class="btn" id="admSelNone" style="height:26px">снять</button>` : ""}
     <button class="btn" id="admSelAll" style="height:26px">выбрать всех</button></div>
     ${nsel ? `<div class="bcast"><textarea class="in" id="admB" rows="2" placeholder="Сообщение выбранным (${nsel}) — придёт от бота каждому лично… Можно приложить файл">${esc(ADM.bdraft)}</textarea><label class="btn" title="Прикрепить файл">📎<input type="file" id="admBFile" hidden></label><button class="btn pri" id="admBSend">Отправить ${nsel}</button></div>${ADM.bfile ? `<div style="padding:0 12px 8px">${attachChip(ADM.bfile, "admBFileX")}</div>` : ""}` : ""}
-    <div class="scroll"><table class="tbl adm"><thead><tr><th style="width:28px"></th><th>Кто</th><th>Доступ</th><th>Сообщения</th><th>Впервые</th><th>Последний раз</th><th class="r">Бот</th><th class="r">Сайт</th><th class="r">Расчёты</th><th>Ферма</th></tr></thead><tbody>
+    <div class="scroll"><table class="tbl adm"><thead><tr><th style="width:28px"></th><th>Кто</th><th>Доступ</th><th>Сообщения</th><th>Впервые</th><th>Последний раз</th><th class="r">Бот</th><th class="r">Сайт</th><th class="r">Расчёты</th><th>Подключено</th><th>Ферма</th></tr></thead><tbody>
     ${u.users.map((r) => `<tr class="click${String(r.tg_id) === String(ADM.tg) ? " on" : ""}" data-tg="${r.tg_id}"><td><input type="checkbox" class="admck" data-ck="${r.tg_id}" ${ADM.sel.has(String(r.tg_id)) ? "checked" : ""}></td><td>${who(r)}<div class="faint num" style="font-size:11px">${r.tg_id}</div></td>
       <td>${accChip(r.access)}</td>
       <td class="admmsg">${r.unread ? `<b class="badge">${r.unread}</b> ` : ""}${r.last_msg ? `<span class="${r.last_msg.dir === "in" ? "" : "mut"}">${r.last_msg.dir === "in" ? "" : "вы: "}${esc(r.last_msg.text.slice(0, 50))}</span>` : '<span class="faint">—</span>'}</td>
       <td class="num">${tfmt(r.first_seen)}</td><td class="num">${ago(r.last_seen)}</td>
-      <td class="r num">${nf(r.bot_actions)}</td><td class="r num">${nf(r.site_views)}${r.site_logins ? `<span class="faint"> · ${r.site_logins} вх.</span>` : ""}</td><td class="r num">${nf(r.calcs)}</td>
+      <td class="r num">${nf(r.bot_actions)}</td><td class="r num">${nf(r.site_views)}${r.site_logins ? `<span class="faint"> · ${r.site_logins} вх.</span>` : ""}</td><td class="r num">${nf(r.calcs)}</td><td>${connCell(r.conn)}</td>
       <td>${r.saw_farm ? '<span class="ok">смотрел</span>' : '<span class="faint">нет</span>'}</td></tr>`).join("")}
     </tbody></table></div><div class="hint" style="margin-top:6px">Клик по строке — переписка, доступ и все действия человека. Галочки — выбрать для рассылки.</div></div>
   ${person}
@@ -1439,6 +1451,66 @@ async function pageAdmin() {
   }
 }
 
+// ---------- Подключения: свой CROFT и ссылки наблюдателя ----------
+const CN = { busy: false };
+async function pageConn() {
+  const d = await api("/me/connections");
+  const srv = d.server || {};
+  const n = (x) => Number(x || 0).toLocaleString("ru-RU");
+  const st = (c) => c.status === "ok" ? `<span class="pill ok">на связи</span>` : `<span class="pill bad">нет доступа</span>`;
+  const croftRow = (c) => { const s = c.stats || {}; return `<div class="cnrow"><div class="cnh">${st(c)} <b>CROFT · ${esc(c.login)}</b><span class="sp"></span><span class="faint">проверено ${c.checked_at ? tfmt(c.checked_at) : "—"}</span>
+      <button class="btn sm" data-cc="${c.id}">Проверить</button><button class="btn sm ghost" data-cd="${c.id}">Отключить</button></div>
+      ${c.status === "ok" ? `<div class="cnk"><div><b class="num">${n(s.devices)}</b><span>асиков</span></div><div><b class="num">${n(s.working)}</b><span>в работе</span></div><div><b class="num">${n(s.offline)}</b><span>не на связи</span></div><div><b class="num">${s.hashrate_ths ? n(Math.round(s.hashrate_ths)) : "—"}</b><span>TH/s</span></div></div>
+      ${(s.sites || []).length ? `<table class="tbl cnt"><thead><tr><th>Площадка</th><th class="r">Контейнеров</th><th class="r">Асиков</th><th class="r">В работе</th><th class="r">Не на связи</th></tr></thead><tbody>${s.sites.map((x) => `<tr><td>${esc(x.name)}</td><td class="r num">${n(x.containers)}</td><td class="r num">${n(x.devices)}</td><td class="r num">${n(x.working)}</td><td class="r num">${n(x.offline)}</td></tr>`).join("")}</tbody></table>` : ""}`
+      : `<div class="okbox bad">${esc(c.error || "CROFT не пускает")}. Подключите заново с верным паролем.</div>`}</div>`; };
+  const poolRow = (p) => `<tr><td><b>${esc(p.name)}</b>${p.coin ? ` <span class="faint">${esc(p.coin)}</span>` : ""}${p.account ? `<br><span class="faint">${esc(p.account)}</span>` : ""}</td>
+      <td>${p.live ? (p.hs_1h != null ? `<span class="pill ok">читается</span>` : `<span class="pill">ждёт обновления</span>`) : `<span class="pill">принята · чтение скоро</span>`}</td>
+      <td class="r num">${p.hs_1h != null ? (p.hs_1h / 1e12).toFixed(1) + " TH/s" : "—"}</td><td class="r num">${p.workers_active != null ? n(p.workers_active) + (p.workers_inactive ? " / " + n(p.workers_inactive) + " off" : "") : "—"}</td>
+      <td class="r"><button class="btn sm ghost" data-pd="${p.id}">Убрать</button></td></tr>`;
+  $("#main").innerHTML = `<div class="grid">
+    <div class="w c7"><div class="wh">Подключения<span class="sp"></span><span class="faint" style="font-weight:400;text-transform:none;letter-spacing:0">только чтение — Kirka ничего не меняет</span></div><div class="wb">
+      ${srv.croft ? `<div class="cnrow srv"><div class="cnh"><span class="pill ok">на связи</span> <b>Общая ферма · CROFT ${esc(srv.croft.login)}</b><span class="sp"></span><span class="faint">подключена на сервере</span></div>
+        <div class="hint">Это ферма, которую вы видите в «Обзоре», «Контейнерах» и «Асиках»: ${n(srv.croft.devices)} асиков, ${n(srv.croft.sites)} площадок. Общих ссылок пулов: ${n(srv.pools)}. Как администратор вы видите её всегда, отдельно подключать не нужно.</div></div>` : ""}
+      ${(d.croft || []).map(croftRow).join("") || `<div class="cnrow"><div class="cnh"><b>Свой CROFT</b> <span class="faint">не подключён</span></div><div class="hint">Введите логин и пароль, которыми входите в CROFT. Kirka сразу проверит вход и покажет, что видит: асики, площадки, хешрейт.</div></div>`}
+      <div class="sec"><h4>${(d.croft || []).length ? "Подключить ещё CROFT" : "Подключить CROFT"}</h4><div class="crow">
+        <input class="in" id="cnL" placeholder="Логин CROFT" autocomplete="off" style="max-width:200px">
+        <input class="in" id="cnP" type="password" placeholder="Пароль" autocomplete="new-password" style="max-width:200px">
+        <button class="btn pri" id="cnGo">Подключить</button><span class="hint" id="cnMsg"></span></div></div>
+    </div></div>
+    <div class="w c5"><div class="wh">Ссылки наблюдателя пулов</div><div class="wb">
+      <div class="crow"><input class="in" id="plU" placeholder="https://… ссылка Observer / Watcher" autocomplete="off"><button class="btn pri" id="plGo">Добавить</button></div>
+      <div class="hint" id="plMsg" style="margin-top:6px">ViaBTC читается сразу. Antpool, F2Pool, EMCD, NiceHash и другие — ссылка сохраняется, чтение добавлю следующим шагом. Ссылку можно и просто прислать боту в чат.</div>
+      ${(d.pools || []).length ? `<table class="tbl" style="margin-top:10px"><thead><tr><th>Пул</th><th>Состояние</th><th class="r">Хешрейт 1ч</th><th class="r">Воркеры</th><th></th></tr></thead><tbody>${d.pools.map(poolRow).join("")}</tbody></table>` : `<div class="faint" style="margin-top:10px">Своих ссылок пока нет.</div>`}
+    </div></div></div>`;
+  const msg = (id, t, bad) => { const m = $(id); m.textContent = t; m.classList.toggle("err", !!bad); };
+  $("#cnGo").onclick = async () => {
+    const login = $("#cnL").value.trim(), password = $("#cnP").value;
+    if (!login || !password) return msg("#cnMsg", "Нужны логин и пароль", true);
+    $("#cnGo").disabled = true; msg("#cnMsg", "Проверяю вход в CROFT…");
+    try { const r = await api("/me/connections/croft", { method: "POST", body: JSON.stringify({ login, password }) }); msg("#cnMsg", `Подключено: ${n(r.stats.devices)} асиков`); setTimeout(() => go("conn", true), 600); }
+    catch (e) { msg("#cnMsg", e.message, true); $("#cnGo").disabled = false; }
+  };
+  $("#cnP").onkeydown = (e) => { if (e.key === "Enter") $("#cnGo").click(); };
+  $("#plGo").onclick = async () => {
+    const url = $("#plU").value.trim(); if (!url) return msg("#plMsg", "Вставьте ссылку наблюдателя", true);
+    $("#plGo").disabled = true; msg("#plMsg", "Проверяю ссылку…");
+    try { const r = await api("/me/connections/pool", { method: "POST", body: JSON.stringify({ url }) }); msg("#plMsg", r.already ? "Эта ссылка уже подключена" : r.found ? `${r.name}: ссылка читается` : `${r.name}: ссылка принята`); setTimeout(() => go("conn", true), 700); }
+    catch (e) { msg("#plMsg", e.message, true); $("#plGo").disabled = false; }
+  };
+  $("#plU").onkeydown = (e) => { if (e.key === "Enter") $("#plGo").click(); };
+  $("#main").onclick = async (e) => {
+    const b = e.target.closest("[data-cc],[data-cd],[data-pd]"); if (!b) return;
+    b.disabled = true;
+    try {
+      if (b.dataset.cc) await api(`/me/connections/croft/${b.dataset.cc}/check`, { method: "POST" });
+      if (b.dataset.cd && confirm("Отключить этот CROFT? Логин и пароль будут удалены из Kirka.")) await api(`/me/connections/croft/${b.dataset.cd}`, { method: "DELETE" });
+      if (b.dataset.pd && confirm("Убрать эту ссылку наблюдателя?")) await api(`/me/connections/pool/${b.dataset.pd}`, { method: "DELETE" });
+    } catch (er) { alert(er.message); }
+    go("conn", true);
+  };
+}
+PAGES.conn = pageConn;
+
 // ---------- global search ----------
 (function () {
   const inp = $("#gq"), box = $("#gqRes"); let items = [], hi = 0;
@@ -1485,10 +1557,10 @@ async function boot() {
   }
   if (!tok.get()) return showLogin();
   $("#login").hidden = true; $("#app").hidden = false;
-  try { const me = await api("/auth/me"); $("#av").textContent = ((me.full_name || me.email || "K")[0] || "K").toUpperCase(); const at = $("#admTab"); if (at) at.hidden = !me.is_admin; } catch (e) { if (e.message === "auth") return showLogin(); }
+  try { const me = await api("/auth/me"); $("#av").textContent = ((me.full_name || me.email || "K")[0] || "K").toUpperCase(); S.admin = !!me.is_admin; $$("[data-adm]").forEach((n) => { n.hidden = !me.is_admin; }); } catch (e) { if (e.message === "auth") return showLogin(); }
   const [p, a] = (location.hash || "#today").slice(1).split("/");
-  await go(PAGES[p] ? p : "today", false, a);
+  await go(PAGES[p] ? p : (S.admin === false ? "conn" : "today"), false, a);
   clearInterval(tick);
-  tick = setInterval(() => { if (S.page === "calc" || S.page === "notify" || (S.page === "energy" && EN.sub !== "scheme") || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select,textarea") || (S.page === "admin" && (ADM.draft || ADM.bdraft || ADM.file || ADM.bfile)) || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
+  tick = setInterval(() => { if (S.page === "calc" || S.page === "conn" || S.page === "notify" || (S.page === "energy" && EN.sub !== "scheme") || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select,textarea") || (S.page === "admin" && (ADM.draft || ADM.bdraft || ADM.file || ADM.bfile)) || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
 }
 boot();
