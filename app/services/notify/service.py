@@ -8,6 +8,8 @@
 * «Ошибки»      — активная ошибка уровня ≥ ``min_level`` держится ≥ ``hold_min``;
 * «Low hashrate»— то же для класса hashrate;
 * «Пул/воркер»  — события смены пула или воркера с прошлого дайджеста;
+* «Вероятно, питание» — контейнер пропал целиком и разом (≥90% асиков за ~15 мин):
+  приходит сразу, не дожидаясь сводки; если пропал весь КТП или фидер — так и пишем;
 * утренняя сводка в ``daily_at`` (МСК).
 
 Сон (тихие часы): ничего не шлём, изменения копятся и приходят одним
@@ -35,6 +37,7 @@ log = logging.getLogger("kirka.notify")
 MSK = timezone(timedelta(hours=3))
 
 TYPES = {
+    "power": "Вероятно, питание (контейнер пропал целиком)",
     "offline": "Нет связи",
     "online": "Вернулись в работу",
     "errors": "Новые ошибки",
@@ -44,7 +47,7 @@ TYPES = {
 }
 DEFAULTS: dict = {
     "enabled": True,
-    "types": {"offline": True, "online": True, "errors": True, "lowhash": True, "pool": False, "daily": True},
+    "types": {"power": True, "offline": True, "online": True, "errors": True, "lowhash": True, "pool": False, "daily": True},
     "min_level": 2,  # 0 info, 1 warning, 2 danger, 3 critical
     "hold_min": 10,
     "every_min": 15,
@@ -223,6 +226,7 @@ def build_digest(db: Session, prefs: dict, st: dict, now_ts: float) -> tuple[str
     new_off = [snap["off"][i] for i in sorted(cur_off - rep_off)]
     back_ids = rep_off - cur_off
     back = [d for d in db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.id.in_(back_ids)))] if back_ids else []
+    still = {d.id for d in back if d.status == "offline"}  # сообщены, ещё без связи (меньше hold) — держим
     back = [d for d in back if d.status != "offline"]
     new_al = [snap["al"][k] for k in sorted(cur_al - rep_al)]
     new_low = [snap["low"][k] for k in sorted(cur_low - rep_low)]
@@ -232,8 +236,10 @@ def build_digest(db: Session, prefs: dict, st: dict, now_ts: float) -> tuple[str
     for e in db.scalars(q.limit(500)):
         pool_ev.append(e)
     last_ev = db.scalar(select(fm.FarmDeviceEvent.id).order_by(fm.FarmDeviceEvent.id.desc()).limit(1)) or cursor
-    new_state = {"off": sorted(cur_off), "al": sorted(cur_al), "low": sorted(cur_low), "ev": int(last_ev),
+    new_state = {"off": sorted(cur_off | still), "al": sorted(cur_al), "low": sorted(cur_low), "ev": int(last_ev),
                  "last": now_ts, "daily": st.get("daily")}
+    if "pwr" in st:
+        new_state["pwr"] = st["pwr"]
     if first:
         return None, new_state, 0
     # Вернулись — убираем из «сообщённых», даже если тип выключен.
@@ -264,6 +270,120 @@ def build_digest(db: Session, prefs: dict, st: dict, now_ts: float) -> tuple[str
         return None, new_state, len(new_off)
     head = f"🔔 <b>Kirka · ферма</b> · {now_msk:%H:%M}"
     return "\n".join([head, ""] + lines), new_state, len(new_off)
+
+
+# ---------- «Вероятно, питание» ----------
+POWER_SHARE = 0.9    # доля асиков контейнера без связи
+POWER_BURST = 0.8    # доля, пропавшая в одном окне — «разом», а не постепенно
+POWER_WINDOW = 15 * 60
+POWER_HOLD = 3 * 60  # держится хотя бы 3 минуты — не мигание
+POWER_MIN = 5        # маленькие группы не считаем
+POWER_BACK = 0.5     # вернулось больше половины — «питание вернулось»
+
+
+def grid_of(name: str) -> tuple[str | None, list[str]]:
+    """Фидер и КТП из названия контейнера: «11к 21 Ф24 (КТП 7) …» → ("Ф24", ["7"])."""
+    import re  # noqa: PLC0415
+
+    f = re.search(r"Ф\s*(\d+)", name or "")
+    ktp: list[str] = []
+    for m in re.finditer(r"КТП\s*([\d,\s]+)", name or ""):
+        ktp += [x for x in re.split(r"[,\s]+", m.group(1)) if x]
+    return (f"Ф{f.group(1)}" if f else None), list(dict.fromkeys(ktp))
+
+
+def _short(name: str) -> str:
+    return (name or "").split(" ")[0] or name
+
+
+def power_scan(db: Session, now_ts: float) -> dict[int, dict]:
+    """Контейнеры, которые сейчас выглядят обесточенными (или потеряли связь целиком)."""
+    by: dict[int, list] = {}
+    for d in db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.in_operation.is_(True), fm.FarmDevice.container_id.is_not(None))):
+        by.setdefault(d.container_id, []).append(d)
+    conts = {c.id: c.name for c in db.scalars(select(fm.FarmContainer))}
+    out = {}
+    for cid, devs in by.items():
+        total = len(devs)
+        if total < POWER_MIN:
+            continue
+        since = sorted((d.status_since.timestamp() if d.status_since else now_ts) for d in devs if d.status == "offline")
+        if len(since) < POWER_SHARE * total or now_ts - since[-1] < POWER_HOLD and now_ts - since[0] < POWER_HOLD:
+            continue
+        last = since[-1]
+        burst = sum(1 for t in since if last - t <= POWER_WINDOW)
+        name = conts.get(cid) or f"#{cid}"
+        feeder, ktp = grid_of(name)
+        out[cid] = {"name": name, "total": total, "off": len(since), "at": last, "burst": burst >= POWER_BURST * total,
+                    "feeder": feeder, "ktp": ktp}
+    return out
+
+
+def _all_containers_grid(db: Session) -> dict[int, tuple[str | None, list[str]]]:
+    ids = {cid for (cid,) in db.execute(select(fm.FarmDevice.container_id).where(fm.FarmDevice.in_operation.is_(True)).distinct()) if cid}
+    return {c.id: grid_of(c.name) for c in db.scalars(select(fm.FarmContainer).where(fm.FarmContainer.id.in_(ids)))} if ids else {}
+
+
+def power_check(db: Session, st: dict, now_ts: float) -> tuple[str | None, dict, list[int]]:
+    """Новые «обесточенные» контейнеры и вернувшиеся. Возвращает (текст, новое состояние pwr, id асиков)."""
+    scan = power_scan(db, now_ts)
+    rep = {int(k): v for k, v in (st.get("pwr") or {}).items()}
+    first = "pwr" not in st
+    new = {cid: v for cid, v in scan.items() if cid not in rep and v["burst"]}
+    # вернулись: о контейнере писали, а без связи теперь меньше половины
+    back = {}
+    if rep:
+        cur = {}
+        for d in db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.in_operation.is_(True), fm.FarmDevice.container_id.in_(list(rep)))):
+            c = cur.setdefault(d.container_id, [0, 0])
+            c[0] += 1
+            c[1] += d.status == "offline"
+        for cid, info in rep.items():
+            t, off = cur.get(cid, [0, 0])
+            if not t or off < POWER_BACK * t:
+                back[cid] = {"name": info.get("name") or f"#{cid}", "total": t, "on": t - off}
+    keep = {cid: v for cid, v in rep.items() if cid not in back}
+    keep.update({cid: {"name": v["name"], "at": v["at"]} for cid, v in (scan if first else new).items()})
+    if first or (not new and not back):
+        return None, {str(k): v for k, v in keep.items()}, []
+    now_msk = datetime.fromtimestamp(now_ts, MSK)
+    lines = [f"⚡ <b>Kirka · вероятно, питание</b> · {now_msk:%H:%M}", ""] if new else [f"⚡ <b>Kirka · питание</b> · {now_msk:%H:%M}", ""]
+    dev_ids: list[int] = []
+    if new:
+        for cid, v in sorted(new.items(), key=lambda x: x[1]["name"]):
+            grid = ", ".join(x for x in [v["feeder"], ("КТП " + ",".join(v["ktp"])) if v["ktp"] else None] if x)
+            at = datetime.fromtimestamp(v["at"], MSK)
+            lines.append(f"🔴 {_short(v['name'])}{f' ({grid})' if grid else ''}: пропали разом {v['off']} из {v['total']} в {at:%H:%M}")
+        dev_ids = [d for (d,) in db.execute(select(fm.FarmDevice.id).where(fm.FarmDevice.container_id.in_(list(new)), fm.FarmDevice.status == "offline"))]
+        # весь КТП / весь фидер
+        grids = _all_containers_grid(db)
+        down = set(keep)
+        ktp_all: dict[str, set] = {}
+        fdr_all: dict[str, set] = {}
+        for cid, (f, ks) in grids.items():
+            if len(ks) == 1:
+                ktp_all.setdefault(ks[0], set()).add(cid)
+            if f:
+                fdr_all.setdefault(f, set()).add(cid)
+        new_k = {k for v in new.values() if len(v["ktp"]) == 1 for k in v["ktp"]}
+        new_f = {v["feeder"] for v in new.values() if v["feeder"]}
+        whole_f = [f for f in sorted(new_f) if fdr_all.get(f) and len(fdr_all[f]) > 1 and fdr_all[f] <= down]
+        whole_k = [k for k in sorted(new_k, key=lambda x: int(x)) if ktp_all.get(k) and len(ktp_all[k]) > 1 and ktp_all[k] <= down
+                   and not any(ktp_all[k] <= fdr_all.get(f, set()) for f in whole_f)]
+        lines.append("")
+        for f in whole_f:
+            lines.append(f"Без связи весь фидер {f} ({len(fdr_all[f])} конт.) — похоже на отключение со стороны сети.")
+        for k in whole_k:
+            lines.append(f"Без связи весь КТП {k} — проверьте ввод и автоматы КТП.")
+        lines.append("Если питание есть — проверьте связь контейнера: коммутатор, провайдер.")
+    if back:
+        if new:
+            lines.append("")
+        for cid, v in sorted(back.items(), key=lambda x: x[1]["name"]):
+            lines.append(f"🟢 {_short(v['name'])}: вернулось, в работе {v['on']} из {v['total']}")
+        # вернувшиеся асики не повторяем в сводке «Вернулись в работу»
+        dev_ids += [-d for (d,) in db.execute(select(fm.FarmDevice.id).where(fm.FarmDevice.container_id.in_(list(back)), fm.FarmDevice.status != "offline"))]
+    return "\n".join(lines), {str(k): v for k, v in keep.items()}, dev_ids
 
 
 def daily_text(db: Session, now_ts: float) -> str:
@@ -328,6 +448,25 @@ def tick(db: Session, now_ts: float | None = None, sender=send_telegram) -> int:
                 _log_sent(db, tg, "daily", "Утренняя сводка")
             st["daily"] = today
             _save_state(db, tg, st)
+        # «Вероятно, питание» — сразу, не дожидаясь сводки.
+        if prefs["types"].get("power", True):
+            ptext, pwr, dev_ids = power_check(db, st, now_ts)
+            can = not sleeping or bool(prefs["wake_offline"])
+            if ptext and can:
+                if sleeping:
+                    ptext += "\n\n<i>Сообщение пришло во время сна: пропал контейнер целиком.</i>"
+                if sender(tg, ptext):
+                    sent += 1
+                    _log_sent(db, tg, "power", ptext)
+                    # асики этих контейнеров уже «сообщены» — сводка не повторит их списком
+                    add = {i for i in dev_ids if i > 0}
+                    drop = {-i for i in dev_ids if i < 0}
+                    st["off"] = sorted((set(st.get("off", [])) | add) - drop)
+                    st["pwr"] = pwr
+                    _save_state(db, tg, st)
+            elif not ptext and st.get("pwr") != pwr:
+                st["pwr"] = pwr
+                _save_state(db, tg, st)
         due = now_ts - float(st.get("last") or 0) >= prefs["every_min"] * 60
         if not due and "off" in st:
             continue

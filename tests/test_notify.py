@@ -115,3 +115,88 @@ def test_bot_notify_render():
     cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
     assert "notif:t:offline" in cbs and "notif:test" in cbs and "notif:sleept" in cbs
     assert "Сон: 23:00–08:00" in text and "пауз" not in text.lower()
+
+
+def _container(db, name, n, ext):
+    c = fm.FarmContainer(ext_id=ext, name=name)
+    db.add(c)
+    db.flush()
+    devs = [fm.FarmDevice(ext_id=f"{ext}-{i}", model="S21", container_id=c.id, status="working", worker=f"{ext}.{i}") for i in range(n)]
+    db.add_all(devs)
+    db.commit()
+    return c, devs
+
+
+def _down(db, devs, at_ts):
+    for d in devs:
+        d.status, d.status_since = "offline", datetime.fromtimestamp(at_ts, timezone.utc)
+    db.commit()
+
+
+def test_grid_from_name():
+    assert ns.grid_of("11к 21 Ф24 (КТП 7) hydro Bitmain") == ("Ф24", ["7"])
+    assert ns.grid_of("Б 102-103 ↓ Ф1 (КТП 1 КТП 4) С19") == ("Ф1", ["1", "4"])
+    assert ns.grid_of("11К HD5 40-41  Ф1 (КТП 2,3,5) IBMM") == ("Ф1", ["2", "3", "5"])
+    assert ns.grid_of("Контейнер") == (None, [])
+
+
+def test_power_whole_ktp_immediate_then_back(db):
+    c1, d1 = _container(db, "11к 21 Ф24 (КТП 7) hydro", 10, "k11")
+    c2, d2 = _container(db, "12к 22 Ф24 (КТП 7) hydro", 8, "k12")
+    _container(db, "13к 23 Ф24 (КТП 6) hydro", 6, "k13")
+    ns.set_prefs(db, TG, {"types": {"daily": False}})
+    sent = []
+    snd = lambda tg, t: sent.append(t) or True  # noqa: E731
+    assert ns.tick(db, NOW, snd) == 0  # базовая линия
+    _down(db, d1 + d2, NOW + 60)
+    # через 4 минуты — сразу, не дожидаясь сводки (every_min 15)
+    assert ns.tick(db, NOW + 5 * 60, snd) == 1
+    t = sent[-1]
+    assert "вероятно, питание" in t and "11к (Ф24, КТП 7): пропали разом 10 из 10" in t and "12к" in t
+    assert "весь КТП 7" in t and "фидер" not in t
+    # сводка через 16 минут не повторяет эти 18 асиков списком «Нет связи»
+    n = len(sent)
+    ns.tick(db, NOW + 17 * 60, snd)
+    assert all("Нет связи" not in x for x in sent[n:])
+    # вернулись
+    for d in d1 + d2:
+        d.status = "working"
+    db.commit()
+    assert ns.tick(db, NOW + 20 * 60, snd) == 1
+    assert "11к: вернулось, в работе 10 из 10" in sent[-1]
+    n = len(sent)
+    ns.tick(db, NOW + 40 * 60, snd)
+    assert all("Вернулись в работу" not in x for x in sent[n:])
+
+
+def test_power_whole_feeder_and_gradual_ignored(db):
+    _, d1 = _container(db, "11к Ф24 (КТП 7)", 6, "a")
+    _, d2 = _container(db, "13к Ф24 (КТП 6)", 6, "b")
+    _, d3 = _container(db, "2к Ф1 (КТП 1)", 6, "c")
+    ns.set_prefs(db, TG, {"types": {"daily": False}})
+    sent = []
+    snd = lambda tg, t: sent.append(t) or True  # noqa: E731
+    ns.tick(db, NOW, snd)
+    _down(db, d1 + d2, NOW + 60)
+    # 2к теряет асики постепенно, по одному раз в 10 минут — это не «питание»
+    for i, d in enumerate(d3):
+        d.status, d.status_since = "offline", datetime.fromtimestamp(NOW - 3600 + i * 600, timezone.utc)
+    db.commit()
+    ns.tick(db, NOW + 5 * 60, snd)
+    t = sent[-1]
+    assert "весь фидер Ф24" in t and "КТП 7 —" not in t and "2к" not in t
+
+
+def test_power_sleep_wakes_only_if_allowed(db):
+    _, d1 = _container(db, "11к Ф24 (КТП 7)", 6, "s")
+    night = datetime(2026, 10, 27, 2, 0, tzinfo=timezone(timedelta(hours=3))).timestamp()
+    ns.set_prefs(db, TG, {"types": {"daily": False}, "wake_offline": 0})
+    sent = []
+    snd = lambda tg, t: sent.append(t) or True  # noqa: E731
+    ns.tick(db, night, snd)
+    _down(db, d1, night + 60)
+    ns.tick(db, night + 5 * 60, snd)
+    assert not any("питание" in x for x in sent)
+    ns.set_prefs(db, TG, {"wake_offline": 30})
+    ns.tick(db, night + 6 * 60, snd)
+    assert "питание" in sent[-1] and "во время сна" in sent[-1]
