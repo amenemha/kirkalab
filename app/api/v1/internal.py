@@ -919,8 +919,8 @@ def internal_connections(
             if not r.get("already"):
                 cn.notify_managers(db, u, f"добавил ссылку наблюдателя {r['name']}" + (f" {r['coin']}" if r.get("coin") else ""))
             return {"ok": True, **r}
-    except ValueError as e:
-        return {"ok": False, "error": str(e)}
+    except cn.ConnError as e:
+        return {"ok": False, "error": e.text}
     out = cn.of_user(db, u)
     out["is_admin"] = u.is_admin
     return out

@@ -22,8 +22,8 @@ def my_connections(user: models.User = Depends(get_current_user), db: Session = 
 def add_croft(body: dict, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         a = cn.croft_connect(db, user, str(body.get("login") or ""), str(body.get("password") or ""))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    except cn.ConnError as e:
+        raise HTTPException(status_code=400, detail=e.text) from None
     cn.notify_managers(db, user, f"подключил CROFT ({a.login}) — {cn.croft_text(a.stats or {})}")
     return cn.croft_view(a)
 
@@ -47,8 +47,8 @@ def del_croft(acc_id: int, user: models.User = Depends(get_current_user), db: Se
 def add_pool(body: dict, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         r = cn.pool_connect(db, user, str(body.get("url") or ""))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    except cn.ConnError as e:
+        raise HTTPException(status_code=400, detail=e.text) from None
     if not r.get("already"):
         cn.notify_managers(db, user, f"добавил ссылку наблюдателя {r['name']}" + (f" {r['coin']}" if r.get("coin") else ""))
     return r

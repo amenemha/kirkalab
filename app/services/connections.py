@@ -25,6 +25,14 @@ from app.services import activity as act
 
 log = logging.getLogger(__name__)
 
+
+class ConnError(ValueError):
+    """Ошибка подключения с готовым текстом для человека (без деталей исключений)."""
+
+    def __init__(self, text: str):
+        super().__init__(text)
+        self.text = text
+
 POOLS = {
     "viabtc": ("ViaBTC", ("viabtc.com", "viabtc.net")),
     "antpool": ("Antpool", ("antpool.com",)),
@@ -68,23 +76,23 @@ def _croft_client(login: str, password: str):
 
 
 def croft_probe(login: str, password: str, factory=None) -> dict:
-    """Входит в CROFT и собирает короткую сводку. Бросает ValueError с понятным текстом."""
+    """Входит в CROFT и собирает короткую сводку. Бросает ConnError с понятным текстом."""
     import httpx  # noqa: PLC0415
     cli = (factory or _croft_client)(login, password)
     try:
         groups = cli.view_groups() or []
         customer = next((g["customer"]["uniqId"] for g in groups if isinstance(g, dict) and g.get("customer")), None)
         if not customer:
-            raise ValueError("В этом CROFT нет доступной фермы (нет просмотра клиента)")
+            raise ConnError("В этом CROFT нет доступной фермы (нет просмотра клиента)")
         raw = cli.devices(customer) or []
-    except ValueError:
+    except ConnError:
         raise
     except httpx.HTTPStatusError as e:
         if e.response is not None and e.response.status_code in (400, 401, 403):
-            raise ValueError("CROFT не принял логин или пароль") from e
-        raise ValueError("CROFT сейчас не отвечает, попробуйте позже") from e
+            raise ConnError("CROFT не принял логин или пароль") from e
+        raise ConnError("CROFT сейчас не отвечает, попробуйте позже") from e
     except Exception as e:  # noqa: BLE001 — сеть, таймаут, формат
-        raise ValueError("CROFT сейчас не отвечает, попробуйте позже") from e
+        raise ConnError("CROFT сейчас не отвечает, попробуйте позже") from e
     sites: dict[str, dict] = {}
     working = offline = 0
     ths = 0.0
@@ -117,7 +125,7 @@ def croft_probe(login: str, password: str, factory=None) -> dict:
 def croft_connect(db: Session, user: models.User, login: str, password: str, factory=None) -> CroftAccount:
     login, password = (login or "").strip(), (password or "").strip()
     if not login or not password:
-        raise ValueError("Нужны логин и пароль CROFT")
+        raise ConnError("Нужны логин и пароль CROFT")
     stats = croft_probe(login, password, factory)
     acc = db.scalar(select(CroftAccount).where(CroftAccount.user_id == user.id, CroftAccount.login == login))
     if acc is None:
@@ -134,10 +142,10 @@ def croft_recheck(db: Session, acc: CroftAccount, factory=None) -> CroftAccount:
     pw = dec(acc.secret)
     try:
         if not pw:
-            raise ValueError("Пароль не читается — подключите CROFT заново")
+            raise ConnError("Пароль не читается — подключите CROFT заново")
         acc.stats, acc.status, acc.error = croft_probe(acc.login, pw, factory), "ok", None
-    except ValueError as e:
-        acc.status, acc.error = "error", str(e)
+    except ConnError as e:
+        acc.status, acc.error = "error", e.text
     acc.checked_at = datetime.now(UTC)
     db.commit()
     return acc
@@ -183,9 +191,9 @@ def pool_connect(db: Session, user: models.User, text: str, cli=None) -> dict:
     """Добавляет ссылку наблюдателя. Для ViaBTC сразу проверяет и читает хешрейт."""
     r = recognize(text)
     if not r:
-        raise ValueError("Не узнала ссылку пула. Пришлите ссылку наблюдателя (observer) из кабинета пула.")
+        raise ConnError("Не узнала ссылку пула. Пришлите ссылку наблюдателя (observer) из кабинета пула.")
     if r["private"] or not r["key"]:
-        raise ValueError(f"Это ссылка на личный кабинет {r['name']}, по ней ничего не видно без пароля. "
+        raise ConnError(f"Это ссылка на личный кабинет {r['name']}, по ней ничего не видно без пароля. "
                          "Нужна ссылка наблюдателя: в кабинете пула раздел «Наблюдатель» / Observer / Watcher → «Создать ссылку».")
     coin = r["coin"] or "BTC"
     q = select(pm.PoolAccount).where(pm.PoolAccount.provider == r["provider"], pm.PoolAccount.access_key == r["key"],
@@ -193,7 +201,7 @@ def pool_connect(db: Session, user: models.User, text: str, cli=None) -> dict:
     ex = db.scalars(q).first()
     if ex is not None:
         if ex.owner_user_id not in (None, user.id):
-            raise ValueError("Эта ссылка уже подключена у другого человека.")
+            raise ConnError("Эта ссылка уже подключена у другого человека.")
         if ex.owner_user_id == user.id:
             return {"account": pool_view(ex), "found": True, "already": True, **r}
         # общая ссылка оператора — отдаём человеку копией не будем: просто сообщаем
@@ -209,7 +217,7 @@ def pool_connect(db: Session, user: models.User, text: str, cli=None) -> dict:
         try:
             inf = cli.info(r["key"])
         except Exception as e:  # noqa: BLE001
-            raise ValueError("ViaBTC не открывает эту ссылку — проверьте, что она не отозвана.") from e
+            raise ConnError("ViaBTC не открывает эту ссылку — проверьте, что она не отозвана.") from e
         a.account = (inf or {}).get("account")
         db.add(a)
         db.flush()
