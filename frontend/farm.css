@@ -329,7 +329,7 @@ svg.enh{stroke:none}svg.enh .tk{font:11px var(--font-num);fill:var(--faint)}
 .chat{display:flex;flex-direction:column;gap:8px;max-height:420px;flex-shrink:0;overflow:auto;padding:4px 2px}
 .bub{flex-shrink:0;max-width:78%;padding:8px 11px;border-radius:10px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
 .bub span{display:block;margin-top:4px;font-size:11px;color:var(--faint)}
-.bub.in{align-self:flex-start;background:var(--panel2);border:1px solid var(--line)}.bub.out{align-self:flex-end;background:var(--accbg);border:1px solid var(--acc)}
+.bub.bin{align-self:flex-start;background:var(--panel2);border:1px solid var(--line)}.bub.bout{align-self:flex-end;background:var(--accbg);border:1px solid var(--acc)}
 .bub.fail{border-color:#E05252}
 .bcast{display:flex;gap:8px;align-items:flex-end;padding:10px 12px;border-bottom:1px solid var(--line)}.bcast textarea{flex:1;resize:vertical}
 .accnow{display:flex;align-items:center;gap:10px;margin-bottom:8px}.accnow .chip.acc{height:26px;font-size:13px}
