@@ -300,3 +300,7 @@ select.dtf{padding:0 2px}
 .pp-d label{display:flex;gap:4px;align-items:center;color:var(--mut)}
 .pp-d input{height:28px;background:var(--bg);border:1px solid var(--line);border-radius:5px;color:var(--tx);padding:0 4px;color-scheme:dark light}
 @media (max-width:700px){.msb{max-width:170px}.msp{min-width:240px}.dt-foot{flex-wrap:wrap}}
+
+/* калькулятор и уведомления */
+.cform{display:flex;flex-direction:column;gap:8px}.crow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.crow .in{flex:1}.c2{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}.c2s{grid-column:1/-1}.c2 .lbl,.cform .lbl{display:block;font-size:12px;color:var(--mut);margin-bottom:3px}.ntypes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}select.in[size]{padding:4px}select.in[size] option{padding:3px 4px}
+@media(max-width:900px){.c2,.ntypes{grid-template-columns:1fr}}

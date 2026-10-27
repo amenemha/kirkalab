@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from aiogram import Router
 
-from bot.handlers import account, billing, calc, catalog, farm, history, hub, menu, pools, qr
+from bot.handlers import account, billing, calc, catalog, farm, history, hub, menu, notify, pools, qr
 
 routers: tuple[Router, ...] = (
   qr.router,
   hub.router,
   farm.router,
+  notify.router,
   pools.router,
   calc.router,
   catalog.router,

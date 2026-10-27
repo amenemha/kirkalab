@@ -137,9 +137,9 @@ async def site_link(bot, uid: int, page: str = "today") -> str:
 def hub_kb(url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [btn("🏭 Ферма", "hub:farm"), btn("⚠️ Проблемы", "hub:problems")],
-        [btn("🌊 Пулы", "pools:refresh"), btn("🧮 Расчёт", "menu:calculator")],
-        [btn("📋 Каталог ASIC", "menu:catalog"), btn("📊 Мои отчёты", "menu:reports")],
-        [btn("👤 Профиль", "menu:profile"), btn("ℹ️ Помощь", "hub:help")],
+        [btn("🌊 Пулы", "pools:refresh"), btn("🔔 Уведомления", "notif:open")],
+        [btn("🧮 Расчёт", "menu:calculator"), btn("📋 Каталог ASIC", "menu:catalog")],
+        [btn("📊 Мои отчёты", "menu:reports"), btn("👤 Профиль", "menu:profile")],
         [btn("🌐 Открыть Kirka", url=url, style="success")],
     ])
 
@@ -147,7 +147,7 @@ def hub_kb(url: str) -> InlineKeyboardMarkup:
 def farm_kb(url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [btn("🔁 Обновить", "hub:farm:r"), btn("⚠️ Проблемы", "hub:problems")],
-        [btn("📊 Открыть на сайте", url=url, style="primary")],
+        [btn("🔔 Уведомления", "notif:open"), btn("📊 Открыть на сайте", url=url, style="primary")],
         [btn("☰ Меню", "hub:menu")],
     ])
 

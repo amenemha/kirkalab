@@ -35,6 +35,10 @@ def is_pro(user: models.User, *, now: datetime | None = None) -> bool:
     Pure (no writes). A user is PRO when ``is_pro`` is set AND either there is
     no expiry recorded (legacy/manual PRO) or the expiry is still in the future.
     """
+    from app.core.config import get_settings  # noqa: PLC0415
+
+    if get_settings().test_mode_all_pro:
+        return True
     if not user.is_pro:
         return False
     if user.premium_until is None:

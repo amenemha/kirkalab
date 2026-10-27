@@ -46,7 +46,8 @@ def _fmt(s: dict) -> str:
 
 
 def _kb(url: str | None) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="Обновить", callback_data="farm:refresh")]]
+    rows = [[InlineKeyboardButton(text="Обновить", callback_data="farm:refresh")],
+            [InlineKeyboardButton(text="🔔 Уведомления", callback_data="notif:open")]]
     if url:
         rows[0].append(InlineKeyboardButton(text="Панель на сайте", url=url))
     return InlineKeyboardMarkup(inline_keyboard=rows)

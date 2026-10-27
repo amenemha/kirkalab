@@ -74,11 +74,7 @@ def profile_menu(*, is_pro: bool) -> InlineKeyboardMarkup:
   Tariff/PRO and Help live here (not in the main menu). A non-PRO user is
   offered the optional email/password link to an existing PRO/web account."""
   builder = InlineKeyboardBuilder()
-  if not is_pro:
-    builder.button(
-      text="🔗 Связать PRO-аккаунт", callback_data="profile:link"
-    )
-  builder.button(text="💎 Возможности PRO", callback_data="profile:plan")
+  builder.button(text="🔔 Уведомления", callback_data="notif:open")
   builder.button(text="ℹ️ Помощь", callback_data="profile:help")
   builder.adjust(1)
   return builder.as_markup()
@@ -255,17 +251,23 @@ def calc_quantity_kb() -> InlineKeyboardMarkup:
     builder.button(text=str(n), callback_data=f"calc:qty:{n}")
   builder.adjust(5)
   builder.row(
+    InlineKeyboardButton(text="10", callback_data="calc:qty:10"),
+    InlineKeyboardButton(text="50", callback_data="calc:qty:50"),
+    InlineKeyboardButton(text="100", callback_data="calc:qty:100"),
+    InlineKeyboardButton(text="✍️ Другое", callback_data="calc:qty:other"),
+  )
+  builder.row(
     InlineKeyboardButton(text="‹ Назад", callback_data="calc:start")
   )
   return builder.as_markup()
 
 
-def calc_price_kb(saved_price: str | None) -> InlineKeyboardMarkup:
+def calc_price_kb(saved_price: str | None, currency: str = "USDT") -> InlineKeyboardMarkup:
   """Power-price step: reuse saved price (if any) or enter a new one."""
   builder = InlineKeyboardBuilder()
   if saved_price is not None:
     builder.button(
-      text=f"💾 Сохранённая: {saved_price} USDT/кВт·ч",
+      text=f"💾 Сохранённая: {saved_price} {'₽' if currency.upper() == 'RUB' else 'USDT'}/кВт·ч",
       callback_data="calc:price:saved",
     )
   builder.button(text="✍️ Ввести стоимость", callback_data="calc:price:new")
@@ -303,7 +305,6 @@ def calc_result_kb(
 def calc_pro_stub_kb() -> InlineKeyboardMarkup:
   """Soft PRO invite: a 'coming soon' stub button + back to menu."""
   builder = InlineKeyboardBuilder()
-  builder.button(text="💎 Открыть PRO", callback_data="calc:pro")
   builder.adjust(1)
   builder.row(
     InlineKeyboardButton(text="🏠 Меню", callback_data="menu:home")
@@ -317,7 +318,6 @@ def export_upsell_kb(back_callback: str) -> InlineKeyboardMarkup:
   Leads to the PRO tariff screen, with a "back" button returning to whichever
   screen invoked the export (result or history detail)."""
   builder = InlineKeyboardBuilder()
-  builder.button(text="💎 Подробнее о PRO", callback_data="profile:plan")
   builder.adjust(1)
   builder.row(
     InlineKeyboardButton(text="‹ Назад", callback_data=back_callback)

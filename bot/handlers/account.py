@@ -121,17 +121,11 @@ async def send_profile(
 
   is_pro = bool(profile.get("is_pro"))
   is_linked = bool(profile.get("is_linked"))
-  plan = "💎 PRO" if is_pro else "🆓 Free"
-  link_line = (
-    "🔗 Аккаунт связан с PRO/веб-кабинетом"
-    if is_linked
-    else "🔗 PRO-аккаунт не привязан"
-  )
+  _ = is_linked
   text = (
     "👤 <b>Ваш профиль</b>\n\n"
     f"🆔 Кабинет: #{profile.get('id')}\n"
-    f"🏷 Версия: {plan}\n"
-    f"{link_line}\n\n"
+    "🧪 Тестовый доступ: всё открыто\n\n"
     "Доступ к расчётам и каталогу включён автоматически."
   )
   await edit_live_screen(message, state, text, reply_markup=profile_menu(is_pro=is_pro))

@@ -48,8 +48,27 @@ def retention_loop() -> None:
         time.sleep(6 * 3600)
 
 
+def notify_loop() -> None:
+    from app.services.notify.service import tick
+
+    nlog = logging.getLogger("kirka.notify")
+    time.sleep(60)
+    while True:
+        db = SessionLocal()
+        try:
+            n = tick(db)
+            if n:
+                nlog.info("notify sent=%s", n)
+        except Exception:
+            nlog.exception("notify tick failed")
+        finally:
+            db.close()
+        time.sleep(60)
+
+
 def main() -> None:
     s = get_settings()
+    threading.Thread(target=notify_loop, daemon=True).start()
     threading.Thread(target=pools_loop, args=(s.pools_sync_seconds,), daemon=True).start()
     threading.Thread(target=retention_loop, daemon=True).start()
     if not (s.croft_login and s.croft_password):

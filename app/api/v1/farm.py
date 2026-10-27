@@ -176,6 +176,29 @@ def device_card(dev_id: int, db: Session = Depends(get_db)):
     return row
 
 
+def _num(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _ts(v) -> float:
+    """since: число (unix) или ISO-строка из CROFT → unix-секунды."""
+    if v is None or v == "":
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
 @router.get("/errors")
 def errors(
     q: str | None = None, site: str | None = None, container: str | None = None, client: str | None = None,
@@ -204,7 +227,7 @@ def errors(
         g["count"] += 1
         g["devices"].add(r["id"])
     grp = sorted(({"key": k, "count": v["count"], "devices": len(v["devices"])} for k, v in groups.items()), key=lambda x: -x["count"])
-    rows.sort(key=lambda r: (-(r["lvl"] or 0), -(r["since"] or 0)))
+    rows.sort(key=lambda r: (-_num(r["lvl"]), -_ts(r["since"])))
     return {"total": len(rows), "devices": len({r["id"] for r in rows}), "groups": grp, "items": rows}
 
 
@@ -423,3 +446,43 @@ def container_layout_save(cid: int, body: dict, db: Session = Depends(get_db)):
     c.layout = None if body.get("reset") else L.clean(body)
     db.commit()
     return container_layout(cid, db)
+
+
+# --------------------------------------------------------------------------- #
+# Уведомления в Telegram (личные настройки текущего пользователя).
+# --------------------------------------------------------------------------- #
+def _notify_meta(prefs: dict, tg: int | None) -> dict:
+    from app.services.notify import service as ns
+
+    return {"prefs": prefs, "types": ns.TYPES, "levels": ns.LEVEL_NAMES, "telegram_id": tg, "linked": bool(tg)}
+
+
+@router.get("/notify")
+def notify_get(db: Session = Depends(get_db), user=Depends(get_current_admin)):
+    from app.services.notify import service as ns
+
+    tg = user.telegram_user_id
+    return _notify_meta(ns.get_prefs(db, tg) if tg else dict(ns.DEFAULTS), tg)
+
+
+@router.put("/notify")
+def notify_put(body: dict, db: Session = Depends(get_db), user=Depends(get_current_admin)):
+    from app.services.notify import service as ns
+
+    tg = user.telegram_user_id
+    if not tg:
+        raise HTTPException(400, "Аккаунт не связан с Telegram — войдите на сайт через бота")
+    try:
+        return _notify_meta(ns.set_prefs(db, tg, body), tg)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/notify/test")
+def notify_test(db: Session = Depends(get_db), user=Depends(get_current_admin)):
+    from app.services.notify import service as ns
+
+    tg = user.telegram_user_id
+    if not tg:
+        raise HTTPException(400, "Аккаунт не связан с Telegram")
+    return {"sent": ns.send_test(db, tg)}

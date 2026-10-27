@@ -30,6 +30,8 @@ class MiningInput:
     pool_fee_pct: Decimal = Decimal("1.0")
     uptime_pct: Decimal = Decimal("100")
     hardware_cost: Decimal | None = None  # total cost for the whole fleet
+    # Сколько H/s в одной единице hashrate_ths (TH/s → 1e12, MH/s → 1e6 …).
+    hash_mult: Decimal = HASHES_PER_THS
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,10 @@ class MarketData:
     btc_price_usdt: Decimal
     network_difficulty: Decimal
     block_reward_btc: Decimal = DEFAULT_BLOCK_REWARD_BTC
+    # Для не-SHA-256 алгоритмов: доход USDT за 1 H/s в сутки (сумма монет,
+    # включая merged-mining) и добыча монет за 1 H/s в сутки.
+    usd_per_hs_day: Decimal | None = None
+    coins_per_hs_day: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -150,20 +156,25 @@ def calculate(inp: MiningInput, market: MarketData) -> MiningResult:
     """Compute profitability. Never divides by zero."""
     uptime = inp.uptime_pct / Decimal(100)
 
-    # btc_per_day for a single unit at full reward, scaled by quantity below.
-    if market.network_difficulty <= 0:
-        raise ValueError("network_difficulty must be positive")
+    if market.usd_per_hs_day is not None:
+        hs = inp.hashrate_ths * inp.hash_mult * inp.quantity * uptime
+        gross_revenue_usdt_day = hs * market.usd_per_hs_day
+        btc_per_day = (gross_revenue_usdt_day / market.btc_price_usdt) if market.btc_price_usdt > 0 else Decimal(0)
+    else:
+        # btc_per_day for a single unit at full reward, scaled by quantity below.
+        if market.network_difficulty <= 0:
+            raise ValueError("network_difficulty must be positive")
 
-    btc_per_day_unit = (
-        inp.hashrate_ths
-        * HASHES_PER_THS
-        * SECONDS_PER_DAY
-        * market.block_reward_btc
-    ) / (market.network_difficulty * TWO_POW_32)
+        btc_per_day_unit = (
+            inp.hashrate_ths
+            * inp.hash_mult
+            * SECONDS_PER_DAY
+            * market.block_reward_btc
+        ) / (market.network_difficulty * TWO_POW_32)
 
-    btc_per_day = btc_per_day_unit * inp.quantity * uptime
+        btc_per_day = btc_per_day_unit * inp.quantity * uptime
 
-    gross_revenue_usdt_day = btc_per_day * market.btc_price_usdt
+        gross_revenue_usdt_day = btc_per_day * market.btc_price_usdt
     pool_revenue_usdt_day = gross_revenue_usdt_day * (
         Decimal(1) - inp.pool_fee_pct / Decimal(100)
     )
