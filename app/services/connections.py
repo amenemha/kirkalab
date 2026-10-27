@@ -283,10 +283,14 @@ def notify_managers(db: Session, user: models.User, text: str, sender=None) -> i
     return n
 
 
+def hs_text(ths: float) -> str:
+    return f"{ths / 1000:.1f} PH/s".replace(".", ",") if ths >= 1000 else f"{ths:.1f} TH/s".replace(".", ",")
+
+
 def croft_text(st: dict) -> str:
     s = f"{st.get('devices', 0)} асиков, в работе {st.get('working', 0)}, не на связи {st.get('offline', 0)}"
     if st.get("hashrate_ths"):
-        s += f", {st['hashrate_ths']:g} TH/s"
+        s += ", " + hs_text(st["hashrate_ths"])
     sites = st.get("sites") or []
     if sites:
         s += "\nПлощадки: " + ", ".join(f"{x['name']} ({x['devices']})" for x in sites[:6])

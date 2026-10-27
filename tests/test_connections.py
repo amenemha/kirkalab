@@ -67,7 +67,7 @@ def test_croft_connect_flow(client, db, monkeypatch):
     r = client.post("/api/v1/me/connections/croft", json={"login": "me", "password": "good"}, headers=hu)
     assert r.status_code == 200, r.text
     st = r.json()["stats"]
-    assert st["devices"] == 3 and st["working"] == 2 and st["offline"] == 1 and st["hashrate_ths"] == 300
+    assert st["devices"] == 3 and st["working"] == 2 and st["offline"] == 1 and st["hashrate_ths"] == 300 and "300,0 TH/s" in cn.croft_text(st)
     assert st["sites"][0] == {"name": "Сибирь", "containers": 2, "devices": 2, "working": 1, "offline": 1}
     assert "password" not in r.text and "good" not in r.text
     assert SENT and SENT[-1][0] == 555 and "подключил CROFT" in SENT[-1][1] and "3 асиков" in SENT[-1][1]

@@ -52,8 +52,9 @@ def croft_line(c: dict) -> str:
         return f"🔴 CROFT <b>{html.escape(c['login'])}</b> — {html.escape(c.get('error') or 'нет доступа')}"
     s = (f"🟢 CROFT <b>{html.escape(c['login'])}</b> — {_n(st.get('devices'))} асиков, "
          f"в работе {_n(st.get('working'))}, не на связи {_n(st.get('offline'))}")
-    if st.get("hashrate_ths"):
-        s += f", {st['hashrate_ths']:g} TH/s"
+    h = st.get("hashrate_ths")
+    if h:
+        s += ", " + (f"{h / 1000:.1f} PH/s" if h >= 1000 else f"{h:.1f} TH/s").replace(".", ",")
     return s
 
 
