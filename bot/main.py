@@ -114,6 +114,7 @@ async def main() -> None:
       BotCommand(command="pools", description="Пулы за сутки"),
       BotCommand(command="notify", description="Уведомления"),
       BotCommand(command="site", description="Открыть сайт без QR"),
+      BotCommand(command="support", description="Написать менеджеру"),
     ])
   except Exception as exc:  # noqa: BLE001
     logger.warning("set_my_commands failed: %s", type(exc).__name__)

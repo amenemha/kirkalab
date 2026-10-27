@@ -1288,37 +1288,112 @@ async function fillNotifyStrip() {
   const bell = $('.ib[data-go="notify"]'); if (bell) bell.classList.toggle("on-dot", !!(n.linked && n.on));
 }
 
-const ADM = { tg: null, src: "" };
-const SRC = { bot: ["Бот", "#2F7FD0"], site: ["Сайт", "#3FA96B"], notify: ["Уведомл.", "#D97A1E"] };
+const ADM = { tg: null, src: "", sel: new Set(), draft: "", bdraft: "", notify: true, days: 30 };
+const SRC = { bot: ["Бот", "#2F7FD0"], site: ["Сайт", "#3FA96B"], notify: ["Бот → человеку", "#D97A1E"] };
+const ACC_KIND = { gift: "подарок", trial: "пробный", paid: "оплачен", manual: "вручную" };
+function accChip(a) {
+  if (!a || a.state === "none") return '<span class="faint">нет аккаунта</span>';
+  if (a.state !== "pro") return '<span class="chip acc free">FREE</span>';
+  const d = a.days_left != null ? ` · ${a.days_left} дн.` : " · бессрочно";
+  return `<span class="chip acc pro ${a.kind || ""}">PRO${a.kind ? " · " + (ACC_KIND[a.kind] || a.kind) : ""}${d}</span>`;
+}
 async function pageAdmin() {
-  const [u, f] = await Promise.all([api("/admin/users"), api("/admin/activity?limit=300" + (ADM.tg ? "&tg=" + ADM.tg : "") + (ADM.src ? "&source=" + ADM.src : ""))]);
+  const [u, f, th] = await Promise.all([
+    api("/admin/users"),
+    api("/admin/activity?limit=300" + (ADM.tg ? "&tg=" + ADM.tg : "") + (ADM.src ? "&source=" + ADM.src : "")),
+    ADM.tg ? api("/admin/messages?tg=" + ADM.tg) : Promise.resolve(null)]);
   if (S.page !== "admin") return;
-  const who = (r) => `${esc(r.name || "Без имени")}${r.username ? ` <a class="mut" href="https://t.me/${esc(r.username)}" target="_blank" onclick="event.stopPropagation()">@${esc(r.username)}</a>` : ""}${r.is_admin ? ' <span class="chip">админ</span>' : ""}`;
+  const nm = (r) => r ? (r.name || (r.username ? "@" + r.username : String(r.tg_id))) : "—";
+  const who = (r) => `${esc(r.name || "Без имени")}${r.username ? ` <a class="mut" href="https://t.me/${esc(r.username)}" target="_blank" onclick="event.stopPropagation()">@${esc(r.username)}</a>` : ""}${r.is_admin ? ' <span class="chip">админ</span>' : ""}${r.manager ? ' <span class="chip">менеджер</span>' : ""}`;
   const sel = ADM.tg && u.users.find((r) => String(r.tg_id) === String(ADM.tg));
+  if (sel && sel.unread) api("/admin/messages/read", { method: "POST", keepCache: true, body: JSON.stringify({ tg: sel.tg_id }) }).catch(() => {});
   const ago = (iso) => { if (!iso) return "—"; const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? "сейчас" : m < 60 ? m + " мин назад" : m < 1440 ? Math.round(m / 60) + " ч назад" : tfmt(iso); };
+  const nsel = ADM.sel.size;
+  const person = sel ? `
+  <div class="grid" style="margin-top:12px">
+    <div class="w c7"><div class="wh">Переписка: ${who(sel)}<span class="sp"></span><button class="btn ghost" id="admClose" style="height:24px">закрыть ✕</button></div><div class="wb">
+      <div class="chat" id="admChat">${th.items.length ? th.items.map((m) => `<div class="bub ${m.dir}${m.status === "failed" ? " fail" : ""}"><div>${esc(m.text)}</div><span>${m.dir === "in" ? "от человека" : m.broadcast ? "рассылка" : "вы"} · ${tfmt(m.ts)}${m.status === "failed" ? " · не доставлено" : ""}</span></div>`).join("") : '<div class="hint">Сообщений пока нет. Напишите первым — сообщение придёт человеку от бота, он сможет ответить кнопкой «Ответить».</div>'}</div>
+      <div class="crow" style="margin-top:10px;align-items:flex-end"><textarea class="in" id="admMsg" rows="3" placeholder="Сообщение человеку от бота…" style="flex:1;resize:vertical">${esc(ADM.draft)}</textarea><button class="btn pri" id="admSend">Отправить</button></div>
+      <div class="hint" style="margin-top:6px">Ответить можно и прямо в Telegram: бот пересылает сообщения людей менеджерам — нажмите «Ответить» на пересланном.</div>
+    </div></div>
+    <div class="w c5"><div class="wh">Доступ</div><div class="wb">
+      ${sel.user_id ? `<div class="accnow">${accChip(sel.access)}${sel.access.until ? `<span class="mut">до ${tfmt(sel.access.until)}</span>` : ""}</div>
+      ${u.test_mode ? '<div class="hint" style="margin:6px 0 10px">Сейчас тестовый режим: полный доступ открыт всем. Здесь видно и меняется реальное состояние — оно заработает после выключения тестового режима.</div>' : ""}
+      <div class="accbtns">
+        <button class="btn" data-acc="trial" data-d="7" ${sel.access.trial_used ? 'title="Пробный уже был"' : ""}>Пробный 7 дн.</button>
+        <button class="btn" data-acc="trial" data-d="14">Пробный 14 дн.</button>
+        <button class="btn" data-acc="gift" data-d="30">Подарить 30 дн.</button>
+        <button class="btn" data-acc="gift" data-d="365">Подарить год</button>
+      </div>
+      <div class="crow" style="margin-top:8px"><span class="mut">Продлить на</span><input class="in" id="admDays" type="number" min="1" max="3650" value="${ADM.days}" style="width:80px;flex:none"><span class="mut">дн.</span><button class="btn" data-acc="extend">Продлить</button><span class="sp"></span><button class="btn danger" data-acc="revoke" ${sel.access.state === "pro" ? "" : "disabled"}>Закрыть доступ</button></div>
+      <label class="tgl" style="margin-top:10px"><input type="checkbox" id="admNotify" ${ADM.notify ? "checked" : ""}> сообщить человеку в боте</label>
+      ${sel.access.trial_used ? '<div class="hint">Пробный период у человека уже был.</div>' : ""}
+      ${sel.access.history.length ? `<div class="sec"><h4>История</h4>${sel.access.history.map((h) => `<div class="r2"><span>${esc(ACC_KIND[h.kind] || h.kind)}</span><span class="mut">${tfmt(h.from)} → ${tfmt(h.to)}</span><span class="${h.status === "active" ? "ok" : "faint"}">${{ active: "действует", expired: "истёк", revoked: "закрыт", refunded: "возврат" }[h.status] || h.status}</span></div>`).join("")}</div>` : ""}`
+      : '<div class="hint">У человека ещё нет аккаунта — он появится после первого /start или расчёта в боте.</div>'}
+      <div class="sec"><h4>Сообщения людей</h4><label class="tgl"><input type="checkbox" id="admMgr" ${sel.manager ? "checked" : ""}> ${esc(nm(sel))} получает сообщения «Написать менеджеру»</label></div>
+    </div></div>
+  </div>` : "";
   $("#main").innerHTML = `
   <div class="kpis">
-    <div class="k"><div class="lbl">Людей</div><div class="num" style="font-size:20px">${nf(u.total)}</div><div class="hint">в боте и на сайте</div></div>
-    <div class="k"><div class="lbl">Запустили бота</div><div class="num" style="font-size:20px">${nf(u.started)}</div><div class="hint">нажали /start</div></div>
-    <div class="k"><div class="lbl">Смотрели ферму</div><div class="num" style="font-size:20px">${nf(u.saw_farm)}</div><div class="hint">ферма, асики, проблемы, пулы</div></div>
-    <div class="k"><div class="lbl">Заходили на сайт</div><div class="num" style="font-size:20px">${nf(u.on_site)}</div><div class="hint">вход по QR или страницы</div></div>
+    <div class="k"><div class="lbl">Людей</div><div class="num" style="font-size:20px">${nf(u.total)}</div><div class="hint">запустили бота: ${nf(u.started)}</div></div>
+    <div class="k"><div class="lbl">Смотрели ферму</div><div class="num" style="font-size:20px">${nf(u.saw_farm)}</div><div class="hint">на сайте: ${nf(u.on_site)}</div></div>
+    <div class="k"><div class="lbl">Полный доступ</div><div class="num" style="font-size:20px">${nf(u.pro)}</div><div class="hint">${u.test_mode ? "тестовый режим — открыт всем" : "PRO сейчас"}</div></div>
+    <div class="k"><div class="lbl">Новых сообщений</div><div class="num ${u.unread ? "bad" : ""}" style="font-size:20px">${nf(u.unread)}</div><div class="hint">«Написать менеджеру» в боте</div></div>
   </div>
-  <div class="w" style="margin-top:12px"><div class="wh">Пользователи<span class="sp"></span><span class="faint" style="font-weight:400;text-transform:none;letter-spacing:0">клик по строке — все действия человека</span></div>
-    <div class="scroll"><table class="tbl adm"><thead><tr><th>Кто</th><th>Telegram ID</th><th>Впервые</th><th>Последний раз</th><th class="r">Бот</th><th class="r">Сайт</th><th class="r">Расчёты</th><th>Ферма</th><th>Последние действия</th></tr></thead><tbody>
-    ${u.users.map((r) => `<tr class="click${String(r.tg_id) === String(ADM.tg) ? " on" : ""}" data-tg="${r.tg_id}"><td>${who(r)}</td><td class="num">${r.tg_id}</td><td class="num">${tfmt(r.first_seen)}</td><td class="num">${ago(r.last_seen)}</td>
+  <div class="w" style="margin-top:12px"><div class="wh">Пользователи<span class="sp"></span>
+    ${nsel ? `<span class="mut" style="text-transform:none;letter-spacing:0;font-weight:400">выбрано ${nsel}</span><button class="btn" id="admSelNone" style="height:26px">снять</button>` : ""}
+    <button class="btn" id="admSelAll" style="height:26px">выбрать всех</button></div>
+    ${nsel ? `<div class="bcast"><textarea class="in" id="admB" rows="2" placeholder="Сообщение выбранным (${nsel}) — придёт от бота каждому лично…">${esc(ADM.bdraft)}</textarea><button class="btn pri" id="admBSend">Отправить ${nsel}</button></div>` : ""}
+    <div class="scroll"><table class="tbl adm"><thead><tr><th style="width:28px"></th><th>Кто</th><th>Доступ</th><th>Сообщения</th><th>Впервые</th><th>Последний раз</th><th class="r">Бот</th><th class="r">Сайт</th><th class="r">Расчёты</th><th>Ферма</th></tr></thead><tbody>
+    ${u.users.map((r) => `<tr class="click${String(r.tg_id) === String(ADM.tg) ? " on" : ""}" data-tg="${r.tg_id}"><td><input type="checkbox" class="admck" data-ck="${r.tg_id}" ${ADM.sel.has(String(r.tg_id)) ? "checked" : ""}></td><td>${who(r)}<div class="faint num" style="font-size:11px">${r.tg_id}</div></td>
+      <td>${accChip(r.access)}</td>
+      <td class="admmsg">${r.unread ? `<b class="badge">${r.unread}</b> ` : ""}${r.last_msg ? `<span class="${r.last_msg.dir === "in" ? "" : "mut"}">${r.last_msg.dir === "in" ? "" : "вы: "}${esc(r.last_msg.text.slice(0, 50))}</span>` : '<span class="faint">—</span>'}</td>
+      <td class="num">${tfmt(r.first_seen)}</td><td class="num">${ago(r.last_seen)}</td>
       <td class="r num">${nf(r.bot_actions)}</td><td class="r num">${nf(r.site_views)}${r.site_logins ? `<span class="faint"> · ${r.site_logins} вх.</span>` : ""}</td><td class="r num">${nf(r.calcs)}</td>
-      <td>${r.saw_farm ? '<span class="ok">смотрел</span>' : '<span class="faint">нет</span>'}</td>
-      <td class="admlast">${r.last.slice(0, 3).map((e) => `<span class="chip" style="border-color:${SRC[e.source][1]}55">${esc(e.label)}</span>`).join("") || '<span class="faint">с 27.10 журнал пуст</span>'}</td></tr>`).join("")}
-    </tbody></table></div></div>
-  <div class="w" style="margin-top:12px"><div class="wh">${sel ? "Действия: " + who(sel) + ' <button class="btn ghost" id="admAll" style="height:24px;margin-left:8px">все люди</button>' : "Лента действий"}<span class="sp"></span>
-    <span class="seg" id="admSrc">${[["", "Все"], ["bot", "Бот"], ["site", "Сайт"], ["notify", "Уведомления"]].map(([k, v]) => `<button data-s="${k}" class="${ADM.src === k ? "on" : ""}">${v}</button>`).join("")}</span></div>
-    <div class="scroll" style="max-height:560px"><table class="tbl"><thead><tr><th>Время (МСК)</th><th>Где</th>${sel ? "" : "<th>Кто</th>"}<th>Действие</th></tr></thead><tbody>
-    ${f.items.map((e) => { const r = u.users.find((x) => x.tg_id === e.tg_id); return `<tr><td class="num">${tfmt(e.ts)}</td><td><span class="dot" style="background:${SRC[e.source][1]}"></span> ${SRC[e.source][0]}</td>${sel ? "" : `<td>${r ? esc(r.name || r.username || r.tg_id) : esc(e.tg_id || "—")}</td>`}<td>${esc(e.label)}</td></tr>`; }).join("") || `<tr><td colspan="4" class="faint">Пока пусто — журнал ведётся с 27.10.</td></tr>`}
+      <td>${r.saw_farm ? '<span class="ok">смотрел</span>' : '<span class="faint">нет</span>'}</td></tr>`).join("")}
+    </tbody></table></div><div class="hint" style="margin-top:6px">Клик по строке — переписка, доступ и все действия человека. Галочки — выбрать для рассылки.</div></div>
+  ${person}
+  <div class="w" style="margin-top:12px"><div class="wh">${sel ? "Действия: " + who(sel) : "Лента действий"}<span class="sp"></span>
+    <span class="seg" id="admSrc">${[["", "Все"], ["bot", "Бот"], ["site", "Сайт"], ["notify", "Бот → человеку"]].map(([k, v]) => `<button data-s="${k}" class="${ADM.src === k ? "on" : ""}">${v}</button>`).join("")}</span></div>
+    <div class="scroll" style="max-height:520px"><table class="tbl"><thead><tr><th>Время (МСК)</th><th>Где</th>${sel ? "" : "<th>Кто</th>"}<th>Действие</th></tr></thead><tbody>
+    ${f.items.map((e) => { const r = u.users.find((x) => x.tg_id === e.tg_id); const sc = SRC[e.source] || [e.source, "#888"]; return `<tr><td class="num">${tfmt(e.ts)}</td><td><span class="dot" style="background:${sc[1]}"></span> ${sc[0]}</td>${sel ? "" : `<td>${esc(nm(r) || e.tg_id || "—")}</td>`}<td>${esc(e.label)}</td></tr>`; }).join("") || `<tr><td colspan="4" class="faint">Пока пусто — журнал ведётся с 27.10.</td></tr>`}
     </tbody></table></div>
-    <div class="hint" style="margin-top:8px">Журнал действий ведётся с 27.10: команды и кнопки бота, страницы сайта, отправленные уведомления. Введённый текст (суммы, почта) не сохраняется — только факт ввода. До 27.10 известно только, когда человек появился, его входы на сайт и расчёты.</div></div>`;
-  $$("tr[data-tg]").forEach((tr) => tr.onclick = () => { ADM.tg = String(ADM.tg) === tr.dataset.tg ? null : tr.dataset.tg; go("admin", true); });
-  $$("#admSrc button").forEach((b) => b.onclick = () => { ADM.src = b.dataset.s; go("admin", true); });
-  const all = $("#admAll"); if (all) all.onclick = () => { ADM.tg = null; go("admin", true); };
+    <div class="hint" style="margin-top:8px">Журнал ведётся с 27.10: команды и кнопки бота, страницы сайта, сообщения и уведомления от бота. Введённый текст в сценариях (суммы, почта) не сохраняется. До 27.10 известно только, когда человек появился, его входы на сайт и расчёты.</div></div>`;
+  const re = () => go("admin", true);
+  $$("tr[data-tg]").forEach((tr) => tr.onclick = (e) => { if (e.target.closest(".admck,a")) return; ADM.tg = String(ADM.tg) === tr.dataset.tg ? null : tr.dataset.tg; ADM.draft = ""; re(); });
+  $$(".admck").forEach((c) => c.onchange = () => { c.checked ? ADM.sel.add(c.dataset.ck) : ADM.sel.delete(c.dataset.ck); re(); });
+  $("#admSelAll").onclick = () => { u.users.forEach((r) => ADM.sel.add(String(r.tg_id))); re(); };
+  const sn = $("#admSelNone"); if (sn) sn.onclick = () => { ADM.sel.clear(); re(); };
+  $$("#admSrc button").forEach((b) => b.onclick = () => { ADM.src = b.dataset.s; re(); });
+  const send = async (ids, text, btn) => {
+    if (!text.trim()) return toast("Напишите текст");
+    btn.disabled = true;
+    try { const r = await api("/admin/messages", { method: "POST", keepCache: true, body: JSON.stringify({ tg_ids: ids.map(Number), text }) }); toast(r.failed ? `Отправлено ${r.sent}, не доставлено ${r.failed}` : `Отправлено: ${r.sent}`); return true; }
+    catch (e) { toast("Не удалось отправить"); btn.disabled = false; return false; }
+  };
+  const b = $("#admB"); if (b) { b.oninput = () => ADM.bdraft = b.value; $("#admBSend").onclick = async () => { if (await send([...ADM.sel], b.value, $("#admBSend"))) { ADM.bdraft = ""; ADM.sel.clear(); re(); } }; }
+  if (sel) {
+    const ch = $("#admChat"); ch.scrollTop = ch.scrollHeight;
+    const m = $("#admMsg"); m.oninput = () => ADM.draft = m.value;
+    m.onkeydown = (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("#admSend").click(); };
+    $("#admSend").onclick = async () => { if (await send([sel.tg_id], m.value, $("#admSend"))) { ADM.draft = ""; re(); } };
+    $("#admClose").onclick = () => { ADM.tg = null; re(); };
+    const nt = $("#admNotify"); if (nt) nt.onchange = () => ADM.notify = nt.checked;
+    const dd = $("#admDays"); if (dd) dd.oninput = () => ADM.days = +dd.value || 30;
+    $$("[data-acc]").forEach((x) => x.onclick = async () => {
+      const action = x.dataset.acc, days = action === "extend" ? (+$("#admDays").value || 30) : (+x.dataset.d || null);
+      if (action === "revoke" && !confirm(`Закрыть полный доступ для ${nm(sel)}?`)) return;
+      x.disabled = true;
+      try { const r = await api("/admin/access", { method: "POST", keepCache: true, body: JSON.stringify({ tg: sel.tg_id, action, days, notify: action === "revoke" ? false : ADM.notify }) });
+        toast(action === "revoke" ? "Доступ закрыт" : `Готово: ${r.access.label}${r.notified ? " · человеку отправлено сообщение" : ""}`); re(); }
+      catch (e) { toast("Не удалось изменить доступ"); x.disabled = false; }
+    });
+    const mg = $("#admMgr"); if (mg) mg.onchange = async () => {
+      const ids = new Set(u.managers.map(String)); mg.checked ? ids.add(String(sel.tg_id)) : ids.delete(String(sel.tg_id));
+      if (!ids.size) { mg.checked = true; return toast("Должен остаться хотя бы один менеджер"); }
+      try { await api("/admin/managers", { method: "PUT", keepCache: true, body: JSON.stringify({ tg_ids: [...ids].map(Number) }) }); toast("Сохранено"); re(); } catch (e) { toast("Не удалось сохранить"); }
+    };
+  }
 }
 
 // ---------- global search ----------
@@ -1371,6 +1446,6 @@ async function boot() {
   const [p, a] = (location.hash || "#today").slice(1).split("/");
   await go(PAGES[p] ? p : "today", false, a);
   clearInterval(tick);
-  tick = setInterval(() => { if (S.page === "calc" || S.page === "notify" || (S.page === "energy" && EN.sub !== "scheme") || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select") || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
+  tick = setInterval(() => { if (S.page === "calc" || S.page === "notify" || (S.page === "energy" && EN.sub !== "scheme") || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select,textarea") || (S.page === "admin" && (ADM.draft || ADM.bdraft)) || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
 }
 boot();

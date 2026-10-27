@@ -27,3 +27,19 @@ class ActivityEvent(Base):
     meta: Mapped[dict | None] = mapped_column(JSONType)
 
     __table_args__ = (Index("ix_activity_tg_ts", "tg_id", "ts"),)
+
+
+class SupportMessage(Base):
+    """Переписка с людьми через бота: входящие (человек → менеджер) и исходящие (админка → человек)."""
+    __tablename__ = "support_messages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    direction: Mapped[str] = mapped_column(String(4), nullable=False)  # in | out
+    text: Mapped[str] = mapped_column(String(4000), nullable=False)
+    by_user_id: Mapped[int | None] = mapped_column(Integer)  # кто из админки отправил
+    status: Mapped[str] = mapped_column(String(8), default="sent", nullable=False)  # sent | failed | new | read
+    broadcast: Mapped[str | None] = mapped_column(String(36), index=True)
+    meta: Mapped[dict | None] = mapped_column(JSONType)
+
+    __table_args__ = (Index("ix_support_tg_ts", "tg_id", "ts"),)
