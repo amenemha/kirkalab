@@ -141,3 +141,64 @@ def compare_profitability(
         ),
         market_captured_at=captured_at.isoformat(),
     )
+
+
+@router.post("/model")
+def calculate_by_model(body: dict, db: Session = Depends(get_db)) -> dict:
+    """Расчёт по модели каталога для сайта: любой алгоритм, цена э/э в ₽ или USDT.
+
+    Тело: device_model_id, quantity, power_price, power_price_currency (RUB|USDT),
+    pool_fee_pct, uptime_pct, hardware_cost (в валюте цены), hashrate/power — переопределить."""
+    from decimal import Decimal, InvalidOperation
+
+    from app.services.calc.service import resolve_model_algo, resolve_model_specs, run_calc_ex
+    from app.services.fx import service as fx_service
+
+    def dec(v, default=None):
+        if v in (None, ""):
+            return default
+        try:
+            return Decimal(str(v).replace(",", "."))
+        except InvalidOperation as exc:
+            raise HTTPException(422, f"не число: {v}") from exc
+
+    try:
+        mid = int(body.get("device_model_id"))
+        hr, pw = resolve_model_specs(db, mid)
+        algo, unit = resolve_model_algo(db, mid)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(404, "модель не найдена") from exc
+    hr = dec(body.get("hashrate"), hr)
+    pw = int(dec(body.get("power_w"), Decimal(pw)))
+    cur = str(body.get("power_price_currency") or "RUB").upper()
+    rate = Decimal(1)
+    if cur != "USDT":
+        try:
+            rate = Decimal(str(fx_service.get_anchor_rate(db, cur)))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(503, f"нет курса {cur}") from exc
+    price = dec(body.get("power_price"), Decimal(0)) / rate
+    hw = dec(body.get("hardware_cost"))
+    try:
+        req = CalcRequest(hashrate_ths=hr, power_w=pw, quantity=int(body.get("quantity") or 1),
+                          power_price=price.quantize(Decimal("0.000001")),
+                          pool_fee_pct=dec(body.get("pool_fee_pct"), Decimal("1.0")),
+                          uptime_pct=dec(body.get("uptime_pct"), Decimal("100")),
+                          hardware_cost=(hw / rate) if hw is not None else None, premium=True,
+                          algorithm=algo, hashrate_unit=unit)
+        result, captured_at, coins = run_calc_ex(db, req)
+    except MarketUnavailableError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    r = _calc_response(result, req)
+    out = r.model_dump(mode="json")
+    out.update(market_captured_at=captured_at.isoformat(), algorithm=algo, hashrate_unit=unit or "TH/s",
+               coins=coins, currency=cur, rate=str(rate))
+    if cur != "USDT":
+        q = Decimal("0.01")
+        out["local"] = {k: str((Decimal(str(getattr(result, k))) * rate).quantize(q)) for k in
+                        ("pool_revenue_usdt_day", "power_cost_day", "net_profit_day", "net_profit_month", "net_profit_year")}
+        if result.break_even_power_price is not None:
+            out["local"]["break_even_power_price"] = str((result.break_even_power_price * rate).quantize(q))
+    return out

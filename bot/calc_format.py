@@ -107,6 +107,7 @@ def format_result_screen(
     title: str,
     quantity: int,
     currency: str = "USDT",
+    local_view: dict | None = None,
 ) -> str:
     """Render the full result card.
 
@@ -123,12 +124,15 @@ def format_result_screen(
     gross_day = result.get("pool_revenue_usdt_day")
     power_cost = result.get("power_cost_day")
 
+    if local_view and (is_pro or stage == "pro"):
+        return _format_local_full(result, local_view, title, quantity, funnel)
+
     lines: list[str] = [f"📊 <b>{title}</b> × {quantity}", ""]
 
     # --- Income block (gross + net) ---
     lines.append("💰 <b>Доход (с учётом комиссии пула)</b>")
     lines.append(f"  • в день: {_money(gross_day, 'USDT')}")
-    lines.append(f"  • {_btc(result.get('btc_per_day'))} в день")
+    lines.extend(_mined_rows(result))
     lines.append("")
 
     # --- Power block ---
@@ -169,6 +173,64 @@ def format_result_screen(
     if hint:
         lines.append(hint)
 
+    return "\n".join(lines)
+
+
+def _coin_amt(value: Any) -> str:
+    d = _dec(value)
+    if d is None:
+        return "—"
+    if d >= 100:
+        q = "0.01"
+    elif d >= 1:
+        q = "0.0001"
+    else:
+        q = "0.00000001"
+    t = f"{d.quantize(Decimal(q)):f}"
+    return (t.rstrip("0").rstrip(".") if "." in t else t) or "0"
+
+
+def _mined_rows(result: dict) -> list[str]:
+    coins = result.get("coins")
+    if coins:
+        return [f"  • {_coin_amt(c.get('per_day'))} {c.get('coin')} в день" for c in coins]
+    return [f"  • {_btc(result.get('btc_per_day'))} в день"]
+
+
+def _format_local_full(result: dict, lv: dict, title: str, quantity: int, funnel: dict) -> str:
+    """Полный экран в местной валюте (₽) с USDT в скобках."""
+    cur = (lv.get("currency") or "RUB").upper()
+    rate = _dec(lv.get("rate")) or Decimal(1)
+
+    def both(local_val: Any, usdt_val: Any, places: int = 2) -> str:
+        return f"{_money(local_val, cur, places)} ({_money(usdt_val, 'USDT', places)})"
+
+    gross = _dec(result.get("pool_revenue_usdt_day"))
+    gross_l = gross * rate if gross is not None else None
+    lines: list[str] = [f"📊 <b>{title}</b> × {quantity}"]
+    if result.get("algorithm"):
+        lines.append(f"<i>Алгоритм: {result.get('algorithm')}</i>")
+    lines += ["", "💰 <b>Доход (с учётом комиссии пула)</b>",
+              f"  • в день: {both(gross_l, gross)}"]
+    lines.extend(_mined_rows(result))
+    lines.append("")
+    kwh = _power_kwh_day(result)
+    lines.append("⚡ <b>Электроэнергия</b>")
+    if kwh is not None:
+        lines.append(f"  • {kwh} кВт·ч/день")
+    lines.append(f"  • стоимость: {both(lv.get('power_cost_day'), result.get('power_cost_day'))}/день")
+    lines.append("")
+    lines.append("✅ <b>Чистая прибыль</b>")
+    lines.append(f"  • в день: {both(lv.get('net_profit_day'), result.get('net_profit_day'))}")
+    lines.append(f"  • в месяц: {both(lv.get('net_profit_month'), result.get('net_profit_month'))}")
+    lines.append(f"  • в год: {both(lv.get('net_profit_year'), result.get('net_profit_year'))}")
+    lines.append("")
+    lines.append("📈 <b>Окупаемость</b>")
+    roi = _roi(result.get("roi_days"))
+    lines.append(f"  • окупаемость: {roi}" if roi else "  • укажите стоимость оборудования для расчёта ROI")
+    be = _dec(result.get("break_even_power_price"))
+    if be is not None:
+        lines.append(f"  • точка безубыточности по э/э: {_money(be * rate, cur, 2)}/кВт·ч ({_money(be, 'USDT', 4)})")
     return "\n".join(lines)
 
 

@@ -61,13 +61,29 @@ def fetch_difficulty_and_reward(
 
     # Network difficulty from the latest difficulty adjustment.
     diff_url = f"{settings.mempool_base_url}/api/v1/difficulty-adjustment"
-    diff_data = _get_json(client, diff_url, retries)
+    difficulty: Decimal | None = None
     try:
-        difficulty = Decimal(str(diff_data["difficulty"]))
-    except (KeyError, TypeError) as exc:
-        raise MarketFetchError(
-            f"unexpected mempool difficulty payload: {diff_data}"
-        ) from exc
+        diff_data = _get_json(client, diff_url, retries)
+        if isinstance(diff_data, dict) and diff_data.get("difficulty"):
+            difficulty = Decimal(str(diff_data["difficulty"]))
+    except MarketFetchError:
+        difficulty = None
+    if difficulty is None:
+        # mempool.space больше не отдаёт difficulty в difficulty-adjustment —
+        # берём currentDifficulty из mining/hashrate/3d.
+        try:
+            hr = _get_json(client, f"{settings.mempool_base_url}/api/v1/mining/hashrate/3d", retries)
+            if isinstance(hr, dict) and hr.get("currentDifficulty"):
+                difficulty = Decimal(str(hr["currentDifficulty"]))
+        except MarketFetchError:
+            difficulty = None
+    if difficulty is None:
+        try:
+            r = client.get("https://blockchain.info/q/getdifficulty")
+            r.raise_for_status()
+            difficulty = Decimal(r.text.strip())
+        except (httpx.HTTPError, ArithmeticError, ValueError) as exc:
+            raise MarketFetchError(f"network difficulty unavailable: {exc}") from exc
 
     # Block reward (subsidy) from the latest block. Sats -> BTC. Falls back to
     # the configured default if the field is missing.

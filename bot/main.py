@@ -108,6 +108,7 @@ async def main() -> None:
       BotCommand(command="ferma", description="Ферма сейчас"),
       BotCommand(command="problems", description="Проблемы и аварии"),
       BotCommand(command="pools", description="Пулы за сутки"),
+      BotCommand(command="notify", description="Уведомления"),
       BotCommand(command="site", description="Открыть сайт без QR"),
     ])
   except Exception as exc:  # noqa: BLE001

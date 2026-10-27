@@ -41,6 +41,9 @@ class Settings(BaseSettings):
 
     # Market data integrations (CoinGecko + mempool.space, both public).
     coingecko_base_url: str = "https://api.coingecko.com"
+    # Тестовый период: всем пользователям открыто всё (без PRO-ограничений).
+    test_mode_all_pro: bool = False
+    whattomine_asic_url: str = "https://whattomine.com/asic.json"
     mempool_base_url: str = "https://mempool.space"
     # How long an in-memory market snapshot is reused before refreshing.
     market_cache_ttl_seconds: int = 300
@@ -82,6 +85,8 @@ class Settings(BaseSettings):
     pools_sync_seconds: int = 600
     # Telegram IDs that become admins on first login (comma-separated).
     owner_telegram_ids: list[int] = []
+    # Токен бота — для уведомлений из фонового воркера.
+    bot_token: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

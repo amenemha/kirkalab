@@ -24,6 +24,14 @@ from app.services.calc.core import (
 from app.services.market.service import get_market_data
 
 
+def resolve_model_algo(db: Session, device_model_id: int) -> tuple[str | None, str | None]:
+    """(algorithm, hashrate_unit) модели каталога."""
+    model = db.get(models.DeviceModel, device_model_id)
+    if model is None:
+        raise ValueError("device_model not found")
+    return getattr(model, "algorithm", None), getattr(model, "hashrate_unit", None)
+
+
 def resolve_model_specs(db: Session, device_model_id: int) -> tuple[Decimal, int]:
     """Resolve a catalog model's (hashrate_ths, power_w) for the calc core.
 
@@ -36,8 +44,39 @@ def resolve_model_specs(db: Session, device_model_id: int) -> tuple[Decimal, int
 
 
 def run_calc(db: Session, req: CalcRequest) -> tuple[MiningResult, datetime]:
-    market, captured_at = get_market_data(db, coin_code="BTC")
+    res, captured_at, _ = run_calc_ex(db, req)
+    return res, captured_at
+
+
+def run_calc_ex(db: Session, req: CalcRequest) -> tuple[MiningResult, datetime, list[dict] | None]:
+    """Расчёт с учётом алгоритма. Третий элемент — добыча по монетам/сутки."""
+    from datetime import timezone  # noqa: PLC0415
+
+    from app.services.market import algos  # noqa: PLC0415
+
+    coins: list[dict] | None = None
+    mult = algos.unit_mult(req.hashrate_unit)
+    if algos.is_sha256(req.algorithm):
+        market, captured_at = get_market_data(db, coin_code="BTC")
+    else:
+        try:
+            am = algos.algo_market(req.algorithm or "")
+        except algos.AlgoUnavailableError as exc:
+            from app.services.market.service import MarketUnavailableError  # noqa: PLC0415
+
+            raise MarketUnavailableError(str(exc)) from exc
+        from app.services.calc.core import MarketData  # noqa: PLC0415
+
+        market = MarketData(btc_price_usdt=am.btc_price_usdt, network_difficulty=Decimal(1),
+                            block_reward_btc=Decimal(0), usd_per_hs_day=am.usd_per_hs_day,
+                            coins_per_hs_day=am.coins_per_hs_day)
+        captured_at = datetime.fromtimestamp(am.captured_at, tz=timezone.utc)
+        hs = req.hashrate_ths * mult * req.quantity * (req.uptime_pct / Decimal(100))
+        coins = [{"coin": tag, "per_day": str((per * hs).quantize(Decimal("0.00000001"))),
+                  "usdt_day": str((per * hs * price).quantize(Decimal("0.01")))}
+                 for tag, per, price in am.coins_per_hs_day]
     inp = MiningInput(
+        hash_mult=mult,
         hashrate_ths=req.hashrate_ths,
         power_w=req.power_w,
         quantity=req.quantity,
@@ -47,7 +86,7 @@ def run_calc(db: Session, req: CalcRequest) -> tuple[MiningResult, datetime]:
         hardware_cost=req.hardware_cost,
     )
     result = calculate(inp, market)
-    return result, captured_at
+    return result, captured_at, coins
 
 
 def _resolve_custom_specs(

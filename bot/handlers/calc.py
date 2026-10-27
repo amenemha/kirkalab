@@ -64,6 +64,7 @@ class CalcStates(StatesGroup):
   manual_power = State()
   price = State()
   save_price = State()
+  quantity = State()
 
 
 def _client(event: Message | CallbackQuery) -> KirkalabApiClient:
@@ -228,49 +229,74 @@ async def _ask_quantity(message: Message, state: FSMContext, title: str) -> None
   await edit_live_screen(
     message,
     state,
-    f"🧮 <b>{title}</b>\n\nСколько устройств? (1–5)",
+    f"🧮 <b>{title}</b>\n\nСколько устройств? Выберите или введите число.",
     reply_markup=calc_quantity_kb(),
   )
 
 
 @router.callback_query(F.data.startswith("calc:qty:"))
 async def cb_quantity(callback: CallbackQuery, state: FSMContext) -> None:
+  if callback.data == "calc:qty:other":
+    await state.set_state(CalcStates.quantity)
+    await callback.message.edit_text("🧮 Введите количество устройств (1–10000):")
+    await callback.answer()
+    return
   qty = _parse_id(callback.data)
-  if qty is None or not (1 <= qty <= 5):
-    await callback.answer(
-      "В бесплатной версии — до 5 устройств одного типа. "
-      "Больше и разное оборудование — в PRO 💎",
-      show_alert=True,
-    )
+  if qty is None or not (1 <= qty <= 10000):
+    await callback.answer("Введите число от 1 до 10000.", show_alert=True)
     return
   await state.update_data(quantity=qty)
   await _ask_price(callback, state)
   await callback.answer()
 
 
+@router.message(CalcStates.quantity, F.text)
+async def quantity_entered(message: Message, state: FSMContext) -> None:
+  raw = (message.text or "").strip().replace(" ", "")
+  await safe_delete(message)
+  if not raw.isdigit() or not (1 <= int(raw) <= 10000):
+    await edit_live_screen(message, state, "🧮 Введите целое число от 1 до 10000:")
+    return
+  await state.update_data(quantity=int(raw))
+  await state.set_state(None)
+  await _ask_price_msg(message, state)
+
+
 # --------------------------------------------------------------------------- #
 # Power price.
 # --------------------------------------------------------------------------- #
-async def _ask_price(callback: CallbackQuery, state: FSMContext) -> None:
-  saved_price = None
+PRICE_TEXT = (
+  "💡 <b>Стоимость электроэнергии</b>\n\n"
+  "Сколько стоит кВт·ч? Можно в рублях (<code>5.5</code>) "
+  "или в USDT (<code>0.06 usdt</code>)."
+)
+
+
+async def _saved_price(event, state: FSMContext, user_id: int) -> tuple[str | None, str]:
   secret = _secret()
-  if secret:
-    try:
-      status = await _client(callback).calc_status(
-        telegram_user_id=callback.from_user.id, bot_secret=secret
-      )
-      saved = status.get("default_power_price")
-      if saved is not None:
-        saved_price = _trim(str(saved))
-        await state.update_data(saved_price=saved_price)
-    except ApiError:
-      saved_price = None
-  await callback.message.edit_text(
-    "💡 <b>Стоимость электроэнергии</b>\n\n"
-    "Укажите, сколько стоит кВт·ч в USDT.\n"
-    "<i>Другие валюты (₽/$/¥) — в PRO.</i>",
-    reply_markup=calc_price_kb(saved_price),
-  )
+  if not secret:
+    return None, "RUB"
+  try:
+    status = await _client(event).calc_status(telegram_user_id=user_id, bot_secret=secret)
+  except ApiError:
+    return None, "RUB"
+  saved = status.get("default_power_price")
+  cur = (status.get("currency") or "USDT").upper()
+  if saved is None:
+    return None, cur
+  price = _trim(str(saved))
+  await state.update_data(saved_price=price, saved_price_currency=cur)
+  return price, cur
+
+
+async def _ask_price(callback: CallbackQuery, state: FSMContext) -> None:
+  saved_price, cur = await _saved_price(callback, state, callback.from_user.id)
+  await callback.message.edit_text(PRICE_TEXT, reply_markup=calc_price_kb(saved_price, cur))
+
+
+async def _ask_price_msg(message: Message, state: FSMContext) -> None:
+  saved_price, cur = await _saved_price(message, state, message.chat.id)
+  await edit_live_screen(message, state, PRICE_TEXT, reply_markup=calc_price_kb(saved_price, cur))
 
 
 @router.callback_query(F.data == "calc:price:saved")
@@ -280,7 +306,8 @@ async def cb_price_saved(callback: CallbackQuery, state: FSMContext) -> None:
   if price is None:
     await callback.answer("Сохранённая стоимость не найдена.", show_alert=True)
     return
-  await state.update_data(power_price=str(price), save_power_price=False)
+  await state.update_data(power_price=str(price), save_power_price=False,
+                          price_currency=data.get("saved_price_currency") or "USDT")
   await _run_and_render(callback.message, callback.from_user.id, state)
   await callback.answer()
 
@@ -289,24 +316,32 @@ async def cb_price_saved(callback: CallbackQuery, state: FSMContext) -> None:
 async def cb_price_new(callback: CallbackQuery, state: FSMContext) -> None:
   await state.set_state(CalcStates.price)
   await callback.message.edit_text(
-    "💡 Введите стоимость электроэнергии в USDT за кВт·ч "
-    "(например, <code>0.05</code>):"
+    "💡 Введите стоимость кВт·ч: в рублях — <code>5.5</code>, "
+    "в USDT — <code>0.06 usdt</code>:"
   )
   await callback.answer()
 
 
 @router.message(CalcStates.price, F.text)
 async def price_entered(message: Message, state: FSMContext) -> None:
-  value = _parse_decimal(message.text)
+  raw = (message.text or "").strip().lower()
+  cur = "RUB"
+  for tag in ("usdt", "usd", "$"):
+    if tag in raw:
+      cur = "USDT"
+      raw = raw.replace(tag, "")
+  for tag in ("руб", "р", "₽", "rub"):
+    raw = raw.replace(tag, "")
+  value = _parse_decimal(raw.strip().rstrip("."))
   await safe_delete(message)
   if value is None or value < 0:
     await edit_live_screen(
       message,
       state,
-      "💡 Введите неотрицательное число, например <code>0.05</code>:",
+      "💡 Введите число, например <code>5.5</code> (₽) или <code>0.06 usdt</code>:",
     )
     return
-  await state.update_data(power_price=str(value))
+  await state.update_data(power_price=str(value), price_currency=cur)
   await state.set_state(CalcStates.save_price)
   kb = InlineKeyboardMarkup(
     inline_keyboard=[
@@ -351,7 +386,8 @@ async def _run_and_render(
     "telegram_user_id": telegram_user_id,
     "quantity": int(data.get("quantity", 1)),
     "power_price": str(data.get("power_price", "0")),
-    "currency": "USDT",
+    "currency": "RUB",
+    "power_price_currency": data.get("price_currency") or "RUB",
     "save_power_price": bool(data.get("save_power_price", False)),
     "device_name": data.get("title"),
   }
@@ -380,7 +416,8 @@ async def _run_and_render(
     funnel=funnel,
     title=data.get("title", "Оборудование"),
     quantity=int(data.get("quantity", 1)),
-    currency="USDT",
+    currency="RUB",
+    local_view=resp.get("local"),
   )
   run_id = resp.get("run_id")
   await state.update_data(has_firmware=bool(resp.get("has_firmware")))
@@ -404,7 +441,7 @@ async def cb_compare(callback: CallbackQuery, state: FSMContext) -> None:
   # withholds the delta for non-PRO callers anyway). A full compare UI is a
   # follow-up; this keeps the result screen's promise without a dead end.
   await callback.answer(
-    "🔧 Сравнение с кастомной прошивкой и экономия — в PRO 💎",
+    "🔧 Сравнение с прошивкой — скоро.",
     show_alert=True,
   )
 
@@ -420,10 +457,7 @@ async def cb_export(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "calc:pro")
 async def cb_pro_stub(callback: CallbackQuery) -> None:
   await callback.message.edit_text(
-    "💎 <b>PRO — скоро</b>\n\n"
-    "Безлимитные расчёты, все валюты (₽/$/¥), окупаемость и ROI без блюра, "
-    "сравнение прошивок и сохранение сборок.\n\n"
-    "Подписка скоро будет доступна — спасибо, что вы с нами! 🙌",
+    "🧪 <b>Тестовый период</b>\n\nСейчас всё открыто для всех.",
     reply_markup=calc_pro_stub_kb(),
   )
   await callback.answer()

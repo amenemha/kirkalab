@@ -47,7 +47,7 @@ from app.services.calc.export import (
     build_calc_workbook,
     export_filename,
 )
-from app.services.calc.service import resolve_model_specs, run_calc
+from app.services.calc.service import resolve_model_algo, resolve_model_specs, run_calc, run_calc_ex  # noqa: F401
 from app.crud import fx as crud_fx
 from app.services.fx import service as fx_service
 from app.services.fx.service import RateUnavailableError
@@ -518,11 +518,23 @@ def internal_calc(
         )
 
     # Resolve specs: catalog model wins over manual input.
+    algorithm: str | None = None
+    hashrate_unit: str | None = None
+    power_price_usdt = Decimal(str(req.power_price))
+    ppc = (req.power_price_currency or "USDT").upper()
+    if ppc not in ("USDT", "USD"):
+        try:
+            rate = fx_service.get_anchor_rate(db, ppc)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                detail=f"нет курса {ppc}") from exc
+        power_price_usdt = (power_price_usdt / Decimal(str(rate))).quantize(Decimal("0.000001"))
     has_firmware = False
     device_name = req.device_name
     if req.device_model_id is not None:
         try:
             hashrate_ths, power_w = resolve_model_specs(db, req.device_model_id)
+            algorithm, hashrate_unit = resolve_model_algo(db, req.device_model_id)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -543,13 +555,15 @@ def internal_calc(
             hashrate_ths=hashrate_ths,
             power_w=power_w,
             quantity=req.quantity,
-            power_price=req.power_price,
+            power_price=power_price_usdt,
             pool_fee_pct=req.pool_fee_pct,
             uptime_pct=req.uptime_pct,
             hardware_cost=req.hardware_cost,
             premium=user_is_pro,
+            algorithm=algorithm,
+            hashrate_unit=hashrate_unit,
         )
-        result, captured_at = run_calc(db, calc_req)
+        result, captured_at, coins = run_calc_ex(db, calc_req)
     except MarketUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
@@ -569,19 +583,21 @@ def internal_calc(
         hashrate_ths=hashrate_ths,
         power_w=power_w,
         quantity=req.quantity,
-        power_price=req.power_price,
-        currency=req.currency,
+        power_price=power_price_usdt,
+        currency="USDT",
         net_profit_day_usdt=result.net_profit_day,
         net_profit_month_usdt=result.net_profit_month,
     )
 
     if req.save_power_price:
         crud_users.set_default_power_price(
-            db, user_id=user.id, power_price=req.power_price, currency=req.currency
+            db, user_id=user.id, power_price=req.power_price, currency=ppc
         )
 
     calc_response = _calc_response(result, calc_req)
     calc_response.market_captured_at = captured_at.isoformat()
+    calc_response.algorithm = algorithm
+    calc_response.coins = coins
 
     local = _local_view(db, result, req.currency)
 
@@ -747,3 +763,60 @@ def internal_pools_summary(
     _ = _date
     return {"coins": sorted(coins.values(), key=lambda c: -c["ths_1d"]), "drops": drops[:8], "broken": broken[:8],
             "broken_total": len(broken), "drops_total": len(drops), "yesterday": y, "updated": last}
+
+
+# --------------------------------------------------------------------------- #
+# Уведомления фермы — экран настроек в боте.
+# --------------------------------------------------------------------------- #
+def _farm_access(db: Session, telegram_user_id: int) -> None:
+    from app.crud.users import get_user_by_telegram_id
+
+    user = get_user_by_telegram_id(db, telegram_user_id=telegram_user_id)
+    owners = set(settings.owner_telegram_ids or [])
+    if not ((user and user.is_admin) or telegram_user_id in owners):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Уведомления фермы недоступны")
+
+
+@router.get("/notify")
+def internal_notify_get(
+    telegram_user_id: int,
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    db: Session = Depends(get_db),
+):
+    _require_bot_secret(x_bot_secret)
+    _farm_access(db, telegram_user_id)
+    from app.services.notify import service as ns
+
+    return {"prefs": ns.get_prefs(db, telegram_user_id), "types": ns.TYPES, "levels": ns.LEVEL_NAMES}
+
+
+@router.put("/notify")
+def internal_notify_put(
+    body: dict,
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    db: Session = Depends(get_db),
+):
+    _require_bot_secret(x_bot_secret)
+    tg = int(body.get("telegram_user_id") or 0)
+    _farm_access(db, tg)
+    from app.services.notify import service as ns
+
+    try:
+        prefs = ns.set_prefs(db, tg, body.get("values") or {})
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return {"prefs": prefs, "types": ns.TYPES, "levels": ns.LEVEL_NAMES}
+
+
+@router.post("/notify/test")
+def internal_notify_test(
+    body: dict,
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    db: Session = Depends(get_db),
+):
+    _require_bot_secret(x_bot_secret)
+    tg = int(body.get("telegram_user_id") or 0)
+    _farm_access(db, tg)
+    from app.services.notify import service as ns
+
+    return {"sent": ns.send_test(db, tg)}

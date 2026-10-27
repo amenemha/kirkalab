@@ -146,8 +146,8 @@ function placeTxt(d, short) {
 }
 
 // ---------- routing ----------
-const PAGES = { today: pageToday, map: pageMap, cont: pageCont, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools };
-const TITLES = { today: "Обзор фермы", map: "Контейнеры", cont: "Контейнер", asics: "Асики", errors: "Проблемы", clients: "Клиенты хостинга", pools: "Пулы" };
+const PAGES = { today: pageToday, map: pageMap, cont: pageCont, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools, calc: pageCalc, notify: pageNotify };
+const TITLES = { today: "Обзор фермы", map: "Контейнеры", cont: "Контейнер", asics: "Асики", errors: "Проблемы", clients: "Клиенты хостинга", pools: "Пулы", calc: "Калькулятор доходности", notify: "Уведомления" };
 const NAVOF = { cont: "map" };
 async function go(p, keep, arg) {
   if (!PAGES[p]) p = "today";
@@ -155,7 +155,7 @@ async function go(p, keep, arg) {
   if (!keep) { $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; S.sel.clear(); updSel(); }
   $$(".tab[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === (NAVOF[p] || p)));
   $("#pageTitle").textContent = TITLES[p];
-  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont";
+  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify";
   $("#pageAside").innerHTML = "";
   // Каждый переход — шаг в истории браузера: «Назад» (кнопка или браузерная) возвращает на прошлую страницу с её фильтрами.
   const h = "#" + p + (S.arg ? "/" + S.arg : ""), depth = (history.state && history.state.d) || 0;
@@ -980,6 +980,142 @@ function devCols(pk, o = {}) {
   return o.noCont ? cols : cols;
 }
 
+// ---------- калькулятор доходности (любой алгоритм, цена в ₽ или USDT) ----------
+const CALC = { models: null, f: { q: "", id: null, qty: 1, price: "5.5", cur: "RUB", fee: "1", up: "100", hw: "" } };
+async function apiJ(path, body) {
+  const r = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let j = null; try { j = await r.json(); } catch (e) { j = null; }
+  if (!r.ok) { const d = j && j.detail; throw new Error(typeof d === "string" ? d : "Ошибка расчёта (" + r.status + ")"); }
+  return j;
+}
+const HRU = (m) => m.hashrate_unit || "TH/s";
+const mName = (m) => `${m.brand} ${m.model_name}`;
+async function pageCalc() {
+  if (!CALC.models) {
+    const all = []; for (let skip = 0; skip < 2000; skip += 200) { const part = await api("/devices/models?limit=200&skip=" + skip); all.push(...part); if (part.length < 200) break; }
+    CALC.models = all.filter((m) => m.is_active !== false).sort((a, b) => mName(a).localeCompare(mName(b), "ru"));
+  }
+  const f = CALC.f;
+  const algos = [...new Set(CALC.models.map((m) => m.algorithm || "SHA-256"))].sort();
+  $("#main").innerHTML = `
+  <div class="grid">
+    <div class="w c5"><div class="wh">Оборудование и условия</div><div class="wb">
+      <div class="cform">
+        <label class="lbl">Модель</label>
+        <div class="crow"><select id="cAlgo" class="in" style="max-width:150px"><option value="">Все алгоритмы</option>${algos.map((a) => `<option ${f.algo === a ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
+        <input id="cQ" class="in" placeholder="Поиск: S21, L9, KS5…" value="${esc(f.q)}" autocomplete="off"></div>
+        <select id="cModel" class="in" size="8" style="height:auto"></select>
+        <div class="hint" id="cSpec">Выберите модель из каталога</div>
+        <div class="c2">
+          <div><label class="lbl">Количество</label><input id="cQty" class="in" type="number" min="1" max="100000" value="${esc(f.qty)}"></div>
+          <div><label class="lbl">Цена кВт·ч</label><div class="crow"><input id="cPrice" class="in" inputmode="decimal" value="${esc(f.price)}"><span class="seg" id="cCur"><button data-c="RUB" class="${f.cur === "RUB" ? "on" : ""}">₽</button><button data-c="USDT" class="${f.cur === "USDT" ? "on" : ""}">USDT</button></span></div></div>
+          <div><label class="lbl">Комиссия пула, %</label><input id="cFee" class="in" inputmode="decimal" value="${esc(f.fee)}"></div>
+          <div><label class="lbl">Аптайм, %</label><input id="cUp" class="in" inputmode="decimal" value="${esc(f.up)}"></div>
+          <div class="c2s"><label class="lbl">Стоимость оборудования, ${f.cur === "RUB" ? "₽" : "USDT"} (для окупаемости)</label><input id="cHw" class="in" inputmode="decimal" placeholder="необязательно" value="${esc(f.hw)}"></div>
+        </div>
+        <button class="btn pri wide" id="cGo">Рассчитать</button>
+      </div>
+    </div></div>
+    <div class="w c7"><div class="wh">Результат<span class="sp"></span><span class="mini" id="cAt"></span></div><div class="wb" id="cRes"><div class="empty">Выберите модель и нажмите «Рассчитать»</div></div></div>
+  </div>`;
+  const fill = () => {
+    const q = f.q.trim().toLowerCase();
+    const list = CALC.models.filter((m) => (!f.algo || (m.algorithm || "SHA-256") === f.algo) && (!q || mName(m).toLowerCase().includes(q)));
+    $("#cModel").innerHTML = list.slice(0, 300).map((m) => `<option value="${m.id}" ${m.id === f.id ? "selected" : ""}>${esc(mName(m))} · ${nf(m.default_hashrate_ths, 0)} ${esc(HRU(m))} · ${nf(m.default_power_w)} Вт</option>`).join("") || "<option disabled>Ничего не найдено</option>";
+    spec();
+  };
+  const spec = () => { const m = CALC.models.find((x) => x.id === f.id); $("#cSpec").textContent = m ? `${m.algorithm || "SHA-256"}${m.coin_family ? " · " + m.coin_family : ""} · ${nf(m.default_hashrate_ths, 1)} ${HRU(m)} · ${nf(m.default_power_w)} Вт` : "Выберите модель из каталога"; };
+  fill();
+  $("#cQ").oninput = (e) => { f.q = e.target.value; fill(); };
+  $("#cAlgo").onchange = (e) => { f.algo = e.target.value; fill(); };
+  $("#cModel").onchange = (e) => { f.id = +e.target.value; spec(); };
+  $("#cModel").ondblclick = () => run();
+  $$("#cCur button").forEach((b) => b.onclick = () => { f.cur = b.dataset.c; if (f.cur === "USDT" && +String(f.price).replace(",", ".") > 1) f.price = "0.06"; if (f.cur === "RUB" && +String(f.price).replace(",", ".") < 1) f.price = "5.5"; keep(); pageCalc(); });
+  const keep = () => { f.qty = $("#cQty").value; f.price = $("#cPrice").value; f.fee = $("#cFee").value; f.up = $("#cUp").value; f.hw = $("#cHw").value; };
+  const run = async () => {
+    keep();
+    if (!f.id) return toast("Выберите модель");
+    $("#cRes").innerHTML = '<div class="empty">Считаю…</div>';
+    try {
+      const r = await apiJ("/calc/model", { device_model_id: f.id, quantity: +f.qty || 1, power_price: f.price, power_price_currency: f.cur, pool_fee_pct: f.fee, uptime_pct: f.up, hardware_cost: f.hw || null });
+      calcResult(r);
+    } catch (e) { $("#cRes").innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`; }
+  };
+  $("#cGo").onclick = run;
+  $$("#main .cform input").forEach((i) => i.onkeydown = (e) => { if (e.key === "Enter") run(); });
+  if (CALC.last && CALC.last.input && f.id) calcResult(CALC.last);
+}
+function calcResult(r) {
+  CALC.last = r;
+  const L = r.local || {}, rub = r.currency !== "USDT", rate = +r.rate || 1;
+  const m2 = (loc, usd, d = 2) => rub ? `<b class="num">${nf(loc, d)} ₽</b> <span class="faint num">${nf(usd, d)} USDT</span>` : `<b class="num">${nf(usd, d)} USDT</b>`;
+  const net = +r.net_profit_day;
+  const mined = (r.coins && r.coins.length ? r.coins.map((c) => `${nf(+c.per_day, +c.per_day >= 100 ? 2 : 6)} ${esc(c.coin)}`) : [`${nf(+r.btc_per_day, 8)} BTC`]).join(" + ");
+  const roi = r.roi_days != null ? `${nf(r.roi_days, 0)} дн. (~${nf(r.roi_days / 30.4, 1)} мес.)` : "укажите стоимость оборудования";
+  const be = r.break_even_power_price != null ? (rub ? `${nf(L.break_even_power_price, 2)} ₽ / ${nf(r.break_even_power_price, 4)} USDT` : `${nf(r.break_even_power_price, 4)} USDT`) : "—";
+  $("#cAt").textContent = "рынок: " + tfmt(r.market_captured_at);
+  $("#cRes").innerHTML = `
+    <div class="kpis">
+      <div class="k"><div class="lbl">Чистая прибыль / сутки</div><div class="num" style="font-size:20px;color:var(${net >= 0 ? "--ok" : "--bad"})">${rub ? nf(L.net_profit_day, 0) + " ₽" : nf(net, 2) + " USDT"}</div></div>
+      <div class="k"><div class="lbl">В месяц</div><div class="num" style="font-size:20px">${rub ? nf(L.net_profit_month, 0) + " ₽" : nf(r.net_profit_month, 2) + " USDT"}</div></div>
+      <div class="k"><div class="lbl">Окупаемость</div><div class="num" style="font-size:16px">${roi}</div></div>
+    </div>
+    <dl class="kv">
+      <dt>Алгоритм</dt><dd>${esc(r.algorithm || "SHA-256")}</dd>
+      <dt>Добыча / сутки</dt><dd class="num">${mined}</dd>
+      <dt>Доход / сутки</dt><dd>${m2(L.pool_revenue_usdt_day, r.pool_revenue_usdt_day)} <span class="faint">после комиссии пула</span></dd>
+      <dt>Электроэнергия</dt><dd>${m2(L.power_cost_day, r.power_cost_day)} / сутки · ${nf(r.input.power_w * r.input.quantity * 24 / 1000, 1)} кВт·ч</dd>
+      <dt>Прибыль / год</dt><dd>${m2(L.net_profit_year, r.net_profit_year, 0)}</dd>
+      <dt>Безубыточно до</dt><dd>${be} за кВт·ч</dd>
+      ${rub ? `<dt>Курс</dt><dd class="num">1 USDT = ${nf(rate, 2)} ₽</dd>` : ""}
+    </dl>
+    <div class="hint" style="margin-top:10px">Расчёт по текущей сложности сети и курсу, без учёта будущих изменений.</div>`;
+}
+
+// ---------- уведомления в Telegram ----------
+const NT = { HOLD: [0, 5, 10, 15, 30, 60], EVERY: [5, 15, 30, 60, 180], WAKE: [0, 10, 30, 100] };
+async function pageNotify() {
+  const d = await api("/farm/notify");
+  const p = d.prefs, T = d.types, Lv = d.levels;
+  const opt = (arr, cur, fmt) => arr.map((v) => `<option value="${v}" ${v === cur ? "selected" : ""}>${fmt(v)}</option>`).join("");
+  $("#main").innerHTML = `
+  <div class="grid">
+    <div class="w c7"><div class="wh">Уведомления в Telegram<span class="sp"></span><label class="tgl"><input type="checkbox" id="nOn" ${p.enabled ? "checked" : ""}> ${p.enabled ? "включены" : "выключены"}</label></div><div class="wb">
+      ${d.linked ? "" : `<div class="okbox" style="margin-bottom:10px">Аккаунт не связан с Telegram — войдите на сайт через QR из бота, чтобы получать уведомления.</div>`}
+      <div class="sec" style="margin-top:0"><h4>Что присылать</h4><div class="ntypes">${Object.entries(T).map(([k, v]) => `<label class="tgl"><input type="checkbox" data-t="${k}" ${p.types[k] ? "checked" : ""}> ${esc(v)}</label>`).join("")}</div></div>
+      <div class="sec"><h4>Фильтр от «мигания»</h4><div class="c2">
+        <div><label class="lbl">Ошибки</label><select class="in" id="nLvl">${opt([0, 1, 2, 3], p.min_level, (v) => Lv[v])}</select></div>
+        <div><label class="lbl">Сообщать, если держится</label><select class="in" id="nHold">${opt(NT.HOLD, p.hold_min, (v) => v ? `≥ ${v} мин` : "сразу")}</select></div>
+        <div><label class="lbl">Сводка изменений</label><select class="in" id="nEvery">${opt(NT.EVERY, p.every_min, (v) => `раз в ${v} мин`)}</select></div>
+        <div><label class="lbl">Список асиков в сообщении</label><select class="in" id="nMax">${opt([0, 5, 10, 20], p.max_lines, (v) => v ? `до ${v}` : "только итоги")}</select></div>
+      </div></div>
+      <div class="sec"><h4>Сон</h4><div class="crow"><label class="tgl"><input type="checkbox" id="nSl" ${p.sleep.on ? "checked" : ""}> не беспокоить</label>
+        <span>с</span><input class="in" type="time" id="nFrom" value="${esc(p.sleep.from)}" style="width:110px"><span>до</span><input class="in" type="time" id="nTo" value="${esc(p.sleep.to)}" style="width:110px"></div>
+        <div class="crow" style="margin-top:8px"><span class="mut">Будить во сне при отключении</span><select class="in" id="nWake" style="width:150px">${opt(NT.WAKE, p.wake_offline, (v) => v ? `≥ ${v} асиков` : "не будить")}</select></div>
+        <div class="hint">Во сне изменения копятся и приходят одним сообщением после пробуждения.</div></div>
+      <div class="sec"><h4>Утренняя сводка</h4><div class="crow"><span class="mut">Время (МСК)</span><input class="in" type="time" id="nDaily" value="${esc(p.daily_at)}" style="width:110px"></div></div>
+      <div class="crow" style="margin-top:14px"><button class="btn pri" id="nSave">Сохранить</button><button class="btn" id="nTest" ${d.linked ? "" : "disabled"}>Прислать проверку</button><span class="hint" id="nMsg"></span></div>
+    </div></div>
+    <div class="w c5"><div class="wh">Как это работает</div><div class="wb"><div class="hint" style="font-size:12.5px;line-height:1.55">
+      Бот не пересылает каждое событие CROFT — за сутки их тысячи. Раз в выбранный интервал он сравнивает состояние фермы с тем, о чём уже сообщил, и присылает одно сообщение: сколько асиков пропало и вернулось, какие ошибки появились, где больше всего (по контейнерам).<br><br>
+      Ошибка или «нет связи» попадает в сообщение, только если держится дольше порога — короткое «мигание» не тревожит.<br><br>
+      Эти же настройки есть в боте: кнопка «🔔 Уведомления» в меню или команда /notify.</div></div></div>
+  </div>`;
+  $("#nOn").onchange = () => save();
+  const collect = () => {
+    const types = {}; $$("[data-t]").forEach((i) => types[i.dataset.t] = i.checked);
+    return { enabled: $("#nOn").checked, types, min_level: +$("#nLvl").value, hold_min: +$("#nHold").value, every_min: +$("#nEvery").value, max_lines: +$("#nMax").value,
+      sleep: { on: $("#nSl").checked, from: $("#nFrom").value || "23:00", to: $("#nTo").value || "08:00" }, wake_offline: +$("#nWake").value, daily_at: $("#nDaily").value || "09:00" };
+  };
+  const save = async () => {
+    try { await api("/farm/notify", { method: "PUT", body: JSON.stringify(collect()) }); toast("Уведомления сохранены"); pageNotify(); }
+    catch (e) { toast(e.message === "HTTP 400" ? "Сначала свяжите аккаунт с Telegram" : "Не удалось сохранить"); }
+  };
+  $("#nSave").onclick = save;
+  $("#nTest").onclick = async () => { try { await api("/farm/notify", { method: "PUT", body: JSON.stringify(collect()) }); const r = await api("/farm/notify/test", { method: "POST" }); toast(r.sent ? "Проверка отправлена в Telegram" : "Не удалось отправить"); } catch (e) { toast("Не удалось отправить"); } };
+}
+$$("[data-go]").forEach((b) => b.onclick = () => go(b.dataset.go));
+
 // ---------- global search ----------
 (function () {
   const inp = $("#gq"), box = $("#gqRes"); let items = [], hi = 0;
@@ -1030,6 +1166,6 @@ async function boot() {
   const [p, a] = (location.hash || "#today").slice(1).split("/");
   await go(PAGES[p] ? p : "today", false, a);
   clearInterval(tick);
-  tick = setInterval(() => { if (document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select") || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
+  tick = setInterval(() => { if (S.page === "calc" || S.page === "notify" || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select") || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
 }
 boot();

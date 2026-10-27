@@ -30,11 +30,9 @@ def test_start_kb_offers_catalog_and_manual():
     assert "calc:manual" in cbs
 
 
-def test_quantity_kb_is_one_to_five():
-    cbs = _all_callbacks(calc_quantity_kb())
-    assert [f"calc:qty:{n}" for n in range(1, 6)] == [
-        c for c in cbs if c.startswith("calc:qty:")
-    ]
+def test_quantity_kb_presets_and_free_input():
+    cbs = [c for c in _all_callbacks(calc_quantity_kb()) if c.startswith("calc:qty:")]
+    assert cbs == [f"calc:qty:{n}" for n in (1, 2, 3, 4, 5, 10, 50, 100)] + ["calc:qty:other"]
 
 
 def test_model_pick_uses_calc_namespace():
@@ -68,10 +66,10 @@ def test_result_kb_export_button_when_run_id():
     assert not any(c.startswith("calc:xlsx:") for c in without)
 
 
-def test_export_upsell_kb_links_to_plan_and_back():
+def test_export_upsell_kb_has_back_and_no_purchase():
+    # Тестовый период: кнопок покупки нет, только «Назад».
     cbs = _all_callbacks(export_upsell_kb("calc:restart"))
-    assert "profile:plan" in cbs
-    assert "calc:restart" in cbs
+    assert cbs == ["calc:restart"]
 
 
 def test_brand_list_kb_back_to_start():

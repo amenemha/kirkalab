@@ -136,7 +136,7 @@ def test_free_user_sees_upsell_edit():
             for row in bot.edited[0]["reply_markup"].inline_keyboard
             for b in row
         ]
-        assert "profile:plan" in cbs
+        assert "profile:plan" not in cbs
         assert "hist:list" in cbs
 
     asyncio.run(run())

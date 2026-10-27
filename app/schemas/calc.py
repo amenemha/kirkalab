@@ -32,6 +32,9 @@ class CalcRequest(BaseModel):
     uptime_pct: Decimal = Decimal("100")
     hardware_cost: Decimal | None = None
     premium: bool = False
+    # Алгоритм и единица хешрейта модели (None → SHA-256, TH/s).
+    algorithm: str | None = None
+    hashrate_unit: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -64,7 +67,8 @@ class CalcRequest(BaseModel):
 
         # Strict free-mode bounds (relaxed when premium=True).
         if not self.premium:
-            if not (FREE_HASHRATE_MIN <= self.hashrate_ths <= FREE_HASHRATE_MAX):
+            sha = (self.algorithm or "SHA-256").upper().startswith("SHA") and (self.hashrate_unit or "TH/s") == "TH/s"
+            if sha and not (FREE_HASHRATE_MIN <= self.hashrate_ths <= FREE_HASHRATE_MAX):
                 fail(
                     "hashrate_ths",
                     f"must be between {FREE_HASHRATE_MIN} and {FREE_HASHRATE_MAX} TH/s",
@@ -103,6 +107,9 @@ class CalcResponse(BaseModel):
     network_difficulty: Decimal
     block_reward_btc: Decimal
     market_captured_at: str | None = None
+    # Добыча по монетам за сутки (для Scrypt — LTC + DOGE и т.д.).
+    algorithm: str | None = None
+    coins: list[dict] | None = None
 
     input: CalcRequest = Field(...)
 
@@ -146,6 +153,8 @@ class InternalCalcRequest(BaseModel):
     quantity: int = 1
     power_price: Decimal
     currency: str = "USDT"
+    # В какой валюте введена цена кВт·ч (RUB/USDT/…); сервер переводит в USDT.
+    power_price_currency: str = "USDT"
     pool_fee_pct: Decimal = Decimal("1.0")
     uptime_pct: Decimal = Decimal("100")
     hardware_cost: Decimal | None = None
