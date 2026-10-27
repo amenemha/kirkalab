@@ -486,3 +486,12 @@ def notify_test(db: Session = Depends(get_db), user=Depends(get_current_admin)):
     if not tg:
         raise HTTPException(400, "Аккаунт не связан с Telegram")
     return {"sent": ns.send_test(db, tg)}
+
+
+@router.get("/notify/log")
+def notify_log(limit: int = 50, db: Session = Depends(get_db), user=Depends(get_current_admin)):
+    """Что приходило в Telegram: последние отправленные уведомления."""
+    from app.services import activity as act
+
+    tg = user.telegram_user_id
+    return {"items": act.feed(db, tg=tg, source="notify", limit=limit) if tg else []}

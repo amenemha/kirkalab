@@ -820,3 +820,22 @@ def internal_notify_test(
     from app.services.notify import service as ns
 
     return {"sent": ns.send_test(db, tg)}
+
+
+@router.post("/activity")
+def internal_activity(
+    body: dict,
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    db: Session = Depends(get_db),
+):
+    """Бот сообщает о нажатой кнопке/команде — для админки."""
+    _require_bot_secret(x_bot_secret)
+    from app.services import activity as act
+
+    tg = int(body.get("telegram_user_id") or 0) or None
+    action = str(body.get("action") or "")[:120]
+    if not tg or not action:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="telegram_user_id и action обязательны")
+    meta = {k: body.get(k) for k in ("username", "name") if body.get(k)}
+    act.record(db, source="bot", action=action, tg_id=tg, label=act.bot_label(action), meta=meta)
+    return {"ok": True}

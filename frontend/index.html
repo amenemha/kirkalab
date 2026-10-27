@@ -6,7 +6,7 @@
 <title>Kirka — ферма</title>
 <meta name="theme-color" content="#0E0F10">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2301696F'/%3E%3Cpath d='M9 23 16 9l7 14M12 18h8' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/farm.css?v=9">
+<link rel="stylesheet" href="/farm.css?v=10">
 </head>
 <body>
 <div id="login" class="login" hidden>
@@ -31,6 +31,7 @@
       <button class="tab" data-page="errors">Проблемы <b id="errBadge" class="badge" hidden></b></button>
       <button class="tab" data-page="clients">Клиенты</button>
       <button class="tab" data-page="pools">Пулы</button>
+      <button class="tab" data-page="admin" id="admTab" hidden>Админка</button>
     </nav>
     <div class="gsearch"><svg viewBox="0 0 24 24" width="15" height="15"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="gq" type="search" placeholder="Найти асик: IP, воркер, серийный, место…" autocomplete="off" aria-label="Поиск"><div id="gqRes" class="gres" hidden></div></div>
     <div class="auto" title="Данные обновляются сами раз в минуту"><i></i><span id="syncAt">—</span></div>
@@ -68,6 +69,6 @@
 <div id="tip" class="tip2" hidden></div>
 
 <script src="/vendor/qrcode.min.js"></script>
-<script src="/farm.js?v=11"></script>
+<script src="/farm.js?v=12"></script>
 </body>
 </html>

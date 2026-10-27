@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, calc, devices, energy, farm, firmware, internal, pools, qr_auth, users
+from app.api.v1 import admin, auth, calc, devices, energy, farm, firmware, internal, pools, qr_auth, users
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router)
@@ -13,3 +13,5 @@ api_router.include_router(internal.router)
 api_router.include_router(farm.router)
 api_router.include_router(pools.router)
 api_router.include_router(energy.router)
+api_router.include_router(admin.router)
+api_router.include_router(admin.track_router)

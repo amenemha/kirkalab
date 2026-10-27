@@ -91,6 +91,10 @@ async def main() -> None:
     raise
 
   dispatcher = Dispatcher(storage=storage)
+  from bot.activity import ActivityMiddleware
+
+  dispatcher.message.outer_middleware(ActivityMiddleware())
+  dispatcher.callback_query.outer_middleware(ActivityMiddleware())
   for handler_router in routers:
     dispatcher.include_router(handler_router)
   register_error_alerts(dispatcher, notifier)
