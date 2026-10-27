@@ -157,4 +157,4 @@ def feed(db: Session, tg: int | None = None, source: str | None = None, limit: i
     if source:
         q = q.where(ActivityEvent.source == source)
     return [{"ts": _iso(e.ts), "tg_id": e.tg_id, "source": e.source, "action": e.action,
-             "label": e.label or e.action, "text": (e.meta or {}).get("text")} for e in db.scalars(q)]
+             "label": e.label or e.action, "text": (e.meta or {}).get("text"), "batch": (e.meta or {}).get("batch")} for e in db.scalars(q)]

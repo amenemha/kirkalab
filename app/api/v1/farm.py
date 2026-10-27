@@ -495,3 +495,23 @@ def notify_log(limit: int = 50, db: Session = Depends(get_db), user=Depends(get_
 
     tg = user.telegram_user_id
     return {"items": act.feed(db, tg=tg, source="notify", limit=limit) if tg else []}
+
+
+@router.get("/notify/batch/{token}")
+def notify_batch(token: str, db: Session = Depends(get_db)):
+    """Асики одного уведомления: «Открыть эти асики» из Telegram ведёт сюда."""
+    from app.services.notify import service as ns
+
+    b = ns.get_batch(db, token)
+    if not b:
+        raise HTTPException(404, "Это уведомление уже недоступно (хранятся 30 дней)")
+    ids = list(dict.fromkeys(int(i["id"]) for i in b.get("items") or []))
+    devs = {d.id: d for d in db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.id.in_(ids)))} if ids else {}
+    sites, conts, clients = _refs(db)
+    rows = []
+    for it in b.get("items") or []:
+        d = devs.get(int(it["id"]))
+        if d is None:
+            continue
+        rows.append({**_dev_row(d, sites, conts, clients), "ev": {k: v for k, v in it.items() if k != "id"}})
+    return {"kind": b.get("kind"), "at": b.get("at"), "text": b.get("text"), "items": rows}

@@ -187,7 +187,7 @@ def recognize(text: str) -> dict | None:
             "private": private, "live": prov in LIVE}
 
 
-def pool_connect(db: Session, user: models.User, text: str, cli=None) -> dict:
+def pool_connect(db: Session, user: models.User, text: str, cli=None, shared: bool = False, label: str | None = None) -> dict:
     """Добавляет ссылку наблюдателя. Для ViaBTC сразу проверяет и читает хешрейт."""
     r = recognize(text)
     if not r:
@@ -200,6 +200,8 @@ def pool_connect(db: Session, user: models.User, text: str, cli=None) -> dict:
                                      pm.PoolAccount.coin == coin)
     ex = db.scalars(q).first()
     if ex is not None:
+        if shared or ex.owner_user_id is None and user.is_admin:
+            return {"account": pool_view(ex), "found": True, "already": True, **r}
         if ex.owner_user_id not in (None, user.id):
             raise ConnError("Эта ссылка уже подключена у другого человека.")
         if ex.owner_user_id == user.id:
@@ -207,8 +209,8 @@ def pool_connect(db: Session, user: models.User, text: str, cli=None) -> dict:
         # общая ссылка оператора — отдаём человеку копией не будем: просто сообщаем
         return {"account": pool_view(ex), "found": True, "already": True, "shared": True, **r}
     a = pm.PoolAccount(provider=r["provider"], access_key=r["key"], coin=coin, sub_user_id=0, url=r["url"],
-                       owner_user_id=user.id, active=True, track=True,
-                       note_user=user.handle)
+                       owner_user_id=None if shared else user.id, active=True, track=True,
+                       note_user=(label or "").strip()[:120] or (None if shared else user.handle))
     found = False
     if r["live"]:
         from app.services.pools.sync import sync_account  # noqa: PLC0415

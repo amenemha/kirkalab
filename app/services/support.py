@@ -160,15 +160,20 @@ def incoming(db: Session, tg: int, text: str, meta: dict | None = None, sender=N
     msg = SupportMessage(tg_id=tg, direction="in", text=text[:4000], status="new", meta=meta)
     db.add(msg)
     db.commit()
+    q = (meta.get("quote") or "").strip()
+    qline = ""
+    if q:
+        who = "сообщение бота" if meta.get("quote_bot") else "своё сообщение"
+        qline = f"↪ В ответ на {who}:\n«{q[:600]}»" + (f"\n{meta['quote_link']}" if meta.get("quote_link") else "") + "\n\n"
     fwd = {}
     for m in managers(db):
         if m == tg:
             continue
         if file:
-            body = f"✉️ {('Файл' if file.get('type') != 'photo' else 'Фото')} от {_who(meta, tg)} (ID {tg})" + (f":\n\n{text[:700]}" if text else "") + "\n\n— «Ответить» на это сообщение — ответ уйдёт человеку."
+            body = f"✉️ {('Файл' if file.get('type') != 'photo' else 'Фото')} от {_who(meta, tg)} (ID {tg})" + ":\n\n" + qline + (text[:700] if text else "") + "\n\n— «Ответить» на это сообщение — ответ уйдёт человеку."
             mid, _ = media_sender(m, {"type": file.get("type"), "file_id": file["file_id"]}, body, reply_button=False)
         else:
-            mid = sender(m, f"✉️ Сообщение от {_who(meta, tg)} (ID {tg}):\n\n{text[:3500]}\n\n— Ответьте на это сообщение (свайп/«Ответить»), и бот передаст ответ. Или напишите из админки на сайте.", reply_button=False)
+            mid = sender(m, f"✉️ Сообщение от {_who(meta, tg)} (ID {tg}):\n\n{qline}{text[:3000]}\n\n— Ответьте на это сообщение (свайп/«Ответить»), и бот передаст ответ. Или напишите из админки на сайте.", reply_button=False)
         if mid:
             fwd[str(m)] = mid
     msg.meta = dict(msg.meta or {}, fwd=fwd)
@@ -228,6 +233,7 @@ def send_out(db: Session, tg_ids: list[int], text: str, *, by_user_id: int | Non
 def thread(db: Session, tg: int, limit: int = 200) -> list[dict]:
     rows = db.scalars(select(SupportMessage).where(SupportMessage.tg_id == tg).order_by(SupportMessage.ts.desc(), SupportMessage.id.desc()).limit(limit)).all()
     return [{"id": r.id, "ts": act._iso(r.ts), "dir": r.direction, "text": r.text, "status": r.status, "broadcast": bool(r.broadcast),
+             "quote": (r.meta or {}).get("quote"), "quote_bot": bool((r.meta or {}).get("quote_bot")), "quote_link": (r.meta or {}).get("quote_link"),
              "file": {k: v for k, v in ((r.meta or {}).get("file") or {}).items() if k in ("type", "name", "size", "mime")} or None} for r in reversed(rows)]
 
 

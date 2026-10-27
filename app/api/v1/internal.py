@@ -857,6 +857,12 @@ def internal_support(
     if not tg or not (text or file):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="telegram_user_id и text/file обязательны")
     meta = {k: body.get(k) for k in ("username", "name") if body.get(k)}
+    if body.get("quote"):
+        meta["quote"] = str(body["quote"])[:1500]
+        meta["quote_bot"] = bool(body.get("quote_bot"))
+        ql = str(body.get("quote_link") or "")
+        if ql.startswith("https://kirkalab.ru/"):
+            meta["quote_link"] = ql[:300]
     m = sup.incoming(db, tg, text, meta, file=file)
     return {"ok": True, "id": m.id, "managers": len((m.meta or {}).get("fwd") or {})}
 

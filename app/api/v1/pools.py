@@ -28,6 +28,7 @@ def _th(v):
 def _acc(a: pm.PoolAccount) -> dict:
     return {
         "id": a.id, "provider": a.provider, "coin": a.coin, "account": a.account, "user": a.note_user,
+        "owner_user_id": a.owner_user_id, "url": a.url, "created_at": a.created_at.isoformat() if getattr(a, "created_at", None) else None,
         "group": a.group_name, "track": a.track, "active": a.active,
         "ths_10m": _th(a.hs_10m), "ths_1h": _th(a.hs_1h), "ths_1d": _th(a.hs_1d),
         "w_active": a.workers_active, "w_inactive": a.workers_inactive, "w_invalid": a.workers_invalid,
@@ -38,9 +39,11 @@ def _acc(a: pm.PoolAccount) -> dict:
 
 @router.get("/accounts")
 def accounts(db: Session = Depends(get_db)):
-    rows = db.scalars(select(pm.PoolAccount).order_by(pm.PoolAccount.group_name, pm.PoolAccount.account)).all()
+    from app.services.connections import POOLS
+    rows = db.scalars(select(pm.PoolAccount).order_by(pm.PoolAccount.account)).all()
     via = [_acc(a) for a in rows if a.provider == "viabtc"]
-    other = [{"id": a.id, "provider": a.provider, "group": a.group_name, "url": a.url} for a in rows if a.provider != "viabtc"]
+    other = [{"id": a.id, "provider": a.provider, "name": POOLS.get(a.provider, (a.provider,))[0], "coin": a.coin,
+              "user": a.note_user, "url": a.url, "owner_user_id": a.owner_user_id} for a in rows if a.provider != "viabtc"]
     return {"items": via, "other": other}
 
 
@@ -78,44 +81,44 @@ def account_daily(aid: int, d_from: str | None = None, d_to: str | None = None, 
 
 
 @router.get("/daily")
-def all_daily(d_from: str | None = None, d_to: str | None = None, tz: int = 3, group: str | None = None, db: Session = Depends(get_db)):
+def all_daily(d_from: str | None = None, d_to: str | None = None, tz: int = 3, coin: str | None = None, db: Session = Depends(get_db)):
     f, t = _parse_period(d_from, d_to)
     q = select(pm.PoolAccount).where(pm.PoolAccount.active.is_(True), pm.PoolAccount.provider == "viabtc")
-    if group:
-        q = q.where(pm.PoolAccount.group_name == group)
+    if coin:
+        q = q.where(pm.PoolAccount.coin == coin)
     out = []
-    for a in db.scalars(q.order_by(pm.PoolAccount.group_name, pm.PoolAccount.account)):
+    for a in db.scalars(q.order_by(pm.PoolAccount.account)):
         rows = day_table(db, a.id, f, t, tz)
         out.append({"account": _acc(a), "days": [{"day": r["day"], "ths": _th(r["avg_hs"]), "hours": r["hours"], "part": r["source"].startswith("в архиве"), "src": r["source"], "profit": r["profit"]} for r in rows]})
     return {"from": f.isoformat(), "to": t.isoformat(), "items": out}
 
 
 @router.get("/daily/export.xlsx")
-def daily_export(d_from: str | None = None, d_to: str | None = None, tz: int = 3, group: str | None = None, db: Session = Depends(get_db)):
+def daily_export(d_from: str | None = None, d_to: str | None = None, tz: int = 3, coin: str | None = None, db: Session = Depends(get_db)):
     import openpyxl
     from openpyxl.styles import Font
 
-    data = all_daily(d_from, d_to, tz, group, db)
+    data = all_daily(d_from, d_to, tz, coin, db)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Хешрейт по суткам"
     days = [d["day"] for d in data["items"][0]["days"]] if data["items"] else []
-    ws.append(["Группа", "Аккаунт", "Монета"] + [datetime.fromisoformat(d).strftime("%d.%m") for d in days] + ["Среднее, TH/s"])
+    ws.append(["Аккаунт", "Название", "Монета"] + [datetime.fromisoformat(d).strftime("%d.%m") for d in days] + ["Среднее, TH/s"])
     for c in ws[1]:
         c.font = Font(bold=True)
     for it in data["items"]:
         a = it["account"]
         vals = [d["ths"] for d in it["days"]]
         ok = [v for v in vals if v is not None]
-        ws.append([a["group"], a["account"], a["coin"]] + vals + [round(sum(ok) / len(ok), 3) if ok else None])
+        ws.append([a["account"], a["user"], a["coin"]] + vals + [round(sum(ok) / len(ok), 3) if ok else None])
     ws2 = wb.create_sheet("Начисления")
-    ws2.append(["Группа", "Аккаунт", "Монета"] + [datetime.fromisoformat(d).strftime("%d.%m") for d in days] + ["Итого"])
+    ws2.append(["Аккаунт", "Название", "Монета"] + [datetime.fromisoformat(d).strftime("%d.%m") for d in days] + ["Итого"])
     for c in ws2[1]:
         c.font = Font(bold=True)
     for it in data["items"]:
         a = it["account"]
         vals = [d["profit"] for d in it["days"]]
-        ws2.append([a["group"], a["account"], a["coin"]] + vals + [sum(v or 0 for v in vals)])
+        ws2.append([a["account"], a["user"], a["coin"]] + vals + [sum(v or 0 for v in vals)])
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -171,7 +174,29 @@ def account_patch(aid: int, body: dict, db: Session = Depends(get_db)):
     for k in ("active", "track"):
         if k in body:
             setattr(a, k, bool(body[k]))
-    if "group" in body:
-        a.group_name = (body["group"] or None)
+    if "label" in body:
+        a.note_user = (str(body["label"] or "").strip()[:120] or None)
     db.commit()
     return _acc(a)
+
+
+@router.post("/add")
+def account_add(body: dict, db: Session = Depends(get_db), user=Depends(get_current_admin)):
+    """Админ добавляет ссылку наблюдателя прямо на странице «Пулы» (общая, видна всем админам)."""
+    from app.services import connections as cn
+
+    try:
+        r = cn.pool_connect(db, user, str(body.get("url") or ""), shared=True, label=body.get("label"))
+    except cn.ConnError as e:
+        raise HTTPException(400, e.text) from None
+    return r
+
+
+@router.delete("/accounts/{aid}")
+def account_delete(aid: int, db: Session = Depends(get_db)):
+    a = db.get(pm.PoolAccount, aid)
+    if not a:
+        raise HTTPException(404, "Нет такой ссылки")
+    db.delete(a)
+    db.commit()
+    return {"ok": True}

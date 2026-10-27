@@ -63,6 +63,23 @@ def _first_in_group(message: Message) -> bool:
   return True
 
 
+def quote_of(message: Message) -> dict:
+  """На что человек отвечает: цитата (или весь текст сообщения) и ссылка «Открыть эти асики», если была."""
+  rm = message.reply_to_message
+  if rm is None:
+    return {}
+  q = message.quote.text if getattr(message, "quote", None) and message.quote.text else (rm.text or rm.caption or "")
+  if not q:
+    q = "фото" if rm.photo else "файл" if rm.document else "сообщение"
+  out = {"quote": q[:1500], "quote_bot": bool(rm.from_user and rm.from_user.is_bot)}
+  kb = getattr(rm, "reply_markup", None)
+  for row in (kb.inline_keyboard if kb else []):
+    for b in row:
+      if b.url and "#ev/" in b.url:
+        out["quote_link"] = b.url
+  return out
+
+
 async def _deliver(message: Message) -> bool:
   u = message.from_user
   name = " ".join(x for x in (u.first_name, u.last_name) if x) or None
@@ -70,6 +87,7 @@ async def _deliver(message: Message) -> bool:
   f = file_of(message)
   if f:
     body["file"] = f
+  body.update(quote_of(message))
   r = await message.bot.kirkalab_client._request("POST", "/api/v1/internal/support", headers=_hdr(), json=body)
   return r.status_code == 200
 
