@@ -108,6 +108,7 @@ def test_bot_notify_endpoints(client):
 
 
 def test_bot_notify_render():
+    pytest.importorskip("aiogram")
     from bot.handlers.notify import render
 
     text, kb = render({"prefs": ns.get_prefs.__globals__["_merge"](ns.DEFAULTS, {}), "types": ns.TYPES})
