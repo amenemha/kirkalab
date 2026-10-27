@@ -325,6 +325,7 @@ def tick(db: Session, now_ts: float | None = None, sender=send_telegram) -> int:
         if prefs["types"]["daily"] and not sleeping and st.get("daily") != today and now_msk.hour * 60 + now_msk.minute >= _mins(prefs["daily_at"]):
             if "off" in st and sender(tg, daily_text(db, now_ts)):
                 sent += 1
+                _log_sent(db, tg, "daily", "Утренняя сводка")
             st["daily"] = today
             _save_state(db, tg, st)
         due = now_ts - float(st.get("last") or 0) >= prefs["every_min"] * 60
@@ -340,6 +341,7 @@ def tick(db: Session, now_ts: float | None = None, sender=send_telegram) -> int:
             text = (text or "") + "\n\n<i>Сообщение пришло во время сна: массовое отключение.</i>"
         if text and sender(tg, text):
             sent += 1
+            _log_sent(db, tg, "digest", text)
         _save_state(db, tg, new_state)
     return sent
 
@@ -353,4 +355,17 @@ def send_test(db: Session, tg: int) -> bool:
             f"Ошибки: {LEVEL_NAMES[prefs['min_level']]}\n"
             f"Держится не меньше {prefs['hold_min']} мин, сводка раз в {prefs['every_min']} мин\n"
             f"Сон: {'с ' + s['from'] + ' до ' + s['to'] if s['on'] else 'выключен'}")
-    return send_telegram(tg, text)
+    ok = send_telegram(tg, text)
+    if ok:
+        _log_sent(db, tg, "test", "Проверка уведомлений")
+    return ok
+
+
+def _log_sent(db: Session, tg: int, kind: str, text: str) -> None:
+    """Пишем отправленное в журнал: лента «Что приходило» на сайте и админка."""
+    import re  # noqa: PLC0415
+
+    from app.services import activity as act  # noqa: PLC0415
+
+    plain = re.sub(r"<[^>]+>", "", text or "").strip()
+    act.record(db, source="notify", action=kind, tg_id=tg, label=plain[:300], meta={"text": plain[:1500]})

@@ -146,8 +146,8 @@ function placeTxt(d, short) {
 }
 
 // ---------- routing ----------
-const PAGES = { today: pageToday, map: pageMap, cont: pageCont, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools, calc: pageCalc, notify: pageNotify, energy: pageEnergy };
-const TITLES = { today: "Обзор фермы", map: "Контейнеры", cont: "Контейнер", asics: "Асики", errors: "Проблемы", clients: "Клиенты хостинга", pools: "Пулы", calc: "Калькулятор доходности", notify: "Уведомления", energy: "Энергетика" };
+const PAGES = { today: pageToday, map: pageMap, cont: pageCont, asics: pageAsics, errors: pageErrors, clients: pageClients, pools: pagePools, calc: pageCalc, notify: pageNotify, energy: pageEnergy, admin: pageAdmin };
+const TITLES = { today: "Обзор фермы", map: "Контейнеры", cont: "Контейнер", asics: "Асики", errors: "Проблемы", clients: "Клиенты хостинга", pools: "Пулы", calc: "Калькулятор доходности", notify: "Уведомления", energy: "Энергетика", admin: "Админка" };
 const NAVOF = { cont: "map" };
 async function go(p, keep, arg) {
   if (!PAGES[p]) p = "today";
@@ -155,7 +155,7 @@ async function go(p, keep, arg) {
   if (!keep) { $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; S.sel.clear(); updSel(); }
   $$(".tab[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === (NAVOF[p] || p)));
   $("#pageTitle").textContent = TITLES[p];
-  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify" || p === "energy";
+  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify" || p === "energy" || p === "admin";
   $("#pageAside").innerHTML = "";
   // Каждый переход — шаг в истории браузера: «Назад» (кнопка или браузерная) возвращает на прошлую страницу с её фильтрами.
   const h = "#" + p + (S.arg ? "/" + S.arg : ""), depth = (history.state && history.state.d) || 0;
@@ -164,6 +164,7 @@ async function go(p, keep, arg) {
     else { history.replaceState(Object.assign({}, history.state, { d: depth, f: JSON.stringify(S.f), ef: JSON.stringify(S.ef) }), "", location.hash); history.pushState({ d: depth + 1 }, "", h); }
   }
   const bk = $("#backBtn"); if (bk) bk.hidden = !((history.state && history.state.d) > 0);
+  if (!keep) trackPage(p, S.arg);
   try { await PAGES[p](); } catch (e) { if (S.page !== p) return; if (e.message === "auth") return showLogin(e.status === 403 ? "Ферма доступна администраторам. Войдите под нужным Telegram." : ""); $("#main").innerHTML = `<div class="empty">Не удалось загрузить: ${esc(e.message)}</div>`; console.error(e); }
 }
 function filtConts() { return S.sum.containers.filter((c) => !MS.site.size || MS.site.has(String(c.site_id))); }
@@ -203,6 +204,7 @@ async function pageToday() {
   if (noPlace) att.push({ col: "mut", t: "Без места в раскладке", s: "IP не совпал с местом — поправьте раскладку", n: noPlace, go: ["asics", "noplace"] });
   if (S.page !== "today" || seq !== S.seq) return;
   $("#main").innerHTML = `
+  <div id="nStrip"></div>
   <div class="kpis">
     <button class="k click" data-q="working" title="Сколько асиков сейчас отдают хешрейт"><div class="l">Работают</div><div class="v ok">${nf(agg.working)}<small>из ${nf(agg.total)}</small></div>
       <div class="bar"><span style="width:${pw(agg.working)}%;background:var(--ok)"></span><span style="width:${pw(agg.suspended)}%;background:var(--susp)"></span><span style="width:${pw(agg.offline)}%;background:var(--bad)"></span></div></button>
@@ -252,6 +254,7 @@ async function pageToday() {
   // при смене ширины окна (поворот телефона, боковая панель) перерисовываем, а не растягиваем картинку
   let rw = $("#hrChart").clientWidth; const ro = new ResizeObserver(() => { const el = $("#hrChart"); if (!el) return ro.disconnect(); if (Math.abs(el.clientWidth - rw) > 8) { rw = el.clientWidth; clearTimeout(ro.t); ro.t = setTimeout(() => drawFarm(ch), 150); } });
   ro.observe($("#hrChart"));
+  fillNotifyStrip();
 }
 const SER = { ths: { k: "ths", unit: "PH/s", f: (v) => v / 1000, d: 1, name: "Хешрейт" }, online: { k: "online", unit: "асиков", f: (v) => v, d: 0, name: "В работе" }, kw: { k: "kw", unit: "МВт", f: (v) => v / 1000, d: 2, name: "Потребление" } };
 async function drawFarm(ch) {
@@ -1078,7 +1081,7 @@ const TIMES = Array.from({ length: 48 }, (_, i) => String(Math.floor(i / 2)).pad
 const tsel = (id, cur) => `<select class="in" id="${id}" style="width:96px">${(TIMES.includes(cur) ? TIMES : [cur, ...TIMES]).map((t) => `<option ${t === cur ? "selected" : ""}>${t}</option>`).join("")}</select>`;
 const NT = { HOLD: [0, 5, 10, 15, 30, 60], EVERY: [5, 15, 30, 60, 180], WAKE: [0, 10, 30, 100] };
 async function pageNotify() {
-  const d = await api("/farm/notify");
+  const [d, lg] = await Promise.all([api("/farm/notify"), api("/farm/notify/log?limit=30").catch(() => ({ items: [] }))]);
   const p = d.prefs, T = d.types, Lv = d.levels;
   const opt = (arr, cur, fmt) => arr.map((v) => `<option value="${v}" ${v === cur ? "selected" : ""}>${fmt(v)}</option>`).join("");
   $("#main").innerHTML = `
@@ -1099,10 +1102,11 @@ async function pageNotify() {
       <div class="sec"><h4>Утренняя сводка</h4><div class="crow"><span class="mut">Время (МСК)</span>${tsel("nDaily", p.daily_at)}</div></div>
       <div class="crow" style="margin-top:14px"><button class="btn pri" id="nSave">Сохранить</button><button class="btn" id="nTest" ${d.linked ? "" : "disabled"}>Прислать проверку</button><span class="hint" id="nMsg"></span></div>
     </div></div>
-    <div class="w c5"><div class="wh">Как это работает</div><div class="wb"><div class="hint" style="font-size:12.5px;line-height:1.55">
+    <div class="c5 ncol"><div class="w"><div class="wh">Что приходило в Telegram<span class="sp"></span><span class="faint" style="font-weight:400;text-transform:none;letter-spacing:0">${lg.items.length ? "последние " + lg.items.length : ""}</span></div><div class="wb nlog">${lg.items.length ? lg.items.map((x) => `<details class="nli"><summary><span class="num">${tfmt(x.ts)}</span><b>${esc({ digest: "Сводка", daily: "Утренняя сводка", test: "Проверка" }[x.action] || x.action)}</b><span class="mut">${esc((x.label || "").split("\n").slice(0, 2).join(" · ").slice(0, 110))}</span></summary><pre>${esc(x.text || x.label || "")}</pre></details>`).join("") : `<div class="hint">Пока ничего не отправлено. Сообщения появятся здесь, как только бот пришлёт первую сводку. Кнопка «Прислать проверку» — отправить пробное сейчас.</div>`}</div></div>
+    <div class="w"><div class="wh">Как это работает</div><div class="wb"><div class="hint" style="font-size:12.5px;line-height:1.55">
       Бот не пересылает каждое событие CROFT — за сутки их тысячи. Раз в выбранный интервал он сравнивает состояние фермы с тем, о чём уже сообщил, и присылает одно сообщение: сколько асиков пропало и вернулось, какие ошибки появились, где больше всего (по контейнерам).<br><br>
       Ошибка или «нет связи» попадает в сообщение, только если держится дольше порога — короткое «мигание» не тревожит.<br><br>
-      Эти же настройки есть в боте: кнопка «🔔 Уведомления» в меню или команда /notify.</div></div></div>
+      Эти же настройки есть в боте: кнопка «🔔 Уведомления» в меню или команда /notify.</div></div></div></div>
   </div>`;
   $("#nOn").onchange = () => save();
   const collect = () => {
@@ -1257,6 +1261,66 @@ async function enPageMeters() {
     </tbody></table><div class="hint" style="margin-top:8px">Почасовки ГПП-16 (Ф-6, Ф-75, Ф-76) относятся к другому объекту — привяжем к площадке после подтверждения.</div></div></div>`;
 }
 
+// ---------- журнал страниц, полоса уведомлений на «Обзоре», админка ----------
+let TRK = { k: "", t: 0 };
+function trackPage(p, arg) {
+  let a = arg || null;
+  if (p === "cont" && a && S.sum) { const c = (S.sum.containers || []).find((x) => String(x.id) === String(a)); if (c) a = c.name; }
+  const k = p + "|" + (a || "");
+  if (k === TRK.k && Date.now() - TRK.t < 30000) return;
+  TRK = { k, t: Date.now() };
+  api("/activity", { method: "POST", body: JSON.stringify({ page: p, arg: a ? String(a).slice(0, 80) : null }) }).catch(() => {});
+}
+let NS = { at: 0, d: null };
+async function fillNotifyStrip() {
+  const el = $("#nStrip"); if (!el) return;
+  try {
+    if (!NS.d || Date.now() - NS.at > 60000) {
+      const [d, lg] = await Promise.all([api("/farm/notify"), api("/farm/notify/log?limit=1").catch(() => ({ items: [] }))]);
+      NS = { at: Date.now(), d: { on: d.prefs.enabled, linked: d.linked, last: lg.items[0] || null } };
+    }
+  } catch (e) { return; }
+  const n = NS.d, x = $("#nStrip"); if (!x) return;
+  const st = !n.linked ? `<b class="bad">не связаны с Telegram</b>` : n.on ? `<b class="ok">включены</b>` : `<b class="warn">выключены</b>`;
+  const last = n.last ? ` · последнее ${tfmt(n.last.ts)} — ${esc((n.last.label || "").split("\n")[0].slice(0, 70))}` : n.on ? " · пока ничего не отправлялось" : "";
+  x.innerHTML = `<button class="nstrip" id="nStripBtn"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span>Уведомления в Telegram: ${st}<span class="mut">${last}</span></span><span class="sp"></span><span class="lnk">Настроить и история →</span></button>`;
+  $("#nStripBtn").onclick = () => go("notify");
+  const bell = $('.ib[data-go="notify"]'); if (bell) bell.classList.toggle("on-dot", !!(n.linked && n.on));
+}
+
+const ADM = { tg: null, src: "" };
+const SRC = { bot: ["Бот", "#2F7FD0"], site: ["Сайт", "#3FA96B"], notify: ["Уведомл.", "#D97A1E"] };
+async function pageAdmin() {
+  const [u, f] = await Promise.all([api("/admin/users"), api("/admin/activity?limit=300" + (ADM.tg ? "&tg=" + ADM.tg : "") + (ADM.src ? "&source=" + ADM.src : ""))]);
+  if (S.page !== "admin") return;
+  const who = (r) => `${esc(r.name || "Без имени")}${r.username ? ` <a class="mut" href="https://t.me/${esc(r.username)}" target="_blank" onclick="event.stopPropagation()">@${esc(r.username)}</a>` : ""}${r.is_admin ? ' <span class="chip">админ</span>' : ""}`;
+  const sel = ADM.tg && u.users.find((r) => String(r.tg_id) === String(ADM.tg));
+  const ago = (iso) => { if (!iso) return "—"; const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? "сейчас" : m < 60 ? m + " мин назад" : m < 1440 ? Math.round(m / 60) + " ч назад" : tfmt(iso); };
+  $("#main").innerHTML = `
+  <div class="kpis">
+    <div class="k"><div class="lbl">Людей</div><div class="num" style="font-size:20px">${nf(u.total)}</div><div class="hint">в боте и на сайте</div></div>
+    <div class="k"><div class="lbl">Запустили бота</div><div class="num" style="font-size:20px">${nf(u.started)}</div><div class="hint">нажали /start</div></div>
+    <div class="k"><div class="lbl">Смотрели ферму</div><div class="num" style="font-size:20px">${nf(u.saw_farm)}</div><div class="hint">ферма, асики, проблемы, пулы</div></div>
+    <div class="k"><div class="lbl">Заходили на сайт</div><div class="num" style="font-size:20px">${nf(u.on_site)}</div><div class="hint">вход по QR или страницы</div></div>
+  </div>
+  <div class="w" style="margin-top:12px"><div class="wh">Пользователи<span class="sp"></span><span class="faint" style="font-weight:400;text-transform:none;letter-spacing:0">клик по строке — все действия человека</span></div>
+    <div class="scroll"><table class="tbl adm"><thead><tr><th>Кто</th><th>Telegram ID</th><th>Впервые</th><th>Последний раз</th><th class="r">Бот</th><th class="r">Сайт</th><th class="r">Расчёты</th><th>Ферма</th><th>Последние действия</th></tr></thead><tbody>
+    ${u.users.map((r) => `<tr class="click${String(r.tg_id) === String(ADM.tg) ? " on" : ""}" data-tg="${r.tg_id}"><td>${who(r)}</td><td class="num">${r.tg_id}</td><td class="num">${tfmt(r.first_seen)}</td><td class="num">${ago(r.last_seen)}</td>
+      <td class="r num">${nf(r.bot_actions)}</td><td class="r num">${nf(r.site_views)}${r.site_logins ? `<span class="faint"> · ${r.site_logins} вх.</span>` : ""}</td><td class="r num">${nf(r.calcs)}</td>
+      <td>${r.saw_farm ? '<span class="ok">смотрел</span>' : '<span class="faint">нет</span>'}</td>
+      <td class="admlast">${r.last.slice(0, 3).map((e) => `<span class="chip" style="border-color:${SRC[e.source][1]}55">${esc(e.label)}</span>`).join("") || '<span class="faint">с 27.10 журнал пуст</span>'}</td></tr>`).join("")}
+    </tbody></table></div></div>
+  <div class="w" style="margin-top:12px"><div class="wh">${sel ? "Действия: " + who(sel) + ' <button class="btn ghost" id="admAll" style="height:24px;margin-left:8px">все люди</button>' : "Лента действий"}<span class="sp"></span>
+    <span class="seg" id="admSrc">${[["", "Все"], ["bot", "Бот"], ["site", "Сайт"], ["notify", "Уведомления"]].map(([k, v]) => `<button data-s="${k}" class="${ADM.src === k ? "on" : ""}">${v}</button>`).join("")}</span></div>
+    <div class="scroll" style="max-height:560px"><table class="tbl"><thead><tr><th>Время (МСК)</th><th>Где</th>${sel ? "" : "<th>Кто</th>"}<th>Действие</th></tr></thead><tbody>
+    ${f.items.map((e) => { const r = u.users.find((x) => x.tg_id === e.tg_id); return `<tr><td class="num">${tfmt(e.ts)}</td><td><span class="dot" style="background:${SRC[e.source][1]}"></span> ${SRC[e.source][0]}</td>${sel ? "" : `<td>${r ? esc(r.name || r.username || r.tg_id) : esc(e.tg_id || "—")}</td>`}<td>${esc(e.label)}</td></tr>`; }).join("") || `<tr><td colspan="4" class="faint">Пока пусто — журнал ведётся с 27.10.</td></tr>`}
+    </tbody></table></div>
+    <div class="hint" style="margin-top:8px">Журнал действий ведётся с 27.10: команды и кнопки бота, страницы сайта, отправленные уведомления. Введённый текст (суммы, почта) не сохраняется — только факт ввода. До 27.10 известно только, когда человек появился, его входы на сайт и расчёты.</div></div>`;
+  $$("tr[data-tg]").forEach((tr) => tr.onclick = () => { ADM.tg = String(ADM.tg) === tr.dataset.tg ? null : tr.dataset.tg; go("admin", true); });
+  $$("#admSrc button").forEach((b) => b.onclick = () => { ADM.src = b.dataset.s; go("admin", true); });
+  const all = $("#admAll"); if (all) all.onclick = () => { ADM.tg = null; go("admin", true); };
+}
+
 // ---------- global search ----------
 (function () {
   const inp = $("#gq"), box = $("#gqRes"); let items = [], hi = 0;
@@ -1303,7 +1367,7 @@ async function boot() {
   }
   if (!tok.get()) return showLogin();
   $("#login").hidden = true; $("#app").hidden = false;
-  try { const me = await api("/auth/me"); $("#av").textContent = ((me.full_name || me.email || "K")[0] || "K").toUpperCase(); } catch (e) { if (e.message === "auth") return showLogin(); }
+  try { const me = await api("/auth/me"); $("#av").textContent = ((me.full_name || me.email || "K")[0] || "K").toUpperCase(); const at = $("#admTab"); if (at) at.hidden = !me.is_admin; } catch (e) { if (e.message === "auth") return showLogin(); }
   const [p, a] = (location.hash || "#today").slice(1).split("/");
   await go(PAGES[p] ? p : "today", false, a);
   clearInterval(tick);
