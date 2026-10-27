@@ -1194,7 +1194,7 @@ async function enPage3d() {
   const q = EN.seq;
   await api("/farm/summary"); // обновит токен: 3D читает живые данные тем же входом
   if (enStale(q)) return;
-  $("#main").innerHTML = `<div class="w" style="height:calc(100vh - 150px);min-height:520px;overflow:hidden"><iframe id="en3d" src="/demo/energy3d.html?embed=1&live=1&v=5" style="border:0;width:100%;height:100%;display:block" title="3D площадка"></iframe></div>`;
+  $("#main").innerHTML = `<div class="w" style="height:calc(100vh - 175px);min-height:520px;overflow:hidden"><iframe id="en3d" src="/demo/energy3d.html?embed=1&live=1&v=6" style="border:0;width:100%;height:100%;display:block" title="3D площадка"></iframe></div><div class="hint" style="margin-top:6px">Если 3D не появилась — <a href="/demo/energy3d.html?live=1&v=6" target="_blank">открыть в отдельной вкладке</a>.</div>`;
 }
 async function enPageHourly() {
   const q = EN.seq;
