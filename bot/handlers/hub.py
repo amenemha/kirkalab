@@ -140,6 +140,7 @@ def hub_kb(url: str) -> InlineKeyboardMarkup:
         [btn("🌊 Пулы", "pools:refresh"), btn("🔔 Уведомления", "notif:open")],
         [btn("🧮 Расчёт", "menu:calculator"), btn("📋 Каталог ASIC", "menu:catalog")],
         [btn("📊 Мои отчёты", "menu:reports"), btn("👤 Профиль", "menu:profile")],
+        [btn("✉️ Написать менеджеру", "sup:write"), btn("❓ Помощь", "hub:help")],
         [btn("🌐 Открыть Kirka", url=url, style="success")],
     ])
 

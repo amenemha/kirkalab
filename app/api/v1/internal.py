@@ -839,3 +839,45 @@ def internal_activity(
     meta = {k: body.get(k) for k in ("username", "name") if body.get(k)}
     act.record(db, source="bot", action=action, tg_id=tg, label=act.bot_label(action), meta=meta)
     return {"ok": True}
+
+
+@router.post("/support")
+def internal_support(
+    body: dict,
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    db: Session = Depends(get_db),
+):
+    """Человек написал менеджеру из бота."""
+    _require_bot_secret(x_bot_secret)
+    from app.services import support as sup
+
+    tg = int(body.get("telegram_user_id") or 0)
+    text = str(body.get("text") or "").strip()
+    if not tg or not text:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="telegram_user_id и text обязательны")
+    meta = {k: body.get(k) for k in ("username", "name") if body.get(k)}
+    m = sup.incoming(db, tg, text, meta)
+    return {"ok": True, "id": m.id, "managers": len((m.meta or {}).get("fwd") or {})}
+
+
+@router.post("/support/reply")
+def internal_support_reply(
+    body: dict,
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    db: Session = Depends(get_db),
+):
+    """Менеджер ответил в Telegram на пересланное сообщение — передаём человеку."""
+    _require_bot_secret(x_bot_secret)
+    from app.services import support as sup
+
+    mgr = int(body.get("manager_tg") or 0)
+    rid = int(body.get("reply_to_message_id") or 0)
+    text = str(body.get("text") or "").strip()
+    if mgr not in sup.managers(db):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not a manager")
+    src = sup.find_by_forward(db, mgr, rid)
+    if not src or not text:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not a support thread")
+    by = db.scalar(select(models.User.id).where(models.User.telegram_user_id == mgr))
+    r = sup.send_out(db, [src.tg_id], text, by_user_id=by)
+    return {"ok": bool(r["sent"]), "to": src.tg_id}
