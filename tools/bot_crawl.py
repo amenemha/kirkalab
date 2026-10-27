@@ -94,7 +94,7 @@ def buttons(calls):
             for row in rm.inline_keyboard:
                 for b in row:
                     texts.append(b.text)
-                    if b.callback_data:
+                    if b.callback_data and b.callback_data != "notif:test":  # проверка шлёт реальное сообщение
                         inl.append((b.text, b.callback_data))
                     if b.url:
                         urls.append((b.text, b.url))
