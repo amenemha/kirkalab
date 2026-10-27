@@ -1039,6 +1039,7 @@ async function pageCalc() {
     try {
       const r = await apiJ("/calc/model", { device_model_id: f.id, quantity: +f.qty || 1, power_price: f.price, power_price_currency: f.cur, pool_fee_pct: f.fee, uptime_pct: f.up, hardware_cost: f.hw || null });
       calcResult(r);
+      if (innerWidth < 900) $("#cRes").scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (e) { $("#cRes").innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`; }
   };
   $("#cGo").onclick = run;
@@ -1073,6 +1074,8 @@ function calcResult(r) {
 }
 
 // ---------- уведомления в Telegram ----------
+const TIMES = Array.from({ length: 48 }, (_, i) => String(Math.floor(i / 2)).padStart(2, "0") + ":" + (i % 2 ? "30" : "00"));
+const tsel = (id, cur) => `<select class="in" id="${id}" style="width:96px">${(TIMES.includes(cur) ? TIMES : [cur, ...TIMES]).map((t) => `<option ${t === cur ? "selected" : ""}>${t}</option>`).join("")}</select>`;
 const NT = { HOLD: [0, 5, 10, 15, 30, 60], EVERY: [5, 15, 30, 60, 180], WAKE: [0, 10, 30, 100] };
 async function pageNotify() {
   const d = await api("/farm/notify");
@@ -1090,10 +1093,10 @@ async function pageNotify() {
         <div><label class="lbl">Список асиков в сообщении</label><select class="in" id="nMax">${opt([0, 5, 10, 20], p.max_lines, (v) => v ? `до ${v}` : "только итоги")}</select></div>
       </div></div>
       <div class="sec"><h4>Сон</h4><div class="crow"><label class="tgl"><input type="checkbox" id="nSl" ${p.sleep.on ? "checked" : ""}> не беспокоить</label>
-        <span>с</span><input class="in" type="time" id="nFrom" value="${esc(p.sleep.from)}" style="width:110px"><span>до</span><input class="in" type="time" id="nTo" value="${esc(p.sleep.to)}" style="width:110px"></div>
-        <div class="crow" style="margin-top:8px"><span class="mut">Будить во сне при отключении</span><select class="in" id="nWake" style="width:150px">${opt(NT.WAKE, p.wake_offline, (v) => v ? `≥ ${v} асиков` : "не будить")}</select></div>
+        <span>с</span>${tsel("nFrom", p.sleep.from)}<span>до</span>${tsel("nTo", p.sleep.to)}</div>
+        <div class="crow" style="margin-top:8px"><span class="mut">Будить во сне при отключении</span><select class="in" id="nWake" style="width:160px;flex:none">${opt(NT.WAKE, p.wake_offline, (v) => v ? `≥ ${v} асиков` : "не будить")}</select></div>
         <div class="hint">Во сне изменения копятся и приходят одним сообщением после пробуждения.</div></div>
-      <div class="sec"><h4>Утренняя сводка</h4><div class="crow"><span class="mut">Время (МСК)</span><input class="in" type="time" id="nDaily" value="${esc(p.daily_at)}" style="width:110px"></div></div>
+      <div class="sec"><h4>Утренняя сводка</h4><div class="crow"><span class="mut">Время (МСК)</span>${tsel("nDaily", p.daily_at)}</div></div>
       <div class="crow" style="margin-top:14px"><button class="btn pri" id="nSave">Сохранить</button><button class="btn" id="nTest" ${d.linked ? "" : "disabled"}>Прислать проверку</button><span class="hint" id="nMsg"></span></div>
     </div></div>
     <div class="w c5"><div class="wh">Как это работает</div><div class="wb"><div class="hint" style="font-size:12.5px;line-height:1.55">
