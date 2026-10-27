@@ -338,3 +338,7 @@ svg.enh{stroke:none}svg.enh .tk{font:11px var(--font-num);fill:var(--faint)}
 .admmsg{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
 .btn.danger{color:#E05252;border-color:#E0525266}
 @media(max-width:900px){.accbtns{grid-template-columns:1fr}.bub{max-width:92%}}
+.bimg{margin:-2px -4px 6px;cursor:zoom-in}.bimg img{display:block;max-width:100%;max-height:260px;border-radius:6px}
+.bfile{display:inline-block;margin-bottom:4px;color:inherit;text-decoration:underline;text-underline-offset:3px}
+.chip.attch{height:26px;gap:6px}.chip.attch a{color:var(--faint);text-decoration:none}
+.drop{outline:2px dashed var(--acc);outline-offset:-4px}

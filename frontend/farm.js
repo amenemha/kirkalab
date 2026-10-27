@@ -19,7 +19,7 @@ const CLS = { offline: "Нет связи", power: "Питание", temperature
 const tok = { get() { try { return JSON.parse(localStorage.getItem(TOKENS)); } catch (e) { return null; } }, set(t) { localStorage.setItem(TOKENS, JSON.stringify(t)); }, clear() { localStorage.removeItem(TOKENS); } };
 async function api(path, opts = {}, retry) {
   if (opts.method && opts.method !== "GET" && !opts.keepCache && typeof S !== "undefined") { S.sumAt = 0; S.devAt = 0; }
-  opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+  opts.headers = Object.assign(opts.body instanceof FormData ? {} : { "Content-Type": "application/json" }, opts.headers || {});
   const t = tok.get();
   if (t && t.access_token) opts.headers.Authorization = "Bearer " + t.access_token;
   const r = await fetch(API + path, opts);
@@ -30,6 +30,12 @@ async function api(path, opts = {}, retry) {
   if (r.status === 401 || r.status === 403) { const e = new Error("auth"); e.status = r.status; throw e; }
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
+}
+async function apiBlob(path) {
+  const t = tok.get();
+  const r = await fetch(API + path, { headers: t && t.access_token ? { Authorization: "Bearer " + t.access_token } : {} });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.blob();
 }
 let qrTimer = null;
 async function showLogin(msg) {
@@ -1288,7 +1294,16 @@ async function fillNotifyStrip() {
   const bell = $('.ib[data-go="notify"]'); if (bell) bell.classList.toggle("on-dot", !!(n.linked && n.on));
 }
 
-const ADM = { tg: null, src: "", sel: new Set(), draft: "", bdraft: "", notify: true, days: 30 };
+const ADM = { tg: null, src: "", sel: new Set(), draft: "", bdraft: "", notify: true, days: 30, file: null, bfile: null };
+const ADM_BLOB = {};
+const fsize = (n) => !n ? "" : n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + " КБ" : (n / 1048576).toFixed(1).replace(".", ",") + " МБ";
+function fileBub(m) {
+  const f = m.file; if (!f) return "";
+  if (f.type === "photo") return `<div class="bimg" data-fid="${m.id}"><span class="faint">фото загружается…</span></div>`;
+  const ic = { video: "🎬", voice: "🎤", audio: "🎵" }[f.type] || "📎";
+  return `<a class="bfile" href="#" data-fdl="${m.id}" data-name="${esc(f.name || "файл")}">${ic} ${esc(f.name || { video: "видео", voice: "голосовое", audio: "аудио" }[f.type] || "файл")}${f.size ? ` <span class="faint">${fsize(f.size)}</span>` : ""}</a>`;
+}
+const attachChip = (f, id) => f ? `<span class="chip attch">📎 ${esc(f.name)} <span class="faint">${fsize(f.size)}</span> <a href="#" id="${id}" title="убрать">✕</a></span>` : "";
 const SRC = { bot: ["Бот", "#2F7FD0"], site: ["Сайт", "#3FA96B"], notify: ["Бот → человеку", "#D97A1E"] };
 const ACC_KIND = { gift: "подарок", trial: "пробный", paid: "оплачен", manual: "вручную" };
 function accChip(a) {
@@ -1312,9 +1327,10 @@ async function pageAdmin() {
   const person = sel ? `
   <div class="grid" style="margin-top:12px">
     <div class="w c7"><div class="wh">Переписка: ${who(sel)}<span class="sp"></span><button class="btn ghost" id="admClose" style="height:24px">закрыть ✕</button></div><div class="wb">
-      <div class="chat" id="admChat">${th.items.length ? th.items.map((m) => `<div class="bub ${m.dir}${m.status === "failed" ? " fail" : ""}"><div>${esc(m.text)}</div><span>${m.dir === "in" ? "от человека" : m.broadcast ? "рассылка" : "вы"} · ${tfmt(m.ts)}${m.status === "failed" ? " · не доставлено" : ""}</span></div>`).join("") : '<div class="hint">Сообщений пока нет. Напишите первым — сообщение придёт человеку от бота, он сможет ответить кнопкой «Ответить».</div>'}</div>
-      <div class="crow" style="margin-top:10px;align-items:flex-end"><textarea class="in" id="admMsg" rows="3" placeholder="Сообщение человеку от бота…" style="flex:1;resize:vertical">${esc(ADM.draft)}</textarea><button class="btn pri" id="admSend">Отправить</button></div>
-      <div class="hint" style="margin-top:6px">Ответить можно и прямо в Telegram: бот пересылает сообщения людей менеджерам — нажмите «Ответить» на пересланном.</div>
+      <div class="chat" id="admChat">${th.items.length ? th.items.map((m) => `<div class="bub ${m.dir}${m.status === "failed" ? " fail" : ""}">${fileBub(m)}${m.text ? `<div>${esc(m.text)}</div>` : ""}<span>${m.dir === "in" ? "от человека" : m.broadcast ? "рассылка" : "вы"} · ${tfmt(m.ts)}${m.status === "failed" ? " · не доставлено" : ""}</span></div>`).join("") : '<div class="hint">Сообщений пока нет. Напишите первым — сообщение придёт человеку от бота, он сможет ответить кнопкой «Ответить» и прислать скриншот или файл.</div>'}</div>
+      <div class="crow" style="margin-top:10px;align-items:flex-end"><textarea class="in" id="admMsg" rows="3" placeholder="Сообщение человеку от бота… Скриншот можно вставить сюда (Ctrl+V) или перетащить файл" style="flex:1;resize:vertical">${esc(ADM.draft)}</textarea><label class="btn" title="Прикрепить файл">📎<input type="file" id="admFile" hidden></label><button class="btn pri" id="admSend">Отправить</button></div>
+      <div id="admAtt" style="margin-top:6px">${attachChip(ADM.file, "admFileX")}</div>
+      <div class="hint" style="margin-top:6px">Файлы до 20 МБ: скриншоты, фото, PDF, видео. Ответить можно и прямо в Telegram: бот пересылает сообщения и файлы людей менеджерам — нажмите «Ответить» на пересланном, можно с фото.</div>
     </div></div>
     <div class="w c5"><div class="wh">Доступ</div><div class="wb">
       ${sel.user_id ? `<div class="accnow">${accChip(sel.access)}${sel.access.until ? `<span class="mut">до ${tfmt(sel.access.until)}</span>` : ""}</div>
@@ -1343,7 +1359,7 @@ async function pageAdmin() {
   <div class="w" style="margin-top:12px"><div class="wh">Пользователи<span class="sp"></span>
     ${nsel ? `<span class="mut" style="text-transform:none;letter-spacing:0;font-weight:400">выбрано ${nsel}</span><button class="btn" id="admSelNone" style="height:26px">снять</button>` : ""}
     <button class="btn" id="admSelAll" style="height:26px">выбрать всех</button></div>
-    ${nsel ? `<div class="bcast"><textarea class="in" id="admB" rows="2" placeholder="Сообщение выбранным (${nsel}) — придёт от бота каждому лично…">${esc(ADM.bdraft)}</textarea><button class="btn pri" id="admBSend">Отправить ${nsel}</button></div>` : ""}
+    ${nsel ? `<div class="bcast"><textarea class="in" id="admB" rows="2" placeholder="Сообщение выбранным (${nsel}) — придёт от бота каждому лично… Можно приложить файл">${esc(ADM.bdraft)}</textarea><label class="btn" title="Прикрепить файл">📎<input type="file" id="admBFile" hidden></label><button class="btn pri" id="admBSend">Отправить ${nsel}</button></div>${ADM.bfile ? `<div style="padding:0 12px 8px">${attachChip(ADM.bfile, "admBFileX")}</div>` : ""}` : ""}
     <div class="scroll"><table class="tbl adm"><thead><tr><th style="width:28px"></th><th>Кто</th><th>Доступ</th><th>Сообщения</th><th>Впервые</th><th>Последний раз</th><th class="r">Бот</th><th class="r">Сайт</th><th class="r">Расчёты</th><th>Ферма</th></tr></thead><tbody>
     ${u.users.map((r) => `<tr class="click${String(r.tg_id) === String(ADM.tg) ? " on" : ""}" data-tg="${r.tg_id}"><td><input type="checkbox" class="admck" data-ck="${r.tg_id}" ${ADM.sel.has(String(r.tg_id)) ? "checked" : ""}></td><td>${who(r)}<div class="faint num" style="font-size:11px">${r.tg_id}</div></td>
       <td>${accChip(r.access)}</td>
@@ -1360,23 +1376,50 @@ async function pageAdmin() {
     </tbody></table></div>
     <div class="hint" style="margin-top:8px">Журнал ведётся с 27.10: команды и кнопки бота, страницы сайта, сообщения и уведомления от бота. Введённый текст в сценариях (суммы, почта) не сохраняется. До 27.10 известно только, когда человек появился, его входы на сайт и расчёты.</div></div>`;
   const re = () => go("admin", true);
-  $$("tr[data-tg]").forEach((tr) => tr.onclick = (e) => { if (e.target.closest(".admck,a")) return; ADM.tg = String(ADM.tg) === tr.dataset.tg ? null : tr.dataset.tg; ADM.draft = ""; re(); });
+  $$("tr[data-tg]").forEach((tr) => tr.onclick = (e) => { if (e.target.closest(".admck,a")) return; ADM.tg = String(ADM.tg) === tr.dataset.tg ? null : tr.dataset.tg; ADM.draft = ""; ADM.file = null; re(); });
   $$(".admck").forEach((c) => c.onchange = () => { c.checked ? ADM.sel.add(c.dataset.ck) : ADM.sel.delete(c.dataset.ck); re(); });
   $("#admSelAll").onclick = () => { u.users.forEach((r) => ADM.sel.add(String(r.tg_id))); re(); };
   const sn = $("#admSelNone"); if (sn) sn.onclick = () => { ADM.sel.clear(); re(); };
   $$("#admSrc button").forEach((b) => b.onclick = () => { ADM.src = b.dataset.s; re(); });
-  const send = async (ids, text, btn) => {
-    if (!text.trim()) return toast("Напишите текст");
-    btn.disabled = true;
-    try { const r = await api("/admin/messages", { method: "POST", keepCache: true, body: JSON.stringify({ tg_ids: ids.map(Number), text }) }); toast(r.failed ? `Отправлено ${r.sent}, не доставлено ${r.failed}` : `Отправлено: ${r.sent}`); return true; }
-    catch (e) { toast("Не удалось отправить"); btn.disabled = false; return false; }
+  const send = async (ids, text, btn, file) => {
+    if (!text.trim() && !file) return toast("Напишите текст или приложите файл");
+    if (file && file.size > 20 * 1048576) return toast("Файл больше 20 МБ");
+    btn.disabled = true; const was = btn.textContent; if (file) btn.textContent = "Загружаю…";
+    try {
+      let r;
+      if (file) { const fd = new FormData(); fd.append("tg_ids", ids.join(",")); fd.append("text", text); fd.append("file", file, file.name); r = await api("/admin/messages/upload", { method: "POST", keepCache: true, body: fd }); }
+      else r = await api("/admin/messages", { method: "POST", keepCache: true, body: JSON.stringify({ tg_ids: ids.map(Number), text }) });
+      toast(r.failed ? `Отправлено ${r.sent}, не доставлено ${r.failed}` : `Отправлено: ${r.sent}`); return true;
+    } catch (e) { toast("Не удалось отправить"); btn.disabled = false; btn.textContent = was; return false; }
   };
-  const b = $("#admB"); if (b) { b.oninput = () => ADM.bdraft = b.value; $("#admBSend").onclick = async () => { if (await send([...ADM.sel], b.value, $("#admBSend"))) { ADM.bdraft = ""; ADM.sel.clear(); re(); } }; }
+  const pickFile = (f, key) => { if (!f) return; if (f.size > 20 * 1048576) return toast("Файл больше 20 МБ"); if (!f.name || f.name === "image.png") f = new File([f], "скриншот_" + new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "") + "." + ((f.type.split("/")[1] || "png").replace("jpeg", "jpg")), { type: f.type }); ADM[key] = f; re(); };
+  const wireAttach = (ta, inp, x, key) => {
+    if (inp) inp.onchange = () => pickFile(inp.files[0], key);
+    const xx = $("#" + x); if (xx) xx.onclick = (e) => { e.preventDefault(); ADM[key] = null; re(); };
+    if (!ta) return;
+    ta.addEventListener("paste", (e) => { const it = [...(e.clipboardData || {}).items || []].find((i) => i.kind === "file"); if (it) { e.preventDefault(); pickFile(it.getAsFile(), key); } });
+    const zone = ta.closest(".wb,.bcast") || ta;
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("drop"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("drop"));
+    zone.addEventListener("drop", (e) => { e.preventDefault(); zone.classList.remove("drop"); pickFile(e.dataTransfer.files[0], key); });
+  };
+  const b = $("#admB"); if (b) { b.oninput = () => ADM.bdraft = b.value; wireAttach(b, $("#admBFile"), "admBFileX", "bfile"); $("#admBSend").onclick = async () => { if (await send([...ADM.sel], b.value, $("#admBSend"), ADM.bfile)) { ADM.bdraft = ""; ADM.bfile = null; ADM.sel.clear(); re(); } }; }
   if (sel) {
     const ch = $("#admChat"); ch.scrollTop = ch.scrollHeight;
     const m = $("#admMsg"); m.oninput = () => ADM.draft = m.value;
     m.onkeydown = (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("#admSend").click(); };
-    $("#admSend").onclick = async () => { if (await send([sel.tg_id], m.value, $("#admSend"))) { ADM.draft = ""; re(); } };
+    wireAttach(m, $("#admFile"), "admFileX", "file");
+    $("#admSend").onclick = async () => { if (await send([sel.tg_id], m.value, $("#admSend"), ADM.file)) { ADM.draft = ""; ADM.file = null; re(); } };
+    $$("[data-fid]").forEach(async (el) => {
+      const id = el.dataset.fid;
+      try { ADM_BLOB[id] = ADM_BLOB[id] || URL.createObjectURL(await apiBlob(`/admin/messages/${id}/file`)); el.innerHTML = `<img src="${ADM_BLOB[id]}" alt="фото">`; el.onclick = () => window.open(ADM_BLOB[id], "_blank"); ch.scrollTop = ch.scrollHeight; }
+      catch (e) { el.innerHTML = '<span class="faint">фото недоступно — откройте в Telegram</span>'; }
+    });
+    $$("[data-fdl]").forEach((a) => a.onclick = async (e) => {
+      e.preventDefault(); const id = a.dataset.fdl;
+      try { ADM_BLOB["d" + id] = ADM_BLOB["d" + id] || URL.createObjectURL(await apiBlob(`/admin/messages/${id}/file`)); const l = document.createElement("a"); l.href = ADM_BLOB["d" + id]; l.download = a.dataset.name; l.click(); }
+      catch (err) { toast("Файл недоступен (больше 20 МБ?) — откройте в Telegram"); }
+    });
     $("#admClose").onclick = () => { ADM.tg = null; re(); };
     const nt = $("#admNotify"); if (nt) nt.onchange = () => ADM.notify = nt.checked;
     const dd = $("#admDays"); if (dd) dd.oninput = () => ADM.days = +dd.value || 30;
@@ -1446,6 +1489,6 @@ async function boot() {
   const [p, a] = (location.hash || "#today").slice(1).split("/");
   await go(PAGES[p] ? p : "today", false, a);
   clearInterval(tick);
-  tick = setInterval(() => { if (S.page === "calc" || S.page === "notify" || (S.page === "energy" && EN.sub !== "scheme") || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select,textarea") || (S.page === "admin" && (ADM.draft || ADM.bdraft)) || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
+  tick = setInterval(() => { if (S.page === "calc" || S.page === "notify" || (S.page === "energy" && EN.sub !== "scheme") || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select,textarea") || (S.page === "admin" && (ADM.draft || ADM.bdraft || ADM.file || ADM.bfile)) || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
 }
 boot();

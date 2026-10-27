@@ -15,7 +15,7 @@ from bot.config import get_settings
 
 router = Router(name="support")
 
-ASK = "✉️ Напишите сообщение одним текстом — я передам менеджеру. Ответ придёт сюда, в этот чат."
+ASK = "✉️ Напишите сообщение или пришлите скриншот, фото, файл — я передам менеджеру. Ответ придёт сюда, в этот чат."
 DONE = "✉️ Передала менеджеру. Ответ придёт сюда, в этот чат."
 
 
@@ -31,12 +31,46 @@ def _menu_kb() -> InlineKeyboardMarkup:
   return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="☰ Меню", callback_data="hub:menu")]])
 
 
+MEDIA = F.photo | F.document | F.video | F.voice | F.audio
+_groups: dict[str, float] = {}
+
+
+def file_of(message: Message) -> dict | None:
+  """Вложение сообщения в виде {type, file_id, name, size, mime}."""
+  if message.photo:
+    p = message.photo[-1]
+    return {"type": "photo", "file_id": p.file_id, "size": p.file_size}
+  for k in ("document", "video", "voice", "audio"):
+    d = getattr(message, k, None)
+    if d:
+      return {"type": k, "file_id": d.file_id, "name": getattr(d, "file_name", None), "size": d.file_size,
+              "mime": getattr(d, "mime_type", None)}
+  return None
+
+
+def _first_in_group(message: Message) -> bool:
+  """Альбом приходит пачкой сообщений — отвечаем «передала» один раз."""
+  g = message.media_group_id
+  if not g:
+    return True
+  import time
+  now = time.monotonic()
+  for k in [k for k, t in _groups.items() if now - t > 120]:
+    _groups.pop(k, None)
+  if g in _groups:
+    return False
+  _groups[g] = now
+  return True
+
+
 async def _deliver(message: Message) -> bool:
   u = message.from_user
   name = " ".join(x for x in (u.first_name, u.last_name) if x) or None
-  r = await message.bot.kirkalab_client._request(
-    "POST", "/api/v1/internal/support", headers=_hdr(),
-    json={"telegram_user_id": u.id, "text": message.text, "username": u.username, "name": name})
+  body = {"telegram_user_id": u.id, "text": message.text or message.caption or "", "username": u.username, "name": name}
+  f = file_of(message)
+  if f:
+    body["file"] = f
+  r = await message.bot.kirkalab_client._request("POST", "/api/v1/internal/support", headers=_hdr(), json=body)
   return r.status_code == 200
 
 
@@ -53,26 +87,30 @@ async def cb_write(cb: CallbackQuery, state: FSMContext) -> None:
   await cb.message.answer(ASK)
 
 
-@router.message(SupportStates.text, F.text)
+@router.message(SupportStates.text, F.text | MEDIA)
 async def got_text(message: Message, state: FSMContext) -> None:
-  if message.text.startswith("/"):
+  if message.text and message.text.startswith("/"):
     await state.clear()
     return
   ok = await _deliver(message)
   await state.clear()
-  await message.answer(DONE if ok else "Не получилось отправить — попробуйте ещё раз чуть позже.", reply_markup=_menu_kb())
+  if _first_in_group(message):
+    await message.answer(DONE if ok else "Не получилось отправить — попробуйте ещё раз чуть позже.", reply_markup=_menu_kb())
 
 
-@router.message(StateFilter(None), F.text, ~F.text.startswith("/"))
+@router.message(StateFilter(None), (F.text & ~F.text.startswith("/")) | MEDIA)
 async def free_text(message: Message) -> None:
-  """Свободный текст: ответ менеджера на пересланное сообщение или новое сообщение менеджеру."""
+  """Свободный текст или файл: ответ менеджера на пересланное сообщение или новое сообщение менеджеру."""
   rt = message.reply_to_message
   if rt and rt.from_user and rt.from_user.id == message.bot.id:
-    r = await message.bot.kirkalab_client._request(
-      "POST", "/api/v1/internal/support/reply", headers=_hdr(),
-      json={"manager_tg": message.from_user.id, "reply_to_message_id": rt.message_id, "text": message.text})
+    body = {"manager_tg": message.from_user.id, "reply_to_message_id": rt.message_id, "text": message.text or message.caption or ""}
+    f = file_of(message)
+    if f:
+      body["file"] = f
+    r = await message.bot.kirkalab_client._request("POST", "/api/v1/internal/support/reply", headers=_hdr(), json=body)
     if r.status_code == 200:
       await message.answer("✓ Ответ отправлен." if r.json().get("ok") else "Не удалось доставить ответ — человек мог остановить бота.")
       return
   ok = await _deliver(message)
-  await message.answer(DONE if ok else "Не получилось отправить — попробуйте ещё раз чуть позже.", reply_markup=_menu_kb())
+  if _first_in_group(message):
+    await message.answer(DONE if ok else "Не получилось отправить — попробуйте ещё раз чуть позже.", reply_markup=_menu_kb())
