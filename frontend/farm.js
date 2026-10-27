@@ -18,7 +18,7 @@ const CLS = { offline: "Нет связи", power: "Питание", temperature
 // ---------- auth ----------
 const tok = { get() { try { return JSON.parse(localStorage.getItem(TOKENS)); } catch (e) { return null; } }, set(t) { localStorage.setItem(TOKENS, JSON.stringify(t)); }, clear() { localStorage.removeItem(TOKENS); } };
 async function api(path, opts = {}, retry) {
-  if (opts.method && opts.method !== "GET" && typeof S !== "undefined") { S.sumAt = 0; S.devAt = 0; }
+  if (opts.method && opts.method !== "GET" && !opts.keepCache && typeof S !== "undefined") { S.sumAt = 0; S.devAt = 0; }
   opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
   const t = tok.get();
   if (t && t.access_token) opts.headers.Authorization = "Bearer " + t.access_token;
@@ -1269,7 +1269,7 @@ function trackPage(p, arg) {
   const k = p + "|" + (a || "");
   if (k === TRK.k && Date.now() - TRK.t < 30000) return;
   TRK = { k, t: Date.now() };
-  api("/activity", { method: "POST", body: JSON.stringify({ page: p, arg: a ? String(a).slice(0, 80) : null }) }).catch(() => {});
+  api("/activity", { method: "POST", keepCache: true, body: JSON.stringify({ page: p, arg: a ? String(a).slice(0, 80) : null }) }).catch(() => {});
 }
 let NS = { at: 0, d: null };
 async function fillNotifyStrip() {
