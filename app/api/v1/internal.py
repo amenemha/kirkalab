@@ -737,6 +737,10 @@ def internal_pools_summary(
     if not ((user and user.is_admin) or telegram_user_id in owners):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Pools are not available")
     items = pool_accounts(db)["items"]
+
+    def _pl(a: dict) -> str:
+        return (a["account"] or a["user"] or "—") + ("" if a["provider"] == "viabtc" else f" · {a['pool']}")
+
     coins: dict[str, dict] = {}
     drops, broken, last = [], [], None
     for a in items:
@@ -749,9 +753,9 @@ def internal_pools_summary(
         c["w_active"] += a["w_active"] or 0
         c["w_inactive"] += a["w_inactive"] or 0
         if a["error"]:
-            broken.append({"account": a["account"], "group": a["group"], "error": a["error"][:80]})
+            broken.append({"account": _pl(a), "group": a["group"], "error": a["error"][:80]})
         elif (a["ths_1d"] or 0) > 0 and (a["ths_1h"] or 0) < a["ths_1d"] * 0.7:
-            drops.append({"account": a["account"], "group": a["group"], "coin": a["coin"], "ths_1h": a["ths_1h"], "ths_1d": a["ths_1d"]})
+            drops.append({"account": _pl(a), "group": a["group"], "coin": a["coin"], "ths_1h": a["ths_1h"], "ths_1d": a["ths_1d"]})
         if a["last_ok"] and (last is None or a["last_ok"] > last):
             last = a["last_ok"]
     y = (_dt.now(_tz(_td(hours=3))).date() - _td(days=1)).isoformat()
@@ -929,4 +933,45 @@ def internal_connections(
         return {"ok": False, "error": e.text}
     out = cn.of_user(db, u)
     out["is_admin"] = u.is_admin
+    return out
+
+
+@router.post("/wallets")
+def internal_wallets(
+    body: dict,
+    x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
+    db: Session = Depends(get_db),
+):
+    """Бот: кошельки человека. action: detect | list | add | mute | unmute | delete."""
+    _require_bot_secret(x_bot_secret)
+    from app.db.wallet_models import WalletWatch
+    from app.services.wallets import watch as ww
+    from app.services.wallets.chains import CHAINS, find_address
+
+    act = str(body.get("action") or "list")
+    if act == "detect":
+        f = find_address(str(body.get("text") or ""))
+        return {"address": f[0], "chains": [{"id": c, "name": CHAINS[c]["name"], "net": CHAINS[c]["net"]} for c in f[1]]} if f else {"address": None}
+    u = _conn_user(db, int(body.get("tg_id") or 0))
+    if act == "add":
+        try:
+            ws = ww.add(db, u, str(body.get("address") or ""), body.get("label"), body.get("chains") or None)
+        except ww.WalletError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "added": [ww.view(w, db) for w in ws]}
+    if act in ("mute", "unmute", "delete"):
+        w = ww.owned(db, u, int(body.get("id") or 0))
+        if not w:
+            return {"ok": False, "error": "Кошелёк не найден"}
+        if act == "delete":
+            db.delete(w)
+        else:
+            w.muted = act == "mute"
+        db.commit()
+        return {"ok": True}
+    rows = db.scalars(select(WalletWatch).where(WalletWatch.user_id == u.id).order_by(WalletWatch.id)).all()
+    out = {"items": [ww.view(w, db) for w in rows], "limit": ww.limit_of(u)}
+    for it in out["items"]:
+        last = ww.history(db, db.get(WalletWatch, it["id"]), limit=1)
+        it["last"] = last[0] if last else None
     return out

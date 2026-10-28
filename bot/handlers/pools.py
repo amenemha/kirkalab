@@ -1,4 +1,4 @@
-"""/pools — pool totals for admins (ViaBTC archive)."""
+"""/pools — pool totals for admins (all readable pools)."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -20,7 +20,11 @@ def _hr(ths: float) -> str:
         return f"{_n(ths / 1e6, 2)} EH/s"
     if ths >= 1e3:
         return f"{_n(ths / 1e3, 2)} PH/s"
-    return f"{_n(ths, 1)} TH/s"
+    if ths >= 1 or ths == 0:
+        return f"{_n(ths, 1)} TH/s"
+    if ths >= 1e-3:
+        return f"{_n(ths * 1e3, 1)} GH/s"
+    return f"{_n(ths * 1e6, 0)} MH/s"
 
 
 def _fmt(s: dict) -> str:
@@ -43,7 +47,7 @@ def _fmt(s: dict) -> str:
             for d in s["drops"]]))
     if s["broken"]:
         parts.append((f"Ссылки не читаются · {s['broken_total']}", [
-            f"⚠️ {b['account'] or '—'} <i>{short_name(b['group'] or '—', 24)}</i>" for b in s["broken"]]))
+            f"⚠️ {b['account'] or '—'} — {b.get('error') or ''} <i>{short_name(b['group'] or '—', 24)}</i>" for b in s["broken"]]))
     return blocks(f"🌊 <b>Пулы</b> · <i>{when} МСК</i>", parts)
 
 

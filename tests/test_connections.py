@@ -101,7 +101,7 @@ def test_recognize_links():
     r = cn.recognize("https://www.f2pool.com/btc/someuser")
     assert r["provider"] == "f2pool" and r["key"] == "someuser" and r["coin"] == "BTC"
     r = cn.recognize("https://www.antpool.com/observer?accessKey=K1&coinType=BTC&observerUserId=x")
-    assert r["provider"] == "antpool" and r["key"] == "K1"
+    assert r["provider"] == "antpool" and r["key"] == "K1:x"
     r = cn.recognize("https://www.viabtc.com/user/dashboard")
     assert r["private"]
     assert cn.recognize("https://google.com/?access_key=1") is None
@@ -121,8 +121,10 @@ def test_pool_connect(client, db, monkeypatch):
     assert again["already"]
     r = client.post("/api/v1/me/connections/pool", json={"url": "https://www.viabtc.com/user/dashboard"}, headers=hu)
     assert r.status_code == 400 and "наблюдателя" in r.json()["detail"]
-    r = client.post("/api/v1/me/connections/pool", json={"url": "https://www.f2pool.com/ltc/bob"}, headers=hu).json()
-    assert not r["found"] and not r["live"] and r["account"]["name"] == "F2Pool"
+    r = client.post("/api/v1/me/connections/pool", json={"url": "https://www.f2pool.com/ltc/bob"}, headers=hu)
+    assert r.status_code == 400 and "старый формат" in r.json()["detail"]
+    r = client.post("/api/v1/me/connections/pool", json={"url": "https://app.luxor.tech/observer?access_key=lx1"}, headers=hu).json()
+    assert not r["found"] and not r["live"] and r["account"]["name"] == "Luxor"
     pools = client.get("/api/v1/me/connections", headers=hu).json()["pools"]
     assert len(pools) == 2
     for p in pools:

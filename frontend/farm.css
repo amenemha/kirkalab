@@ -371,3 +371,11 @@ code.cp:hover{border-color:var(--acc)}
 .tips li{padding:6px 9px;border-radius:6px;border-left:3px solid var(--line);background:var(--panel2);font-size:12.5px;line-height:1.45}
 .tips .tip-bad{border-left-color:var(--bad)}.tips .tip-warn{border-left-color:var(--warn)}.tips .tip-ok{border-left-color:var(--ok)}.tips .tip-info{border-left-color:var(--info,var(--acc))}
 .padd .crow{display:flex;gap:8px}
+.pbdg{display:inline-block;padding:1px 6px;border:1px solid var(--line2);border-radius:3px;font-size:11px;color:var(--mut);white-space:nowrap}
+.addr{font-family:var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12px;word-break:break-all;cursor:copy;border-bottom:1px dashed var(--line2)}
+.addr:hover{color:var(--acc)}
+.addr.sm{font-size:11px}
+.addr.big{font-size:15px;display:inline-block;padding:6px 0}
+.in.mono{font-family:var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12.5px}
+label.chk{display:inline-flex;align-items:center;gap:5px;margin-right:12px;cursor:pointer;font-weight:400;text-transform:none;letter-spacing:0}
+tr.clk{cursor:pointer}
