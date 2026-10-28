@@ -163,7 +163,7 @@ async function go(p, keep, arg) {
   if (!keep) { $("#main").innerHTML = '<div class="empty">Загружаю…</div>'; S.sel.clear(); updSel(); }
   $$(".tab[data-page]").forEach((n) => n.classList.toggle("on", n.dataset.page === (NAVOF[p] || p)));
   $("#pageTitle").textContent = TITLES[p];
-  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify" || p === "energy" || p === "admin" || p === "conn" || p === "ev";
+  $("#siteSel").hidden = $("#clientSel").hidden = p === "pools" || p === "cont" || p === "calc" || p === "notify" || p === "energy" || p === "admin" || p === "conn" || p === "ev" || p === "wallets";
   $("#pageAside").innerHTML = "";
   // Каждый переход — шаг в истории браузера: «Назад» (кнопка или браузерная) возвращает на прошлую страницу с её фильтрами.
   const h = "#" + p + (S.arg ? "/" + S.arg : ""), depth = (history.state && history.state.d) || 0;
@@ -735,8 +735,8 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") { $("#draw
 // ---------- pools ----------
 const mskToday = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400e3).toISOString().slice(0, 10);
-S.pf = { from: null, to: null, coin: "", q: "", empty: false };
-function fh(ths) { if (ths == null) return "—"; if (ths === 0) return "0"; if (ths >= 1e6) return nf(ths / 1e6, 2) + " EH"; if (ths >= 1000) return nf(ths / 1000, 2) + " PH"; if (ths >= 1) return nf(ths, 1) + " TH"; return nf(ths * 1000, 0) + " GH"; }
+S.pf = { from: null, to: null, coin: "", pool: "", q: "", empty: false };
+function fh(ths) { if (ths == null) return "—"; if (ths === 0) return "0"; if (ths >= 1e6) return nf(ths / 1e6, 2) + " EH"; if (ths >= 1000) return nf(ths / 1000, 2) + " PH"; if (ths >= 1) return nf(ths, 1) + " TH"; if (ths >= 0.001) return nf(ths * 1000, ths >= 0.01 ? 0 : 2) + " GH"; return nf(ths * 1e6, 0) + " MH"; }
 const dm = (iso) => iso.slice(8, 10) + "." + iso.slice(5, 7);
 async function pagePools() {
   const pf = S.pf; pf.to = pf.to || mskToday(); pf.from = pf.from || addDays(pf.to, -6);
@@ -744,7 +744,8 @@ async function pagePools() {
   const coins = [...new Set(acc.items.map((a) => a.coin).filter(Boolean))].sort();
   const q = pf.q.toLowerCase();
   const alive = (it) => (it.account.ths_1d || 0) > 0 || (it.account.ths_10m || 0) > 0 || it.days.some((d) => d.ths);
-  const found = daily.items.filter((it) => !q || [it.account.account, it.account.user, it.account.coin].some((x) => x && x.toLowerCase().includes(q)));
+  const pools = [...new Set(acc.items.map((a) => a.pool).filter(Boolean))].sort();
+  const found = daily.items.filter((it) => !pf.pool || it.account.pool === pf.pool).filter((it) => !q || [it.account.account, it.account.user, it.account.coin, it.account.pool].some((x) => x && x.toLowerCase().includes(q)));
   const hidden = found.filter((it) => !alive(it)).length;
   const items = found.filter((it) => pf.empty || alive(it)).sort((x, y) => (y.account.ths_1d || 0) - (x.account.ths_1d || 0));
   const byCoin = {}; found.forEach((it) => { const c = byCoin[it.account.coin] = byCoin[it.account.coin] || { h10: 0, h24: 0, n: 0 }; c.h10 += it.account.ths_10m || 0; c.h24 += it.account.ths_1d || 0; if (alive(it)) c.n++; });
@@ -758,7 +759,7 @@ async function pagePools() {
     const avg = ok.length ? ok.reduce((x, y) => x + y, 0) / ok.length : null;
     const prof = it.days.reduce((x, d) => x + (d.profit || 0), 0);
     const down = a.ths_10m != null && a.ths_1d && a.ths_10m < a.ths_1d * 0.7;
-    return head + `<tr data-pacc="${a.id}"><td class="lnk">${esc(a.account || a.user || "—")}${a.user && a.account && a.user.toLowerCase() !== a.account.toLowerCase() ? ` <span class="faint">${esc(a.user)}</span>` : ""}${a.error ? ` <span class="bad" title="${esc(a.error)}">●</span>` : ""}${a.note ? ` <span class="faint" title="${esc(a.note)}">ⓘ</span>` : ""}</td><td>${esc(a.coin)}</td>
+    return head + `<tr data-pacc="${a.id}"><td class="lnk">${esc(a.account || a.user || "—")}${a.user && a.account && a.user.toLowerCase() !== a.account.toLowerCase() ? ` <span class="faint">${esc(a.user)}</span>` : ""}${a.error ? ` <span class="bad" title="${esc(a.error)}">●</span>` : ""}${a.note ? ` <span class="faint" title="${esc(a.note)}">ⓘ</span>` : ""}</td><td><span class="pbdg">${esc(a.pool || "")}</span></td><td>${esc(a.coin)}</td>
       <td class="r num ${down ? "bad" : ""}">${fh(a.ths_10m)}</td><td class="r num">${fh(a.ths_1d)}</td><td class="r num"><span class="ok">${a.w_active ?? "—"}</span>${a.w_inactive ? ` / <span class="bad">${a.w_inactive}</span>` : ""}</td>
       ${it.days.map((d) => `<td class="r num ${d.part ? "warn" : ""}" title="${esc(d.src || "")}">${d.ths == null ? '<span class="faint">—</span>' : fh(d.ths)}</td>`).join("")}
       <td class="r num"><b>${fh(avg)}</b></td><td class="r num">${prof ? nf(prof, 8) : "—"}</td></tr>`;
@@ -766,25 +767,27 @@ async function pagePools() {
   if (S.page !== "pools") return;
   $("#main").innerHTML = `
   <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
-   <div class="k"><div class="l">Ссылок пулов</div><div class="v">${nf(acc.items.length)}</div><div class="s">${errs ? `<span class="bad">${errs} не отвечают</span>` : "все отвечают"} · других пулов ${acc.other.length}</div></div>
+   <div class="k"><div class="l">Ссылок пулов</div><div class="v">${nf(acc.items.length)}</div><div class="s">${errs ? `<span class="bad">${errs} не отвечают</span>` : "все отвечают"} · пулов ${pools.length}${acc.other.length ? " · не читаются " + acc.other.length : ""}</div></div>
    <div class="k"><div class="l">Хешрейт сейчас, 10 мин</div><div class="v" style="font-size:14px;white-space:normal;overflow:visible;line-height:1.4">${coinLine("h10")}</div><div class="s">по монетам, H/s</div></div>
    <div class="k"><div class="l">Хешрейт за 24 ч</div><div class="v" style="font-size:14px;white-space:normal;overflow:visible;line-height:1.4">${coinLine("h24")}</div><div class="s">ссылок с хешрейтом ${nf(found.filter(alive).length)}</div></div>
    <div class="k"><div class="l">Воркеры в пуле</div><div class="v"><span class="ok">${nf(tot.wa)}</span></div><div class="s">неактивны ${nf(tot.wi)}</div></div>
   </div>
   <div class="fbar" style="margin-top:10px"><input type="search" id="pq" placeholder="Аккаунт, название…" value="${esc(pf.q)}">
+   <select class="sel" id="pPool"><option value="">Все пулы</option>${pools.map((g) => `<option ${g === pf.pool ? "selected" : ""}>${esc(g)}</option>`).join("")}</select>
    <select class="sel" id="pGrp"><option value="">Все монеты</option>${coins.map((g) => `<option ${g === pf.coin ? "selected" : ""}>${esc(g)}</option>`).join("")}</select>
    <label class="mini">с <input type="date" id="pFrom" class="sel" value="${pf.from}"></label><label class="mini">по <input type="date" id="pTo" class="sel" value="${pf.to}"></label>
    <span class="seg" id="pQuick"><button data-n="7">7 дн</button><button data-n="30">30 дн</button><button data-n="m">месяц</button></span>
    <label class="mini"><input type="checkbox" id="pEmpty" ${pf.empty ? "checked" : ""}> пустые (${hidden})</label>
    <span class="sp"></span><button class="btn pri" id="pAdd">+ Ссылка наблюдателя</button><button class="btn" id="pImp">Загрузить таблицу</button><button class="btn" id="pXls">Выгрузить Excel</button></div>
-  <div class="w padd" id="pAddBox" hidden style="margin-top:10px"><div class="wb"><div class="crow"><input class="in" id="paU" placeholder="https://… ссылка наблюдателя (Observer / Watcher) из кабинета пула" style="flex:2"><input class="in" id="paL" placeholder="Название, например «Клиент Иванов» или «10к»" style="flex:1"><button class="btn pri" id="paGo">Добавить</button></div><div class="hint" id="paMsg" style="margin-top:6px">ViaBTC — сразу читается хешрейт и воркеры, дальше Kirka сама копит часы и считает сутки МСК. Antpool, F2Pool, EMCD, NiceHash и другие — ссылка сохраняется в «Другие пулы», чтение подключаю следующим шагом. Ссылку можно и просто прислать боту в чат.</div></div></div>
+  <div class="w padd" id="pAddBox" hidden style="margin-top:10px"><div class="wb"><div class="crow"><input class="in" id="paU" placeholder="https://… ссылка наблюдателя (Observer / Watcher) из кабинета пула" style="flex:2"><input class="in" id="paL" placeholder="Название, например «Клиент Иванов» или «10к»" style="flex:1"><button class="btn pri" id="paGo">Добавить</button></div><div class="hint" id="paMsg" style="margin-top:6px">Читаются сразу: ViaBTC, Trustpool, Antpool, F2Pool, EMCD, Binance Pool, 2Miners, BitFuFu, NiceHash (по BTC-адресу). Kirka проверяет ссылку, тянет хешрейт и воркеры и дальше сама копит часы и считает сутки МСК. Ссылку можно и просто прислать боту в чат.</div></div></div>
   <div class="w" style="margin-top:10px"><div class="wh">Средний хешрейт по суткам МСК (00:00–24:00)<span class="sp"></span><span class="mini">Kirka сама копит часы — пул хранит только 72 ч. Жёлтым — сутки собраны не полностью. Наведите на число — как посчитано.</span></div>
-   <div class="scroll"><table class="tbl" id="tP"><thead><tr><th>Аккаунт</th><th>Монета</th><th class="r">10 мин</th><th class="r">24 ч</th><th class="r">Воркеры</th>${days.map((d) => `<th class="r">${dm(d)}</th>`).join("")}<th class="r">Среднее</th><th class="r">Начислено</th></tr></thead>
-   <tbody>${rowsHtml || `<tr><td colspan="${7 + days.length}"><div class="empty">Ссылок пулов пока нет. Нажмите «Загрузить таблицу» и выберите файл Mining Monitor.</div></td></tr>`}</tbody></table></div></div>
+   <div class="scroll"><table class="tbl" id="tP"><thead><tr><th>Аккаунт</th><th>Пул</th><th>Монета</th><th class="r">10 мин</th><th class="r">24 ч</th><th class="r">Воркеры</th>${days.map((d) => `<th class="r">${dm(d)}</th>`).join("")}<th class="r">Среднее</th><th class="r">Начислено</th></tr></thead>
+   <tbody>${rowsHtml || `<tr><td colspan="${8 + days.length}"><div class="empty">Ссылок пулов пока нет. Нажмите «Загрузить таблицу» и выберите файл Mining Monitor.</div></td></tr>`}</tbody></table></div></div>
   ${acc.items.some((x) => !x.active) ? `<div class="w" style="margin-top:10px"><div class="wh">Выключенные ссылки · ${acc.items.filter((x) => !x.active).length}<span class="sp"></span><span class="mini">не обновляются; нажмите, чтобы включить</span></div><div class="wb"><div class="hl">${acc.items.filter((x) => !x.active).map((o) => `<div class="row lnk" data-pacc="${o.id}"><span class="nm"><b>${esc(o.account || o.user || "—")}</b> ${esc(o.coin || "")}${o.user ? " · " + esc(o.user) : ""}</span><span class="mini">выключена</span></div>`).join("")}</div></div></div>` : ""}
-  ${acc.other.length ? `<div class="w" style="margin-top:10px"><div class="wh">Другие пулы · ${acc.other.length}<span class="sp"></span><span class="mini">Ссылки сохранены, чтение подключаю по очереди</span></div><div class="wb"><div class="hl">${acc.other.map((o) => `<div class="row"><span class="nm"><b>${esc(o.name || o.provider)}</b>${o.coin ? " " + esc(o.coin) : ""}${o.user ? " · " + esc(o.user) : ""} <span class="faint">${esc((o.url || "").replace(/^https?:\/\//, "").slice(0, 70))}</span></span><span class="mini">ждёт чтения</span><button class="btn sm ghost" data-podel="${o.id}">Убрать</button></div>`).join("")}</div></div></div>` : ""}`;
+  ${acc.other.length ? `<div class="w" style="margin-top:10px"><div class="wh">Не читаются · ${acc.other.length}<span class="sp"></span><span class="mini">дубль, нет ключа наблюдателя или пул пока без чтения</span></div><div class="wb"><div class="hl">${acc.other.map((o) => `<div class="row"><span class="nm"><b>${esc(o.name || o.provider)}</b>${o.coin ? " " + esc(o.coin) : ""}${o.user ? " · " + esc(o.user) : ""} <span class="faint">${esc((o.url || "").replace(/^https?:\/\//, "").slice(0, 70))}</span></span><span class="mini ${o.error ? "bad" : ""}">${esc(o.error || "ждёт чтения")}</span><button class="btn sm ghost" data-podel="${o.id}">Убрать</button></div>`).join("")}</div></div></div>` : ""}`;
   let qt; $("#pq").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { pf.q = e.target.value; pagePools().then(() => { const i = $("#pq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300); };
   $("#pGrp").onchange = (e) => { pf.coin = e.target.value; pagePools(); };
+  $("#pPool").onchange = (e) => { pf.pool = e.target.value; pagePools(); };
   $("#pAdd").onclick = () => { const bx = $("#pAddBox"); bx.hidden = !bx.hidden; if (!bx.hidden) $("#paU").focus(); };
   $("#paGo").onclick = async () => { const url = $("#paU").value.trim(), m = $("#paMsg"); if (!url) { m.textContent = "Вставьте ссылку наблюдателя"; m.classList.add("err"); return; } $("#paGo").disabled = true; m.classList.remove("err"); m.textContent = "Проверяю ссылку…"; try { const r = await api("/pools/add", { method: "POST", body: JSON.stringify({ url, label: $("#paL").value.trim() }) }); toast(r.already ? "Эта ссылка уже есть" : r.found ? `${r.name}: подключена, хешрейт читается` : `${r.name}: ссылка сохранена`); go("pools", true); if (r.account && r.account.id && r.live) setTimeout(() => openPool(r.account.id), 300); } catch (e) { m.textContent = e.message; m.classList.add("err"); $("#paGo").disabled = false; } };
   $("#paU").onkeydown = (e) => { if (e.key === "Enter") $("#paGo").click(); };
@@ -842,7 +845,7 @@ async function openPool(id) {
   const pts = d.rows.filter((r) => r.avg_ths != null).map((r) => [Date.parse(r.day + "T00:00:00Z"), r.avg_ths]);
   const wsorted = w.items.slice().sort((x, y) => (x.status === "active") - (y.status === "active") || (x.ths_1h || 0) - (y.ths_1h || 0));
   $("#drIn").innerHTML = `
-   <div class="dr-h"><div><h2>${esc(a.account || a.user)} <span class="faint">${esc(a.coin)}</span></h2><div class="mut small">ViaBTC${a.user ? " · " + esc(a.user) : ""}${a.owner_user_id ? " · добавил пользователь" : ""}</div></div><span class="sp"></span><button class="btn" id="drX">Закрыть</button></div>
+   <div class="dr-h"><div><h2>${esc(a.account || a.user)} <span class="faint">${esc(a.coin)}</span></h2><div class="mut small">${esc(a.pool || "Пул")}${a.user ? " · " + esc(a.user) : ""}${a.owner_user_id ? " · добавил пользователь" : ""}</div></div><span class="sp"></span><button class="btn" id="drX">Закрыть</button></div>
    <div class="life">
     <div class="k"><div class="l">Сейчас, 10 мин</div><div class="v">${fh(a.ths_10m)}<small>/s</small></div><div class="s">за час ${fh(a.ths_1h)}</div></div>
     <div class="k"><div class="l">Воркеры</div><div class="v"><span class="ok">${a.w_active ?? "—"}</span></div><div class="s">неактивны ${a.w_inactive ?? 0} · ошибочные ${a.w_invalid ?? 0}</div></div>
@@ -1510,8 +1513,8 @@ async function pageConn() {
       ${(s.sites || []).length ? `<table class="tbl cnt"><thead><tr><th>Площадка</th><th class="r">Контейнеров</th><th class="r">Асиков</th><th class="r">В работе</th><th class="r">Не на связи</th></tr></thead><tbody>${s.sites.map((x) => `<tr><td>${esc(x.name)}</td><td class="r num">${n(x.containers)}</td><td class="r num">${n(x.devices)}</td><td class="r num">${n(x.working)}</td><td class="r num">${n(x.offline)}</td></tr>`).join("")}</tbody></table>` : ""}`
       : `<div class="okbox bad">${esc(c.error || "CROFT не пускает")}. Подключите заново с верным паролем.</div>`}</div>`; };
   const poolRow = (p) => `<tr><td><b>${esc(p.name)}</b>${p.coin ? ` <span class="faint">${esc(p.coin)}</span>` : ""}${p.account ? `<br><span class="faint">${esc(p.account)}</span>` : ""}</td>
-      <td>${p.live ? (p.hs_1h != null ? `<span class="pill ok">читается</span>` : `<span class="pill">ждёт обновления</span>`) : `<span class="pill">принята · чтение скоро</span>`}</td>
-      <td class="r num">${p.hs_1h != null ? (p.hs_1h / 1e12).toFixed(1) + " TH/s" : "—"}</td><td class="r num">${p.workers_active != null ? n(p.workers_active) + (p.workers_inactive ? " / " + n(p.workers_inactive) + " off" : "") : "—"}</td>
+      <td>${p.error ? `<span class="pill bad" title="${esc(p.error)}">${esc(p.error.length > 40 ? p.error.slice(0, 40) + "…" : p.error)}</span>` : p.live ? (p.hs_1h != null ? `<span class="pill ok">читается</span>` : `<span class="pill">ждёт обновления</span>`) : `<span class="pill">читается только в кабинете пула</span>`}</td>
+      <td class="r num">${p.hs_1h != null ? fh(p.hs_1h / 1e12) + "/s" : "—"}</td><td class="r num">${p.workers_active != null ? n(p.workers_active) + (p.workers_inactive ? " / " + n(p.workers_inactive) + " off" : "") : "—"}</td>
       <td class="r"><button class="btn sm ghost" data-pd="${p.id}">Убрать</button></td></tr>`;
   $("#main").innerHTML = `<div class="grid">
     <div class="w c7"><div class="wh">Подключения<span class="sp"></span><span class="faint" style="font-weight:400;text-transform:none;letter-spacing:0">только чтение — Kirka ничего не меняет</span></div><div class="wb">
@@ -1525,7 +1528,7 @@ async function pageConn() {
     </div></div>
     <div class="w c5"><div class="wh">Ссылки наблюдателя пулов</div><div class="wb">
       <div class="crow"><input class="in" id="plU" placeholder="https://… ссылка Observer / Watcher" autocomplete="off"><button class="btn pri" id="plGo">Добавить</button></div>
-      <div class="hint" id="plMsg" style="margin-top:6px">ViaBTC читается сразу. Antpool, F2Pool, EMCD, NiceHash и другие — ссылка сохраняется, чтение добавлю следующим шагом. Ссылку можно и просто прислать боту в чат.</div>
+      <div class="hint" id="plMsg" style="margin-top:6px">Читаются сразу: ViaBTC, Trustpool, Antpool, F2Pool, EMCD, Binance Pool, 2Miners, BitFuFu, NiceHash (по BTC-адресу). Ссылку можно и просто прислать боту в чат.</div>
       ${(d.pools || []).length ? `<table class="tbl" style="margin-top:10px"><thead><tr><th>Пул</th><th>Состояние</th><th class="r">Хешрейт 1ч</th><th class="r">Воркеры</th><th></th></tr></thead><tbody>${d.pools.map(poolRow).join("")}</tbody></table>` : `<div class="faint" style="margin-top:10px">Своих ссылок пока нет.</div>`}
     </div></div></div>`;
   const msg = (id, t, bad) => { const m = $(id); m.textContent = t; m.classList.toggle("err", !!bad); };
@@ -1586,6 +1589,112 @@ async function pageEv() {
 PAGES.ev = pageEv;
 TITLES.ev = "Из уведомления";
 
+// ---------- Кошельки: поступления на свои адреса ----------
+const WL = { hidden: false, det: null, pick: null };
+const WNET = (w) => (w.chain === "TRON" || w.chain === "ETH" || w.chain === "BSC") ? w.net : w.chain_name;
+function wMoney(x, t) { const st = t === "USDT" || t === "USDC"; return Number(x).toLocaleString("ru-RU", { minimumFractionDigits: st ? 2 : 0, maximumFractionDigits: st || x >= 100 ? 2 : (x >= 1 ? 4 : 8) }); }
+function wCopy(el) { const t = el.dataset.copy; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast("Адрес скопирован"), () => toast(t)); }
+async function pageWallets() {
+  if (S.arg && S.arg.startsWith("aml/")) return pageAml(S.arg.slice(4));
+  const d = await api("/me/wallets");
+  const free = d.limit - d.used;
+  const last = (w) => w.error ? `<span class="bad">${esc(w.error)}</span>` : (w.incoming ? `${nf(w.incoming)} поступл.` : `<span class="faint">поступлений не было</span>`);
+  const row = (w) => `<tr data-w="${w.id}" class="clk">
+     <td><b>${esc(w.label || "Без названия")}</b></td>
+     <td><span class="pbdg">${esc(WNET(w))}</span></td>
+     <td><span class="addr" data-copy="${esc(w.address)}" title="Нажмите, чтобы скопировать">${esc(w.address)}</span></td>
+     <td>${last(w)}${w.hidden ? ` <span class="faint">· скрыто ${nf(w.hidden)}</span>` : ""}</td>
+     <td class="r">${w.muted ? `<button class="btn sm" data-wm="${w.id}" data-v="0">🔕 выкл</button>` : `<button class="btn sm ghost" data-wm="${w.id}" data-v="1">🔔 вкл</button>`}</td>
+     <td class="r faint">${w.last_check ? tfmt(w.last_check) : "—"}</td></tr>`;
+  $("#main").innerHTML = `<div class="grid">
+   <div class="w c8"><div class="wh">Кошельки · ${nf(d.used)} из ${nf(d.limit)}<span class="sp"></span><span class="mini">Kirka проверяет каждые 3 минуты и пишет в Telegram о каждом поступлении</span></div><div class="wb">
+     <div class="crow"><input class="in mono" id="wA" placeholder="Адрес кошелька: T…, bc1…, 0x…, UQ…, ltc1…, D…" autocomplete="off" style="flex:3">
+       <input class="in" id="wN" placeholder="Название, например «Личный»" style="flex:1;max-width:220px"><button class="btn pri" id="wGo" ${free > 0 ? "" : "disabled"}>Следить</button></div>
+     <div class="hint" id="wMsg" style="margin-top:6px">${free > 0 ? "Вставьте адрес — сеть определится сама." : "Достигнут лимит кошельков — удалите ненужный, чтобы добавить новый."}</div>
+     ${d.items.length ? `<table class="tbl" style="margin-top:12px"><thead><tr><th>Название</th><th>Сеть</th><th>Адрес</th><th>Поступления</th><th class="r">Уведомления</th><th class="r">Проверено</th></tr></thead><tbody>${d.items.map(row).join("")}</tbody></table>`
+       : `<div class="empty" style="padding:30px 10px">Пока нет кошельков. Добавьте адрес выше или просто пришлите его боту в чат.</div>`}
+   </div></div>
+   <div class="w c4"><div class="wh">Как это работает</div><div class="wb small">
+     <div class="hint" style="line-height:1.55">
+       <b>Сети:</b> ${d.chains.map((c) => esc(c.net === c.id ? c.name : `${c.name} (${c.net})`)).join(", ")}.<br><br>
+       <b>Что приходит в Telegram:</b> сумма и монета, сеть, примерная сумма в рублях, название кошелька, полный адрес отправителя, время МСК, кнопки «Открыть в обозревателе» и «Проверить AML».<br><br>
+       <b>Что не присылаю:</b> спам-токены и подделки USDT/USDC, нулевые переводы, «пыль» меньше $1 (порог меняется в карточке), переводы с адресов-двойников (отравление адреса — когда мошенник шлёт копейки с адреса, похожего на ваш обычный, чтобы вы скопировали его из истории).<br><br>
+       <b>Сон:</b> ночью уведомления копятся и придут утром — по вашему расписанию сна.<br><br>
+       Адрес 0x… — это сразу Ethereum и BNB Chain: Kirka следит в обеих сетях, это один кошелёк.
+     </div></div></div></div>`;
+  const msg = (t, bad) => { const m = $("#wMsg"); m.textContent = t; m.classList.toggle("err", !!bad); };
+  $$("#main [data-copy]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); wCopy(el); });
+  $$("#main [data-wm]").forEach((b) => b.onclick = async (e) => { e.stopPropagation(); await api(`/me/wallets/${b.dataset.wm}`, { method: "PATCH", body: JSON.stringify({ muted: b.dataset.v === "1" }) }); go("wallets", true); });
+  $$("#main tr[data-w]").forEach((r) => r.onclick = () => openWallet(+r.dataset.w));
+  let tm;
+  $("#wA").oninput = () => { clearTimeout(tm); const a = $("#wA").value.trim(); WL.pick = null; if (a.length < 25) return msg(free > 0 ? "Вставьте адрес — сеть определится сама." : "Достигнут лимит кошельков."); tm = setTimeout(async () => {
+    const r = await api("/me/wallets/detect?address=" + encodeURIComponent(a)); WL.det = r.chains;
+    if (!r.chains.length) return msg("Не узнаю адрес. Проверьте, что он скопирован целиком.", true);
+    if (r.chains.length > 1) { $("#wMsg").innerHTML = `Сети: ${r.chains.map((c) => `<label class="chk"><input type="checkbox" data-ch="${c.id}" checked> ${esc(c.name)} (${esc(c.net)})</label>`).join(" ")}`; }
+    else msg(`Сеть: ${r.chains[0].name}${r.chains[0].net !== r.chains[0].id ? " (" + r.chains[0].net + ")" : ""}`);
+  }, 250); };
+  $("#wGo").onclick = async () => {
+    const address = $("#wA").value.trim(); if (!address) return msg("Вставьте адрес", true);
+    const chs = $$("#wMsg [data-ch]"); const chains = chs.length ? chs.filter((c) => c.checked).map((c) => c.dataset.ch) : null;
+    if (chs.length && !chains.length) return msg("Выберите хотя бы одну сеть", true);
+    $("#wGo").disabled = true; msg("Проверяю адрес и читаю историю…");
+    try { await api("/me/wallets", { method: "POST", body: JSON.stringify({ address, label: $("#wN").value.trim() || null, chains }) }); toast("Кошелёк добавлен"); go("wallets", true); }
+    catch (e) { msg(e.message, true); $("#wGo").disabled = false; }
+  };
+}
+async function openWallet(id) {
+  $("#drIn").innerHTML = '<div class="spin" style="margin:40px auto"></div>'; $("#drawer").hidden = false;
+  const d = await api(`/me/wallets/${id}/tx?hidden=${WL.hidden ? 1 : 0}`), w = d.wallet;
+  const tx = (t) => `<tr class="${t.status === "ok" ? "" : "faint"}"><td class="num">${tfmt(t.at)}</td>
+     <td class="r num"><b>+${wMoney(t.amount, t.token)}</b> ${esc(t.token)}</td>
+     <td class="r num">${t.rub ? Math.round(t.rub).toLocaleString("ru-RU") + " ₽" : (t.usd ? "$" + nf(t.usd, 2) : "—")}</td>
+     <td>${t.from ? `<span class="addr sm" data-copy="${esc(t.from)}" title="Скопировать">${esc(t.from)}</span>` : `<span class="faint">—</span>`}</td>
+     <td>${t.status === "ok" ? (t.first ? `<span class="faint">до подключения</span>` : `<span class="pill ok">пришло</span>`) : `<span class="pill bad">${esc(t.status_name)}</span>`}</td>
+     <td class="r"><a class="btn sm ghost" href="${esc(t.url)}" target="_blank" rel="noopener">${esc(w.explorer)}</a>${t.from ? ` <a class="btn sm ghost" href="#wallets/aml/${w.chain}/${encodeURIComponent(t.from)}">AML</a>` : ""}</td></tr>`;
+  $("#drIn").innerHTML = `
+   <div class="dr-h"><div><h2>${esc(w.label || "Без названия")} <span class="faint">${esc(WNET(w))}</span></h2>
+     <div class="mut small"><span class="addr" data-copy="${esc(w.address)}">${esc(w.address)}</span></div></div><span class="sp"></span><button class="btn" id="drX">Закрыть</button></div>
+   <div class="crow" style="margin:10px 0">
+     <input class="in" id="wlL" value="${esc(w.label || "")}" placeholder="Название" style="max-width:220px">
+     <label class="hint">Порог, $ <input class="in num" id="wlM" value="${w.min_usd}" style="width:70px"></label>
+     <button class="btn" id="wlS">Сохранить</button>
+     <span class="sp"></span>
+     <a class="btn ghost" href="${esc(w.addr_url)}" target="_blank" rel="noopener">${esc(w.explorer)}</a>
+     <button class="btn ghost" id="wlD">Удалить</button></div>
+   ${w.error ? `<div class="okbox bad">${esc(w.error)}</div>` : ""}
+   <div class="wh" style="padding:6px 0">История поступлений<span class="sp"></span><label class="chk"><input type="checkbox" id="wlH" ${WL.hidden ? "checked" : ""}> показать скрытые (${nf(w.hidden || 0)})</label></div>
+   ${d.items.length ? `<table class="tbl"><thead><tr><th>Когда, МСК</th><th class="r">Сумма</th><th class="r">≈</th><th>От кого</th><th>Статус</th><th></th></tr></thead><tbody>${d.items.map(tx).join("")}</tbody></table>`
+     : `<div class="empty" style="padding:24px">Поступлений пока нет. Как только придут — появятся здесь и в Telegram.</div>`}`;
+  $("#drX").onclick = () => { $("#drawer").hidden = true; };
+  $$("#drIn [data-copy]").forEach((el) => el.onclick = () => wCopy(el));
+  $("#wlH").onchange = (e) => { WL.hidden = e.target.checked; openWallet(id); };
+  $("#wlS").onclick = async () => { try { await api(`/me/wallets/${id}`, { method: "PATCH", body: JSON.stringify({ label: $("#wlL").value.trim(), min_usd: $("#wlM").value.replace(",", ".") }) }); toast("Сохранено"); go("wallets", true); openWallet(id); } catch (e) { toast(e.message); } };
+  $("#wlD").onclick = async () => { if (!confirm("Перестать следить за этим кошельком? История поступлений удалится.")) return; await api(`/me/wallets/${id}`, { method: "DELETE" }); $("#drawer").hidden = true; go("wallets", true); };
+}
+async function pageAml(arg) {
+  const [chain, ...rest] = arg.split("/"); const addr = decodeURIComponent(rest.join("/"));
+  $("#pageTitle").textContent = "Проверка отправителя";
+  const r = await api(`/me/wallets/aml/check?chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(addr)}`);
+  const chk = (c) => `<tr><td>${esc(c.name)}</td><td>${c.bad === true ? `<span class="pill bad">${esc(c.text)}</span>` : c.bad === false ? `<span class="pill ok">${esc(c.text)}</span>` : `<span class="pill">${esc(c.text)}</span>`}</td></tr>`;
+  $("#main").innerHTML = `<div class="grid"><div class="w c8"><div class="wh">Отправитель · ${esc(chain)}</div><div class="wb">
+    <div class="addr big" data-copy="${esc(addr)}" title="Скопировать">${esc(addr)}</div>
+    <table class="tbl" style="margin-top:12px"><tbody>
+      <tr><td>Формат адреса</td><td>${r.valid ? `<span class="pill ok">адрес сети ${esc(chain)}</span>` : `<span class="pill bad">не похож на адрес ${esc(chain)}</span>`}</td></tr>
+      ${r.checks.map(chk).join("")}
+      <tr><td>Переводы с этого адреса на ваши кошельки</td><td class="num">${nf(r.seen)}</td></tr>
+    </tbody></table>
+    <div class="crow" style="margin-top:12px"><a class="btn" href="${esc(r.explorer)}" target="_blank" rel="noopener">Открыть в обозревателе</a><a class="btn ghost" href="#wallets">← К кошелькам</a></div>
+  </div></div>
+  <div class="w c4"><div class="wh">Что проверено</div><div class="wb hint" style="line-height:1.55">
+    Kirka проверяет открытые данные: формат адреса и чёрные списки эмитентов USDT и USDC (Tether, Circle) — если адрес там, средства с него могут заморозить.<br><br>
+    В обозревателе видны метки бирж и известных сервисов. Глубокая AML-оценка риска (связи с миксерами, санкционными адресами) — отдельная услуга, её подключим позже.
+  </div></div></div>`;
+  $$("#main [data-copy]").forEach((el) => el.onclick = () => wCopy(el));
+}
+PAGES.wallets = pageWallets;
+TITLES.wallets = "Кошельки";
+OPEN.add("wallets");
+
 // ---------- global search ----------
 (function () {
   const inp = $("#gq"), box = $("#gqRes"); let items = [], hi = 0;
@@ -1616,9 +1725,9 @@ document.documentElement.dataset.theme = localStorage.getItem("kirka_theme") || 
 window.addEventListener("hashchange", () => {
   const st = history.state || {};
   try { if (st.f) Object.assign(S.f, JSON.parse(st.f)); if (st.ef) Object.assign(S.ef, JSON.parse(st.ef)); } catch (e) { /* ignore */ }
-  const [p, a] = location.hash.slice(1).split("/"); if (p !== S.page || (a || null) !== S.arg) go(p, false, a);
+  const [p, ...ar] = location.hash.slice(1).split("/"); const a = ar.length ? ar.join("/") : undefined; if (p !== S.page || (a || null) !== S.arg) go(p, false, a);
 });
-window.addEventListener("popstate", () => { const [p, a] = location.hash.slice(1).split("/"); const st = history.state || {}; try { if (st.f) Object.assign(S.f, JSON.parse(st.f)); if (st.ef) Object.assign(S.ef, JSON.parse(st.ef)); } catch (e) { /* ignore */ } if (p !== S.page || (a || null) !== S.arg) go(p, false, a); });
+window.addEventListener("popstate", () => { const [p, ...ar] = location.hash.slice(1).split("/"); const a = ar.length ? ar.join("/") : undefined; const st = history.state || {}; try { if (st.f) Object.assign(S.f, JSON.parse(st.f)); if (st.ef) Object.assign(S.ef, JSON.parse(st.ef)); } catch (e) { /* ignore */ } if (p !== S.page || (a || null) !== S.arg) go(p, false, a); });
 $("#backBtn").onclick = () => history.back();
 
 let tick = null;
@@ -1633,9 +1742,9 @@ async function boot() {
   if (!tok.get()) return showLogin();
   $("#login").hidden = true; $("#app").hidden = false;
   try { const me = await api("/auth/me"); $("#av").textContent = ((me.full_name || me.email || "K")[0] || "K").toUpperCase(); S.admin = !!me.is_admin; $$("[data-adm]").forEach((n) => { n.hidden = !me.is_admin; }); } catch (e) { if (e.message === "auth") return showLogin(); }
-  const [p, a] = (location.hash || "#today").slice(1).split("/");
+  const [p, ...ar] = (location.hash || "#today").slice(1).split("/"); const a = ar.length ? ar.join("/") : undefined;
   await go(PAGES[p] ? p : (S.admin === false ? "conn" : "today"), false, a);
   clearInterval(tick);
-  tick = setInterval(() => { if (S.page === "calc" || S.page === "conn" || S.page === "notify" || (S.page === "energy" && EN.sub !== "scheme") || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select,textarea") || (S.page === "admin" && (ADM.draft || ADM.bdraft || ADM.file || ADM.bfile)) || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
+  tick = setInterval(() => { if (S.page === "calc" || S.page === "conn" || S.page === "wallets" || S.page === "notify" || (S.page === "energy" && EN.sub !== "scheme") || document.hidden || !$("#drawer").hidden || !$("#modal").hidden || S.sel.size || document.activeElement.matches("input,select,textarea") || (S.page === "admin" && (ADM.draft || ADM.bdraft || ADM.file || ADM.bfile)) || $(".msel.open") || $(".perpop")) return; S.devs = null; S.sumAt = 0; go(S.page, true, S.arg); }, 60000);
 }
 boot();

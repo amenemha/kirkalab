@@ -58,13 +58,27 @@ def croft_line(c: dict) -> str:
     return s
 
 
+def fmt_hs(v: float) -> str:
+    for m, u in ((1e18, "EH/s"), (1e15, "PH/s"), (1e12, "TH/s"), (1e9, "GH/s"), (1e6, "MH/s"), (1e3, "kH/s")):
+        if v >= m:
+            return f"{v / m:.2f}".rstrip("0").rstrip(".").replace(".", ",") + " " + u
+    return f"{v:.0f} H/s"
+
+
 def pool_line(p: dict) -> str:
     coin = f" {p['coin']}" if p.get("coin") else ""
+    acc = f" <b>{html.escape(p['account'])}</b>" if p.get("account") else ""
     if not p.get("live"):
-        return f"🔗 {p['name']}{coin} — ссылка принята, чтение этого пула скоро добавлю"
+        return f"🔗 {p['name']}{coin} — ссылка принята, этот пул пока читается только в его кабинете"
+    if p.get("error"):
+        return f"🔴 {p['name']}{acc}{coin} — {html.escape(p['error'])}"
     if p.get("hs_1h") is not None:
-        w = p.get("workers_active")
-        return f"🟢 {p['name']}{coin} — {p['hs_1h'] / 1e12:.1f} TH/s" + (f", воркеров {w}" if w is not None else "")
+        w, wi = p.get("workers_active"), p.get("workers_inactive")
+        hs = p["hs_1h"] or p.get("hs_1d") or 0
+        if not hs:
+            return f"🟡 {p['name']}{acc}{coin} — ссылка читается, хешрейта сейчас нет" + (f" (воркеров без хешрейта {wi})" if wi else "")
+        return (f"🟢 {p['name']}{acc}{coin} — {fmt_hs(hs)}" + (f", воркеров {w}" if w is not None else "")
+                + (f", без хешрейта {wi}" if wi else ""))
     return f"🟡 {p['name']}{coin} — ждёт первого обновления"
 
 
@@ -155,7 +169,7 @@ async def cb_pool(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
     await edit_live_screen(cb.message, state,
                            "🔗 <b>Ссылка наблюдателя</b>\n\nПришлите ссылку наблюдателя (Observer / Watcher) из кабинета пула: "
-                           "ViaBTC, Antpool, F2Pool, EMCD, NiceHash и другие.", reply_markup=CANCEL)
+                           "ViaBTC, Trustpool, Antpool, F2Pool, EMCD, Binance Pool, 2Miners, BitFuFu. Kirka сразу проверит её и покажет хешрейт.", reply_markup=CANCEL)
 
 
 async def _add_pool(message: Message, state: FSMContext, r: dict) -> None:

@@ -106,12 +106,143 @@ def sync_account(db: Session, cli: ViaBTC, a: pm.PoolAccount, with_workers: bool
         a.note = "; ".join(notes)
 
 
-def run_pools(db: Session, cli: ViaBTC | None = None, with_workers: bool = True, with_profit: bool = True) -> tuple[int, int]:
-    cli = cli or ViaBTC()
+TRUSTPOOL_API = "https://trustpool.cc/res/saas/observer"
+VIA_LIKE = ("viabtc", "trustpool")
+
+
+def via_client(provider: str, cache: dict | None = None) -> ViaBTC:
+    cache = cache if cache is not None else {}
+    if provider not in cache:
+        from app.services.pools import viabtc as _v  # noqa: PLC0415  (late lookup keeps tests able to swap the client)
+        cache[provider] = _v.ViaBTC(api=TRUSTPOOL_API) if provider == "trustpool" else _v.ViaBTC()
+    return cache[provider]
+
+
+def apply_snap(db: Session, a: pm.PoolAccount, s) -> None:
+    """Normalized snapshot of any pool → account, hourly archive, days, workers."""
+    if s.account:
+        a.account = str(s.account)[:128]
+    a.hs_10m, a.hs_1h, a.hs_1d = s.hs_10m, s.hs_1h if s.hs_1h is not None else s.hs_10m, s.hs_1d
+    a.workers_active, a.workers_inactive, a.workers_invalid = s.workers_active, s.workers_inactive, s.workers_invalid
+    a.balance, a.profit_24h, a.profit_total = s.balance, s.profit_24h, s.profit_total
+    now = datetime.now(timezone.utc).timestamp()
+    hourly = {ts: v for ts, v in s.hourly.items() if ts + 3600 <= now and v[0] is not None}
+    if hourly:
+        have = {r.ts: r for r in db.scalars(select(pm.PoolHourly).where(pm.PoolHourly.account_id == a.id, pm.PoolHourly.ts.in_(list(hourly))))}
+        for ts, (v, w, rj) in hourly.items():
+            r = have.get(ts)
+            if r:
+                r.hs, r.workers, r.reject = v, w if w is not None else r.workers, rj
+            else:
+                db.add(pm.PoolHourly(account_id=a.id, ts=ts, hs=v, workers=w, reject=rj))
+    if s.days:
+        have_d = {r.day: r for r in db.scalars(select(pm.PoolDaily).where(pm.PoolDaily.account_id == a.id, pm.PoolDaily.day.in_(list(s.days))))}
+        for d, v in s.days.items():
+            x = have_d.get(d)
+            if x is None:
+                x = pm.PoolDaily(account_id=a.id, day=d)
+                db.add(x)
+            if v.get("hs") is not None:
+                x.hs = v["hs"]
+            if v.get("profit") is not None:
+                x.profit = v["profit"]
+    if s.workers is not None:
+        have_w = {w.name: w for w in db.scalars(select(pm.PoolWorker).where(pm.PoolWorker.account_id == a.id))}
+        t = datetime.now(timezone.utc)
+        for r in s.workers:
+            name = str(r.get("name") or "")[:128]
+            if not name:
+                continue
+            w = have_w.get(name)
+            if not w:
+                w = pm.PoolWorker(account_id=a.id, name=name)
+                db.add(w)
+                have_w[name] = w
+            w.full_name = str(r.get("full") or f"{a.account or ''}.{name}").lower()[:200]
+            w.status = r.get("status")
+            w.hs_10m, w.hs_1h, w.hs_1d = r.get("hs_10m"), r.get("hs_1h") if r.get("hs_1h") is not None else r.get("hs_10m"), r.get("hs_1d")
+            w.reject_1h, w.online_7d_h = r.get("reject"), r.get("online_7d_h")
+            w.last_active, w.updated_at = r.get("last_active"), t
+    a.last_ok = datetime.now(timezone.utc)
+    a.last_error = None
+    a.note = "; ".join(s.notes) if s.notes else None
+
+
+def sync_any(db: Session, a: pm.PoolAccount, with_workers: bool = True, with_profit: bool = True,
+             via: dict | None = None, rds: dict | None = None) -> None:
+    from app.services.pools.readers import reader  # noqa: PLC0415
+
+    if a.provider in VIA_LIKE:
+        sync_account(db, via_client(a.provider, via), a, with_workers, with_profit)
+        return
+    rds = rds if rds is not None else {}
+    if a.provider not in rds:
+        rds[a.provider] = reader(a.provider)
+    rd = rds[a.provider]
+    if rd is None:
+        raise RuntimeError("этот пул пока читается только по ссылке в кабинете")
+    s = rd.read(a.url, a.access_key, a.coin, with_workers, with_profit, account=a.account)
+    apply_snap(db, a, s)
+
+
+def relink(db: Session) -> int:
+    """Links imported from the «Другие пулы» sheet (key = sha1(url), coin = "") → real key, coin and reading."""
+    from app.services.pools.readers import PoolError, reader  # noqa: PLC0415
+    from app.services.pools.viabtc import coin_from_link, parse_key  # noqa: PLC0415
+
+    n = 0
+    for a in db.scalars(select(pm.PoolAccount).where(pm.PoolAccount.coin == "", pm.PoolAccount.provider != "viabtc").order_by(pm.PoolAccount.id)).all():
+        url = (a.url or "").strip()
+        p = None
+        if a.provider == "trustpool":
+            k = parse_key(url)
+            p = {"key": k, "coin": coin_from_link(url) or "BTC"} if k else None
+        else:
+            rd = reader(a.provider)
+            p = rd.parse(url) if rd else None
+        if not p or not p.get("key"):
+            a.last_error = "в ссылке нет ключа наблюдателя — нужна ссылка Observer / Watcher из кабинета пула"
+            a.coin = "?"
+            n += 1
+            continue
+        coin = p.get("coin")
+        if not coin:
+            try:
+                coin = (rd.read(url, p["key"], None, False, False).coin or "BTC").upper()
+            except PoolError as e:
+                coin, a.last_error = "BTC", str(e)
+        dup = db.scalar(select(pm.PoolAccount).where(pm.PoolAccount.provider == a.provider, pm.PoolAccount.access_key == p["key"][:128],
+                                                     pm.PoolAccount.coin == coin, pm.PoolAccount.id != a.id))
+        if dup is not None:
+            a.coin, a.active = "?", False
+            a.last_error = f"та же ссылка уже есть (№{dup.id})"
+            n += 1
+            continue
+        a.access_key, a.coin, a.active, a.track = p["key"][:128], coin, True, True
+        if p.get("account") and not a.account:
+            a.account = p["account"][:128]
+        db.flush()
+        n += 1
+    db.commit()
+    return n
+
+
+def run_pools(db: Session, cli: ViaBTC | None = None, with_workers: bool = True, with_profit: bool = True,
+              providers: tuple[str, ...] | None = None) -> tuple[int, int]:
+    try:
+        relink(db)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        log.exception("relink failed")
+    via = {"viabtc": cli} if cli else {}
+    rds: dict = {}
     ok = bad = 0
-    for a in db.scalars(select(pm.PoolAccount).where(pm.PoolAccount.active.is_(True), pm.PoolAccount.provider == "viabtc")).all():
+    q = select(pm.PoolAccount).where(pm.PoolAccount.active.is_(True)).order_by(pm.PoolAccount.id)
+    if providers:
+        q = q.where(pm.PoolAccount.provider.in_(providers))
+    for a in db.scalars(q).all():
         try:
-            sync_account(db, cli, a, with_workers, with_profit)
+            sync_any(db, a, with_workers, with_profit, via, rds)
             db.commit()
             ok += 1
         except Exception as e:  # one bad link must not stop the rest
@@ -214,7 +345,7 @@ def rows_from_xlsx(data: bytes) -> tuple[list[dict], list[dict]]:
     return out, other
 
 
-PROVIDERS = {"viabtc.com": "viabtc", "binance.com": "binance", "trustpool.ru": "trustpool", "f2pool.com": "f2pool",
+PROVIDERS = {"viabtc.com": "viabtc", "binance.com": "binance", "trustpool.ru": "trustpool", "trustpool.cc": "trustpool", "f2pool.com": "f2pool",
              "emcd.io": "emcd", "antpool.com": "antpool", "2miners.com": "2miners", "bitfufu.net": "bitfufu"}
 
 

@@ -25,9 +25,15 @@ def _th(v):
     return None if v is None else round(v / TH, 3)
 
 
+def _live(a: pm.PoolAccount) -> bool:
+    from app.services.connections import LIVE
+    return a.provider in LIVE and a.coin not in ("", "?")
+
+
 def _acc(a: pm.PoolAccount) -> dict:
+    from app.services.connections import POOLS
     return {
-        "id": a.id, "provider": a.provider, "coin": a.coin, "account": a.account, "user": a.note_user,
+        "id": a.id, "provider": a.provider, "pool": POOLS.get(a.provider, (a.provider,))[0], "coin": a.coin, "account": a.account, "user": a.note_user,
         "owner_user_id": a.owner_user_id, "url": a.url, "created_at": a.created_at.isoformat() if getattr(a, "created_at", None) else None,
         "group": a.group_name, "track": a.track, "active": a.active,
         "ths_10m": _th(a.hs_10m), "ths_1h": _th(a.hs_1h), "ths_1d": _th(a.hs_1d),
@@ -41,9 +47,10 @@ def _acc(a: pm.PoolAccount) -> dict:
 def accounts(db: Session = Depends(get_db)):
     from app.services.connections import POOLS
     rows = db.scalars(select(pm.PoolAccount).order_by(pm.PoolAccount.account)).all()
-    via = [_acc(a) for a in rows if a.provider == "viabtc"]
-    other = [{"id": a.id, "provider": a.provider, "name": POOLS.get(a.provider, (a.provider,))[0], "coin": a.coin,
-              "user": a.note_user, "url": a.url, "owner_user_id": a.owner_user_id} for a in rows if a.provider != "viabtc"]
+    via = [_acc(a) for a in rows if _live(a)]
+    other = [{"id": a.id, "provider": a.provider, "name": POOLS.get(a.provider, (a.provider,))[0], "coin": a.coin if a.coin != "?" else "",
+              "user": a.note_user, "url": a.url, "owner_user_id": a.owner_user_id, "error": a.last_error}
+             for a in rows if not _live(a)]
     return {"items": via, "other": other}
 
 
@@ -83,7 +90,8 @@ def account_daily(aid: int, d_from: str | None = None, d_to: str | None = None, 
 @router.get("/daily")
 def all_daily(d_from: str | None = None, d_to: str | None = None, tz: int = 3, coin: str | None = None, db: Session = Depends(get_db)):
     f, t = _parse_period(d_from, d_to)
-    q = select(pm.PoolAccount).where(pm.PoolAccount.active.is_(True), pm.PoolAccount.provider == "viabtc")
+    from app.services.connections import LIVE
+    q = select(pm.PoolAccount).where(pm.PoolAccount.active.is_(True), pm.PoolAccount.provider.in_(LIVE), pm.PoolAccount.coin.notin_(("", "?")))
     if coin:
         q = q.where(pm.PoolAccount.coin == coin)
     out = []

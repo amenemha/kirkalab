@@ -57,7 +57,8 @@ class ViaBTCError(RuntimeError):
 
 
 class ViaBTC:
-    def __init__(self, timeout: float = 20.0, pause: float = 0.25):
+    def __init__(self, timeout: float = 20.0, pause: float = 0.25, api: str = API):
+        self.api = api
         self.http = httpx.Client(timeout=timeout, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
             "Accept": "application/json",
@@ -67,7 +68,7 @@ class ViaBTC:
     def get(self, path: str, key: str, **params):
         params = {k: v for k, v in params.items() if v not in (None, 0, "")}
         params["access_key"] = key
-        r = self.http.get(f"{API}/{path}", params=params)
+        r = self.http.get(f"{self.api}/{path}", params=params)
         time.sleep(self.pause)
         j = r.json()
         if j.get("code") != 0:

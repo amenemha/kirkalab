@@ -808,3 +808,4 @@ from app.db.farm_models import *  # noqa: F401,F403,E402
 from app.db.pool_models import *  # noqa: F401,F403,E402
 from app.db.energy_models import *  # noqa: F401,F403,E402
 from app.db.activity_models import *  # noqa: F401,F403,E402
+from app.db.wallet_models import *  # noqa: F401,F403,E402

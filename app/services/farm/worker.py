@@ -34,6 +34,25 @@ def pools_loop(every: int) -> None:
         time.sleep(max(30, every - (time.time() - t0)))
 
 
+def wallets_loop(every: int = 180) -> None:
+    from app.services.wallets.watch import run_wallets
+
+    wlog = logging.getLogger("kirka.wallets")
+    time.sleep(30)
+    while True:
+        t0 = time.time()
+        db = SessionLocal()
+        try:
+            n, sent = run_wallets(db)
+            if n or sent:
+                wlog.info("wallets checked=%s sent=%s in %.1fs", n, sent, time.time() - t0)
+        except Exception:
+            wlog.exception("wallets loop failed")
+        finally:
+            db.close()
+        time.sleep(max(30, every - (time.time() - t0)))
+
+
 def retention_loop() -> None:
     from app.services.farm.retention import run_retention
 
@@ -71,6 +90,7 @@ def main() -> None:
     threading.Thread(target=notify_loop, daemon=True).start()
     threading.Thread(target=pools_loop, args=(s.pools_sync_seconds,), daemon=True).start()
     threading.Thread(target=retention_loop, daemon=True).start()
+    threading.Thread(target=wallets_loop, daemon=True).start()
     if not (s.croft_login and s.croft_password):
         log.warning("CROFT_LOGIN/CROFT_PASSWORD not set — farm sync idle")
         while True:

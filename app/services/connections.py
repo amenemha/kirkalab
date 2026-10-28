@@ -47,8 +47,11 @@ POOLS = {
     "spiderpool": ("SpiderPool", ("spiderpool.com",)),
     "poolin": ("Poolin", ("poolin.com",)),
     "litecoinpool": ("Litecoinpool", ("litecoinpool.org",)),
+    "trustpool": ("Trustpool", ("trustpool.cc", "trustpool.ru")),
+    "2miners": ("2Miners", ("2miners.com",)),
+    "bitfufu": ("BitFuFu", ("bitfufu.net", "bitfufu.com")),
 }
-LIVE = {"viabtc"}  # эти пулы Kirka уже читает сама
+LIVE = {"viabtc", "trustpool", "antpool", "f2pool", "emcd", "binance", "2miners", "bitfufu", "nicehash"}  # эти пулы Kirka читает сама
 URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
 
 
@@ -182,9 +185,17 @@ def recognize(text: str) -> dict | None:
     if prov in ("emcd", "luxor", "braiins", "binance") and not key:
         mm = re.search(r"/(?:watcher|observer|share|s)/([A-Za-z0-9_-]{6,})", u.path)
         key = mm.group(1) if mm else None
+    acc = None
+    if prov in LIVE and prov not in ("viabtc", "trustpool"):
+        from app.services.pools.readers import reader  # noqa: PLC0415
+        p = reader(prov).parse(url)
+        if p:
+            key, coin, acc = p["key"], p.get("coin") or coin, p.get("account")
+        elif prov not in ("nicehash", "f2pool"):
+            key = None
     private = not key and any(x in path for x in ("/user", "/dashboard", "/account", "/my", "/settings", "/login"))
     return {"provider": prov, "name": POOLS[prov][0], "url": url, "key": key, "coin": coin,
-            "private": private, "live": prov in LIVE}
+            "private": private, "live": prov in LIVE, "login": acc}
 
 
 def pool_connect(db: Session, user: models.User, text: str, cli=None, shared: bool = False, label: str | None = None) -> dict:
@@ -195,7 +206,14 @@ def pool_connect(db: Session, user: models.User, text: str, cli=None, shared: bo
     if r["private"] or not r["key"]:
         raise ConnError(f"Это ссылка на личный кабинет {r['name']}, по ней ничего не видно без пароля. "
                          "Нужна ссылка наблюдателя: в кабинете пула раздел «Наблюдатель» / Observer / Watcher → «Создать ссылку».")
-    coin = r["coin"] or "BTC"
+    coin = r["coin"] or ("" if r["provider"] in ("emcd", "binance") else "BTC")
+    if not coin and r["live"]:  # EMCD / Binance: the coin is known only from the pool
+        from app.services.pools.readers import PoolError, reader  # noqa: PLC0415
+        try:
+            coin = (reader(r["provider"]).read(r["url"], r["key"], None, False, False).coin or "BTC").upper()
+        except PoolError as e:
+            raise ConnError(f"{r['name']} не открывает эту ссылку: {e}") from e
+    coin = coin or "BTC"
     q = select(pm.PoolAccount).where(pm.PoolAccount.provider == r["provider"], pm.PoolAccount.access_key == r["key"],
                                      pm.PoolAccount.coin == coin)
     ex = db.scalars(q).first()
@@ -206,28 +224,36 @@ def pool_connect(db: Session, user: models.User, text: str, cli=None, shared: bo
             raise ConnError("Эта ссылка уже подключена у другого человека.")
         if ex.owner_user_id == user.id:
             return {"account": pool_view(ex), "found": True, "already": True, **r}
-        # общая ссылка оператора — отдаём человеку копией не будем: просто сообщаем
         return {"account": pool_view(ex), "found": True, "already": True, "shared": True, **r}
-    a = pm.PoolAccount(provider=r["provider"], access_key=r["key"], coin=coin, sub_user_id=0, url=r["url"],
-                       owner_user_id=None if shared else user.id, active=True, track=True,
+    a = pm.PoolAccount(provider=r["provider"], access_key=r["key"][:128], coin=coin, sub_user_id=0, url=r["url"],
+                       owner_user_id=None if shared else user.id, active=True, track=True, account=(r.get("login") or None),
                        note_user=(label or "").strip()[:120] or (None if shared else user.handle))
     found = False
     if r["live"]:
-        from app.services.pools.sync import sync_account  # noqa: PLC0415
-        from app.services.pools.viabtc import ViaBTC  # noqa: PLC0415
-        cli = cli or ViaBTC()
-        try:
-            inf = cli.info(r["key"])
-        except Exception as e:  # noqa: BLE001
-            raise ConnError("ViaBTC не открывает эту ссылку — проверьте, что она не отозвана.") from e
-        a.account = (inf or {}).get("account")
-        db.add(a)
-        db.flush()
-        try:
-            sync_account(db, cli, a, with_workers=True, with_profit=False)
-            found = True
-        except Exception as e:  # noqa: BLE001
-            log.warning("pool first sync failed: %s", e)
+        from app.services.pools.sync import sync_account, sync_any, via_client  # noqa: PLC0415
+        if r["provider"] in ("viabtc", "trustpool"):
+            vcli = cli or via_client(r["provider"])
+            try:
+                inf = vcli.info(r["key"])
+            except Exception as e:  # noqa: BLE001
+                raise ConnError(f"{r['name']} не открывает эту ссылку — проверьте, что она не отозвана.") from e
+            a.account = (inf or {}).get("account")
+            db.add(a)
+            db.flush()
+            try:
+                sync_account(db, vcli, a, with_workers=True, with_profit=False)
+                found = True
+            except Exception as e:  # noqa: BLE001
+                log.warning("pool first sync failed: %s", e)
+        else:
+            db.add(a)
+            db.flush()
+            try:
+                sync_any(db, a, with_workers=True, with_profit=True)
+                found = True
+            except Exception as e:  # noqa: BLE001
+                db.rollback()
+                raise ConnError(f"{r['name']} не открывает эту ссылку: {e}") from e
     else:
         db.add(a)
     db.commit()
