@@ -1645,12 +1645,12 @@ async function pageWallets() {
 async function openWallet(id) {
   $("#drIn").innerHTML = '<div class="spin" style="margin:40px auto"></div>'; $("#drawer").hidden = false;
   const d = await api(`/me/wallets/${id}/tx?hidden=${WL.hidden ? 1 : 0}`), w = d.wallet;
-  const tx = (t) => `<tr class="${t.status === "ok" ? "" : "faint"}"><td class="num">${tfmt(t.at)}</td>
-     <td class="r num"><b>+${wMoney(t.amount, t.token)}</b> ${esc(t.token)}</td>
-     <td class="r num">${t.rub ? Math.round(t.rub).toLocaleString("ru-RU") + " ₽" : (t.usd ? "$" + nf(t.usd, 2) : "—")}</td>
-     <td class="wfrom">${t.from ? `<span class="addr sm" data-copy="${esc(t.from)}" title="${esc(t.from)} — нажмите, чтобы скопировать">${esc(t.from.length > 20 ? t.from.slice(0, 8) + "…" + t.from.slice(-8) : t.from)}</span>` : `<span class="faint">—</span>`}</td>
-     <td>${t.status === "ok" ? (t.first ? `<span class="faint">до подключения</span>` : `<span class="pill ok">пришло</span>`) : `<span class="pill bad">${esc(t.status_name)}</span>`}</td>
-     <td class="r nw"><a class="btn sm ghost" href="${esc(t.url)}" target="_blank" rel="noopener" title="Открыть в ${esc(w.explorer)}">↗</a>${t.from ? ` <a class="btn sm ghost" href="#wallets/aml/${w.chain}/${encodeURIComponent(t.from)}" title="Проверить отправителя">AML</a>` : ""}</td></tr>`;
+  const SH = { dust: "пыль", spam: "спам", fake: "подделка", poison: "двойник", zero: "ноль" };
+  const tx = (t) => `<tr class="${t.status === "ok" ? "" : "faint"}"><td class="num nw">${tfmt(t.at)}</td>
+     <td class="r num nw"><b>+${wMoney(t.amount, t.token)}</b> ${esc(t.token)}<div class="faint small">${t.rub ? "≈ " + Math.round(t.rub).toLocaleString("ru-RU") + " ₽" : (t.usd ? "≈ $" + nf(t.usd, 2) : "")}</div></td>
+     <td class="wfrom">${t.from ? `<span class="addr sm" data-copy="${esc(t.from)}" title="${esc(t.from)} — нажмите, чтобы скопировать">${esc(t.from.length > 20 ? t.from.slice(0, 6) + "…" + t.from.slice(-6) : t.from)}</span> <a class="faint small" href="#wallets/aml/${w.chain}/${encodeURIComponent(t.from)}" title="Проверить отправителя">AML</a>` : `<span class="faint">—</span>`}</td>
+     <td class="nw">${t.status === "ok" ? (t.first ? `<span class="faint small">ранее</span>` : `<span class="pill ok">новое</span>`) : `<span class="pill bad" title="${esc(t.status_name)}">${esc(SH[t.status] || t.status_name)}</span>`}</td>
+     <td class="r"><a class="btn sm ghost" href="${esc(t.url)}" target="_blank" rel="noopener" title="Открыть в ${esc(w.explorer)}">↗</a></td></tr>`;
   $("#drIn").innerHTML = `
    <div class="dr-h"><div><h2>${esc(w.label || "Без названия")} <span class="faint">${esc(WNET(w))}</span></h2>
      <div class="mut small"><span class="addr" data-copy="${esc(w.address)}">${esc(w.address)}</span></div></div><span class="sp"></span><button class="btn" id="drX">Закрыть</button></div>
@@ -1663,10 +1663,11 @@ async function openWallet(id) {
      <button class="btn ghost" id="wlD">Удалить</button></div>
    ${w.error ? `<div class="okbox bad">${esc(w.error)}</div>` : ""}
    <div class="wh" style="padding:6px 0">История поступлений<span class="sp"></span><label class="chk"><input type="checkbox" id="wlH" ${WL.hidden ? "checked" : ""}> показать скрытые (${nf(w.hidden || 0)})</label></div>
-   ${d.items.length ? `<table class="tbl wtx"><thead><tr><th>Когда, МСК</th><th class="r">Сумма</th><th class="r">≈</th><th>От кого</th><th>Статус</th><th></th></tr></thead><tbody>${d.items.map(tx).join("")}</tbody></table>`
+   ${d.items.length ? `<table class="tbl wtx"><thead><tr><th>МСК</th><th class="r">Сумма</th><th>От кого</th><th></th><th></th></tr></thead><tbody>${d.items.map(tx).join("")}</tbody></table>`
      : `<div class="empty" style="padding:24px">Поступлений пока нет. Как только придут — появятся здесь и в Telegram.</div>`}`;
   $("#drX").onclick = () => { $("#drawer").hidden = true; };
   $$("#drIn [data-copy]").forEach((el) => el.onclick = () => wCopy(el));
+  $$("#drIn a[href^=\"#wallets/aml\"]").forEach((a) => a.onclick = () => { $("#drawer").hidden = true; });
   $("#wlH").onchange = (e) => { WL.hidden = e.target.checked; openWallet(id); };
   $("#wlS").onclick = async () => { try { await api(`/me/wallets/${id}`, { method: "PATCH", body: JSON.stringify({ label: $("#wlL").value.trim(), min_usd: $("#wlM").value.replace(",", ".") }) }); toast("Сохранено"); go("wallets", true); openWallet(id); } catch (e) { toast(e.message); } };
   $("#wlD").onclick = async () => { if (!confirm("Перестать следить за этим кошельком? История поступлений удалится.")) return; await api(`/me/wallets/${id}`, { method: "DELETE" }); $("#drawer").hidden = true; go("wallets", true); };
