@@ -36,7 +36,7 @@ def add_wallet(body: dict, user: models.User = Depends(get_current_user), db: Se
     try:
         ws = ww.add(db, user, str(body.get("address") or ""), body.get("label"), body.get("chains") or None)
     except ww.WalletError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
+        raise HTTPException(status_code=400, detail=e.text) from None
     from app.services import activity as act
     act.record(db, source="site", action="wallet:add", user_id=user.id, label=", ".join(f"{w.chain} {w.address}" for w in ws))
     return {"added": [ww.view(w, db) for w in ws], **_summary(db, user)}

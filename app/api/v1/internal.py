@@ -957,7 +957,7 @@ def internal_wallets(
         try:
             ws = ww.add(db, u, str(body.get("address") or ""), body.get("label"), body.get("chains") or None)
         except ww.WalletError as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": e.text}
         return {"ok": True, "added": [ww.view(w, db) for w in ws]}
     if act in ("mute", "unmute", "delete"):
         w = ww.owned(db, u, int(body.get("id") or 0))

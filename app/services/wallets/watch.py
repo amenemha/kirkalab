@@ -24,8 +24,12 @@ STATUS = {"ok": "поступление", "dust": "меньше порога", "
           "poison": "отравление адреса", "zero": "нулевой перевод"}
 
 
-class WalletError(RuntimeError):
-    pass
+class WalletError(ValueError):
+    """Ошибка с готовым текстом для человека (без деталей исключений)."""
+
+    def __init__(self, text: str):
+        super().__init__(text)
+        self.text = text
 
 
 # ---------- курсы ----------
