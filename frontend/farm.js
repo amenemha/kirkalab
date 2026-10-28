@@ -1648,9 +1648,9 @@ async function openWallet(id) {
   const tx = (t) => `<tr class="${t.status === "ok" ? "" : "faint"}"><td class="num">${tfmt(t.at)}</td>
      <td class="r num"><b>+${wMoney(t.amount, t.token)}</b> ${esc(t.token)}</td>
      <td class="r num">${t.rub ? Math.round(t.rub).toLocaleString("ru-RU") + " ₽" : (t.usd ? "$" + nf(t.usd, 2) : "—")}</td>
-     <td>${t.from ? `<span class="addr sm" data-copy="${esc(t.from)}" title="Скопировать">${esc(t.from)}</span>` : `<span class="faint">—</span>`}</td>
+     <td class="wfrom">${t.from ? `<span class="addr sm" data-copy="${esc(t.from)}" title="Скопировать">${esc(t.from)}</span>` : `<span class="faint">—</span>`}</td>
      <td>${t.status === "ok" ? (t.first ? `<span class="faint">до подключения</span>` : `<span class="pill ok">пришло</span>`) : `<span class="pill bad">${esc(t.status_name)}</span>`}</td>
-     <td class="r"><a class="btn sm ghost" href="${esc(t.url)}" target="_blank" rel="noopener">${esc(w.explorer)}</a>${t.from ? ` <a class="btn sm ghost" href="#wallets/aml/${w.chain}/${encodeURIComponent(t.from)}">AML</a>` : ""}</td></tr>`;
+     <td class="r nw"><a class="btn sm ghost" href="${esc(t.url)}" target="_blank" rel="noopener" title="Открыть в ${esc(w.explorer)}">↗</a>${t.from ? ` <a class="btn sm ghost" href="#wallets/aml/${w.chain}/${encodeURIComponent(t.from)}" title="Проверить отправителя">AML</a>` : ""}</td></tr>`;
   $("#drIn").innerHTML = `
    <div class="dr-h"><div><h2>${esc(w.label || "Без названия")} <span class="faint">${esc(WNET(w))}</span></h2>
      <div class="mut small"><span class="addr" data-copy="${esc(w.address)}">${esc(w.address)}</span></div></div><span class="sp"></span><button class="btn" id="drX">Закрыть</button></div>
@@ -1663,7 +1663,7 @@ async function openWallet(id) {
      <button class="btn ghost" id="wlD">Удалить</button></div>
    ${w.error ? `<div class="okbox bad">${esc(w.error)}</div>` : ""}
    <div class="wh" style="padding:6px 0">История поступлений<span class="sp"></span><label class="chk"><input type="checkbox" id="wlH" ${WL.hidden ? "checked" : ""}> показать скрытые (${nf(w.hidden || 0)})</label></div>
-   ${d.items.length ? `<table class="tbl"><thead><tr><th>Когда, МСК</th><th class="r">Сумма</th><th class="r">≈</th><th>От кого</th><th>Статус</th><th></th></tr></thead><tbody>${d.items.map(tx).join("")}</tbody></table>`
+   ${d.items.length ? `<table class="tbl wtx"><thead><tr><th>Когда, МСК</th><th class="r">Сумма</th><th class="r">≈</th><th>От кого</th><th>Статус</th><th></th></tr></thead><tbody>${d.items.map(tx).join("")}</tbody></table>`
      : `<div class="empty" style="padding:24px">Поступлений пока нет. Как только придут — появятся здесь и в Telegram.</div>`}`;
   $("#drX").onclick = () => { $("#drawer").hidden = true; };
   $$("#drIn [data-copy]").forEach((el) => el.onclick = () => wCopy(el));
@@ -1672,6 +1672,7 @@ async function openWallet(id) {
   $("#wlD").onclick = async () => { if (!confirm("Перестать следить за этим кошельком? История поступлений удалится.")) return; await api(`/me/wallets/${id}`, { method: "DELETE" }); $("#drawer").hidden = true; go("wallets", true); };
 }
 async function pageAml(arg) {
+  $("#drawer").hidden = true;
   const [chain, ...rest] = arg.split("/"); const addr = decodeURIComponent(rest.join("/"));
   $("#pageTitle").textContent = "Проверка отправителя";
   const r = await api(`/me/wallets/aml/check?chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(addr)}`);
