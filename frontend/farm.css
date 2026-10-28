@@ -379,3 +379,7 @@ code.cp:hover{border-color:var(--acc)}
 .in.mono{font-family:var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12.5px}
 label.chk{display:inline-flex;align-items:center;gap:5px;margin-right:12px;cursor:pointer;font-weight:400;text-transform:none;letter-spacing:0}
 tr.clk{cursor:pointer}
+.tbl.wtx td{padding-left:6px;padding-right:6px}
+.tbl.wtx td.wfrom{max-width:190px;white-space:normal}
+.tbl.wtx td.wfrom .addr{line-height:1.35}
+.tbl td.nw{white-space:nowrap}
