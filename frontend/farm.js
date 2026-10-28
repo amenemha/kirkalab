@@ -1648,7 +1648,7 @@ async function openWallet(id) {
   const tx = (t) => `<tr class="${t.status === "ok" ? "" : "faint"}"><td class="num">${tfmt(t.at)}</td>
      <td class="r num"><b>+${wMoney(t.amount, t.token)}</b> ${esc(t.token)}</td>
      <td class="r num">${t.rub ? Math.round(t.rub).toLocaleString("ru-RU") + " ₽" : (t.usd ? "$" + nf(t.usd, 2) : "—")}</td>
-     <td class="wfrom">${t.from ? `<span class="addr sm" data-copy="${esc(t.from)}" title="Скопировать">${esc(t.from)}</span>` : `<span class="faint">—</span>`}</td>
+     <td class="wfrom">${t.from ? `<span class="addr sm" data-copy="${esc(t.from)}" title="${esc(t.from)} — нажмите, чтобы скопировать">${esc(t.from.length > 20 ? t.from.slice(0, 8) + "…" + t.from.slice(-8) : t.from)}</span>` : `<span class="faint">—</span>`}</td>
      <td>${t.status === "ok" ? (t.first ? `<span class="faint">до подключения</span>` : `<span class="pill ok">пришло</span>`) : `<span class="pill bad">${esc(t.status_name)}</span>`}</td>
      <td class="r nw"><a class="btn sm ghost" href="${esc(t.url)}" target="_blank" rel="noopener" title="Открыть в ${esc(w.explorer)}">↗</a>${t.from ? ` <a class="btn sm ghost" href="#wallets/aml/${w.chain}/${encodeURIComponent(t.from)}" title="Проверить отправителя">AML</a>` : ""}</td></tr>`;
   $("#drIn").innerHTML = `
