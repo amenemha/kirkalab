@@ -73,6 +73,12 @@ def fetch_anchor_rates(fiat_codes: list[str]) -> dict[str, Decimal]:
         if rate <= 0:
             continue
         rates[code.upper()] = rate
+    if "RUB" in {c.upper() for c in fiat_codes}:
+        # рубль — по рыночному курсу обмена USDT, а не по «мировому среднему»
+        from app.services.fx.market import usdt_rub  # noqa: PLC0415
+        m = usdt_rub()
+        if m:
+            rates["RUB"] = Decimal(str(round(m, 4)))
     if not rates:
         raise FxFetchError(f"no usable FX rates in payload: {payload}")
     return rates

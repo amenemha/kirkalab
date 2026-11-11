@@ -473,7 +473,7 @@ def send_telegram(chat_id: int, text: str, *, buttons: bool = True, link: str | 
             {"text": "⚙️ Настроить", "callback_data": "notif:open"},
         ]]}
     try:
-        r = httpx.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload, timeout=15)
+        r = httpx.post(f"{get_settings().tg_api_base}/bot{token}/sendMessage", json=payload, timeout=15)
         if r.status_code != 200:
             log.warning("telegram %s: %s", r.status_code, r.text[:200])
         return r.status_code == 200

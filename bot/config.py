@@ -20,6 +20,8 @@ class BotSettings(BaseSettings):
   bot_internal_secret: str | None = None
   # Base URL of the Kirkalab API (e.g. http://app:8000 inside docker network).
   api_base_url: str = "http://app:8000"
+  # Telegram Bot API: на проде — внутренний шлюз с несколькими адресами Telegram.
+  tg_api_base: str = "https://api.telegram.org"
   # Request timeout for API calls, seconds.
   request_timeout: float = 10.0
   # Redis connection for FSM persistence. Defaults to the compose `redis`

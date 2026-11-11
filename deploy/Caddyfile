@@ -56,3 +56,23 @@
 		format json
 	}
 }
+
+# Внутренний шлюз к Telegram Bot API (только внутри сети docker, наружу не открыт).
+# Провайдер то и дело режет отдельные адреса Telegram: держим несколько и мгновенно
+# переключаемся на живой. Бот, сайт и фоновые уведомления ходят сюда: http://caddy:8081
+http://:8081 {
+	reverse_proxy 149.154.167.220:443 149.154.166.110:443 149.154.167.99:443 149.154.167.41:443 149.154.167.198:443 {
+		header_up Host api.telegram.org
+		transport http {
+			tls
+			tls_server_name api.telegram.org
+			dial_timeout 3s
+			keepalive 60s
+		}
+		lb_policy first
+		lb_try_duration 20s
+		lb_try_interval 200ms
+		fail_duration 60s
+		max_fails 1
+	}
+}

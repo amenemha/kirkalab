@@ -1,7 +1,9 @@
 """Кошельки: распознавание адресов, фильтры спама/пыли/отравления, уведомления и API (сеть замокана)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+import httpx
 
 import pytest
 
@@ -158,9 +160,129 @@ def test_bsc_reader_parses_logs():
                 return hex(1000)
             if method == "eth_getBalance":
                 return hex(int(0.5e18))
+            if params[0]["topics"][2] is None:  # исходящие
+                return []
             return [{"address": "0x55d398326f99059ff775485246999027b3197955", "data": hex(int(12.5e18)), "transactionHash": "0xabc",
-                     "logIndex": "0x1", "topics": [C.Reader.TRANSFER, "0x" + "0" * 24 + "11" * 20, "0x"], "blockTimestamp": hex(1793196000)}]
+                     "logIndex": "0x1", "topics": [C.Reader.TRANSFER, "0x" + "0" * 24 + "11" * 20, params[0]["topics"][2]],
+                     "blockTimestamp": hex(1793196000)}]
     w = WalletWatch(chain="BSC", address="0x" + "22" * 20, balance={"BNB": 0.2}, cursor="900")
     out = R(pause=0).bsc(w.address, w)
     assert out[0].token == "USDT" and out[0].amount == 12.5 and out[0].frm == "0x" + "11" * 20
     assert out[1].token == "BNB" and out[1].amount == pytest.approx(0.3) and w.cursor == "1000"
+
+
+def test_outgoing_is_stored_and_off_by_default(db, user, monkeypatch):
+    monkeypatch.setattr(W, "prices", lambda db=None: ({}, None))
+    rd = FakeReader([])
+    [w] = W.add(db, user, TRON, "Транзит", reader=rd)
+    assert w.outgoing is False
+    out = C.Transfer("o1:out", "o1", "USDT", 480.0, TRON, datetime(2026, 10, 28, 11, 0, tzinfo=timezone.utc), dir="out", to=SENDER)
+    rd.items = [out]
+    sent = []
+    W.run_wallets(db, reader=rd, sender=lambda *a: sent.append(a) or True)
+    t = db.query(WalletTx).one()
+    assert t.direction == "out" and t.to_addr == SENDER and t.notified and not sent  # выключено — не шлём
+    w.outgoing = True
+    db.commit()
+    rd.items = [out, C.Transfer("o2:out", "o2", "USDT", 15.0, TRON, datetime(2026, 10, 28, 11, 5, tzinfo=timezone.utc), dir="out", to=SENDER)]
+    W.run_wallets(db, reader=rd, sender=lambda *a: sent.append(a) or True)
+    assert len(sent) == 1
+    txt = sent[0][1]
+    assert "🔴 <b>−15,00 USDT</b>" in txt and f"Куда: <code>{SENDER}</code>" in txt and "С кошелька: Транзит" in txt
+    v = W.view(w, db)
+    assert v["outgoing"] and v["incoming"] == 0 and v["outgoing_n"] == 2
+    h = W.history(db, w)
+    assert h[0]["dir"] == "out" and h[0]["to"] == SENDER
+    r = W.alert_rich(w, db.query(WalletTx).filter_by(uid="o2:out").one(), db, "✅ не в чёрном списке эмитента")
+    assert "<h3>🔴 −15,00 USDT · TRC-20</h3>" in r and "<b>Транзит</b>" in r and f"<code>{TRON}</code>" in r and "Ушло" in r
+    assert "…" not in r  # адреса целиком
+    assert 'type="copy_text"' in r and f'data="wal:mute:{w.id}"' in r
+
+
+def test_rate_line():
+    assert W.rate_line("USDT", "TRX", {"TRX": 0.28}, 81.0) == "1 USDT = 81,00 ₽ · 1 TRX = 22,68 ₽"
+    assert W.rate_line("BTC", "BTC", {"BTC": 100000}, 80.0) == "1 BTC = 8 000 000 ₽"
+    assert W.rate_line("BTC", "BTC", {}, None) is None
+
+
+def test_recent_before_add_is_alerted(db, user, monkeypatch):
+    """Перевод за 10 минут до добавления адреса — не молчим (случай с DOGE 29.10)."""
+    monkeypatch.setattr(W, "prices", lambda db=None: ({"DOGE": 0.2}, 80.0))
+    now = datetime.now(timezone.utc)
+    old = C.Transfer("old", "old", "DOGE", 50.0, None, now - timedelta(days=3))
+    fresh = C.Transfer("fr", "fr", "DOGE", 1000.0, None, now - timedelta(minutes=11))
+    [w] = W.add(db, user, "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L", reader=FakeReader([old, fresh]))
+    st = {t.uid: t.notified for t in db.query(WalletTx)}
+    assert st == {"old": True, "fr": False}
+    sent = []
+    W.run_wallets(db, reader=FakeReader([old, fresh]), sender=lambda *a: sent.append(a) or True)
+    assert len(sent) == 1 and "до начала наблюдения" in sent[0][1] and "+1 000 DOGE" in sent[0][1]
+
+
+def test_transient_error_hidden_until_stale(db, user):
+    w = WalletWatch(user_id=user.id, chain="TRON", address=TRON, last_error="сеть не ответила: ReadTimeout",
+                    last_ok=datetime.now(timezone.utc) - timedelta(minutes=5))
+    assert W.shown_error(w) is None
+    w.last_ok = datetime.now(timezone.utc) - timedelta(minutes=40)
+    assert W.shown_error(w) == "сеть не ответила: ReadTimeout"
+
+
+def test_reader_retries_and_cooldown():
+    calls = []
+
+    def handler(req):
+        calls.append(str(req.url))
+        if "retry.example" in str(req.url) and len(calls) == 1:
+            raise httpx.ReadTimeout("slow")
+        if "busy.example" in str(req.url):
+            return httpx.Response(429)
+        return httpx.Response(200, json={"ok": 1})
+    rd = C.Reader(http=httpx.Client(transport=httpx.MockTransport(handler)), pause=0)
+    assert rd.get("https://retry.example/x") == {"ok": 1} and len(calls) == 2
+    with pytest.raises(C.ChainError):
+        rd.get("https://busy.example/x")
+    n = len(calls)
+    with pytest.raises(C.ChainError):  # хост «отдыхает» — даже не спрашиваем
+        rd.get("https://busy.example/y")
+    assert len(calls) == n
+    C._COOL.clear()
+
+
+def test_esplora_and_doge_directions():
+    me, other = "bc1qme", "bc1qother"
+
+    class R(C.Reader):
+        def get(self, url, **params):
+            if "blockchair" in url:
+                raise C.ChainError("источник ответил 430")
+            if "blockcypher" in url:
+                return {"txrefs": [{"tx_hash": "d1", "tx_input_n": -1, "value": 1000_0000_0000, "confirmations": 5, "confirmed": "2026-10-29T16:09:12Z"},
+                                   {"tx_hash": "d2", "tx_input_n": 0, "value": 1000_0000_0000, "confirmations": 3, "confirmed": "2026-10-29T16:30:22Z"}]}
+            return [{"txid": "in1", "status": {"confirmed": True, "block_time": 1793196000},
+                     "vin": [{"prevout": {"scriptpubkey_address": other}}], "vout": [{"scriptpubkey_address": me, "value": 5000}]},
+                    {"txid": "out1", "status": {"confirmed": True, "block_time": 1793197000},
+                     "vin": [{"prevout": {"scriptpubkey_address": me}}],
+                     "vout": [{"scriptpubkey_address": other, "value": 3000}, {"scriptpubkey_address": me, "value": 1500}]}]
+    r = R(pause=0)
+    e = r.esplora("x", "BTC", me)
+    assert [(t.dir, t.amount, t.to) for t in e] == [("in", 5e-05, me), ("out", 3e-05, other)]
+    d = sorted(r.doge("DADDR"), key=lambda t: t.at)
+    assert [(t.uid, t.dir, t.amount) for t in d] == [("d1", "in", 1000.0), ("d2:out", "out", 1000.0)]
+
+
+def test_tron_reader_directions():
+    me = TRON
+
+    class R(C.Reader):
+        def get(self, url, **params):
+            assert "only_to" not in params
+            if url.endswith("trc20"):
+                return {"data": [
+                    {"transaction_id": "t1", "to": me, "from": SENDER, "value": "1250000000", "type": "Transfer", "block_timestamp": 1793196000000,
+                     "token_info": {"address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "symbol": "USDT", "decimals": 6}},
+                    {"transaction_id": "t2", "to": SENDER, "from": me, "value": "480000000", "type": "Transfer", "block_timestamp": 1793197000000,
+                     "token_info": {"address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "symbol": "USDT", "decimals": 6}}]}
+            return {"data": []}
+    out = R(pause=0).tron(me)
+    assert [(t.uid, t.dir, t.amount, t.to) for t in out] == [
+        ("t1:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "in", 1250.0, me), ("t2:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t:out", "out", 480.0, SENDER)]

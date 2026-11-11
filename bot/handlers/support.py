@@ -127,7 +127,7 @@ async def free_text(message: Message) -> None:
       body["file"] = f
     r = await message.bot.kirkalab_client._request("POST", "/api/v1/internal/support/reply", headers=_hdr(), json=body)
     if r.status_code == 200:
-      await message.answer("✓ Ответ отправлен." if r.json().get("ok") else "Не удалось доставить ответ — человек мог остановить бота.")
+      await message.answer("✓ Ответ отправлен." if r.json().get("ok") else "Связь с Telegram сейчас нестабильна — ответ сохранён, доставлю автоматически в ближайшие минуты.")
       return
   ok = await _deliver(message)
   if _first_in_group(message):

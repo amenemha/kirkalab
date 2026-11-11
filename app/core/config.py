@@ -41,6 +41,8 @@ class Settings(BaseSettings):
 
     # Market data integrations (CoinGecko + mempool.space, both public).
     coingecko_base_url: str = "https://api.coingecko.com"
+    # Куда ходить в Telegram Bot API. На проде — внутренний шлюз с несколькими адресами Telegram (deploy/Caddyfile).
+    tg_api_base: str = "https://api.telegram.org"
     # Тестовый период: всем пользователям открыто всё (без PRO-ограничений).
     test_mode_all_pro: bool = False
     whattomine_asic_url: str = "https://whattomine.com/asic.json"
@@ -59,7 +61,7 @@ class Settings(BaseSettings):
     # in Redis with a TTL, with a durable fallback to the latest persisted
     # ``fx_rates`` row when the source is down. The HTTP knobs mirror the market
     # provider's so both integrations time out/retry consistently.
-    fx_cache_ttl_seconds: int = 3600
+    fx_cache_ttl_seconds: int = 600
     fx_http_timeout_seconds: float = 5.0
     fx_http_retries: int = 2
 

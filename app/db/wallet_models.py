@@ -26,6 +26,8 @@ class WalletWatch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     last_check: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(300))
+    last_ok: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))        # последняя удачная проверка
+    outgoing: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)  # сообщать об уходе
 
     __table_args__ = (UniqueConstraint("user_id", "chain", "address", name="uq_wallet_watch"),)
 
@@ -41,6 +43,8 @@ class WalletTx(Base):
     usd: Mapped[float | None] = mapped_column(Float)
     rub: Mapped[float | None] = mapped_column(Float)
     from_addr: Mapped[str | None] = mapped_column(String(128))
+    to_addr: Mapped[str | None] = mapped_column(String(128))
+    direction: Mapped[str] = mapped_column(String(3), default="in", server_default="in", nullable=False)  # in | out
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(10), nullable=False)        # ok | dust | spam | poison | zero
     notified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)

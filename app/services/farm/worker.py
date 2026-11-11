@@ -78,6 +78,10 @@ def notify_loop() -> None:
             n = tick(db)
             if n:
                 nlog.info("notify sent=%s", n)
+            from app.services.support import retry_failed
+            r = retry_failed(db)
+            if r["sent"] or r["failed"]:
+                nlog.info("support retry sent=%s failed=%s", r["sent"], r["failed"])
         except Exception:
             nlog.exception("notify tick failed")
         finally:

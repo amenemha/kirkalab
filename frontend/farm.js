@@ -1386,7 +1386,7 @@ async function pageAdmin() {
   const person = sel ? `
   <div class="grid" style="margin-top:12px">
     <div class="w c7"><div class="wh">Переписка: ${who(sel)}<span class="sp"></span><button class="btn ghost" id="admClose" style="height:24px">закрыть ✕</button></div><div class="wb">
-      <div class="chat" id="admChat">${th.items.length ? th.items.map((m) => `<div class="bub b${m.dir}${m.status === "failed" ? " fail" : ""}">${quoteBub(m)}${fileBub(m)}${m.text ? `<div>${esc(m.text)}</div>` : ""}<span>${m.dir === "in" ? "от человека" : m.broadcast ? "рассылка" : "вы"} · ${tfmt(m.ts)}${m.status === "failed" ? " · не доставлено" : ""}</span></div>`).join("") : '<div class="hint">Сообщений пока нет. Напишите первым — сообщение придёт человеку от бота, он сможет ответить кнопкой «Ответить» и прислать скриншот или файл.</div>'}</div>
+      <div class="chat" id="admChat">${th.items.length ? th.items.map((m) => `<div class="bub b${m.dir}${m.status === "failed" ? " fail" : ""}">${quoteBub(m)}${fileBub(m)}${m.text ? `<div>${esc(m.text)}</div>` : ""}<span>${m.dir === "in" ? "от человека" : m.broadcast ? "рассылка" : "вы"} · ${tfmt(m.ts)}${m.status === "failed" ? ` · не доставлено, повторю автоматически · <a href="#" data-retry="${m.id}">Повторить сейчас</a>` : m.retried ? " · доставлено повторно" : ""}</span></div>`).join("") : '<div class="hint">Сообщений пока нет. Напишите первым — сообщение придёт человеку от бота, он сможет ответить кнопкой «Ответить» и прислать скриншот или файл.</div>'}</div>
       <div class="crow" style="margin-top:10px;align-items:flex-end"><textarea class="in" id="admMsg" rows="3" placeholder="Сообщение человеку от бота… Скриншот можно вставить сюда (Ctrl+V) или перетащить файл" style="flex:1;resize:vertical">${esc(ADM.draft)}</textarea><label class="btn" title="Прикрепить файл">📎<input type="file" id="admFile" hidden></label><button class="btn pri" id="admSend">Отправить</button></div>
       <div id="admAtt" style="margin-top:6px">${attachChip(ADM.file, "admFileX")}</div>
       <div class="hint" style="margin-top:6px">Файлы до 20 МБ: скриншоты, фото, PDF, видео. Ответить можно и прямо в Telegram: бот пересылает сообщения и файлы людей менеджерам — нажмите «Ответить» на пересланном, можно с фото.</div>
@@ -1469,7 +1469,9 @@ async function pageAdmin() {
     const m = $("#admMsg"); m.oninput = () => ADM.draft = m.value;
     m.onkeydown = (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("#admSend").click(); };
     wireAttach(m, $("#admFile"), "admFileX", "file");
+    $$("[data-retry]").forEach((a) => a.onclick = async (e) => { e.preventDefault(); a.textContent = "отправляю…"; try { const r = await api(`/admin/messages/${a.dataset.retry}/retry`, { method: "POST" }); toast(r.ok ? "Доставлено" : "Пока не доставлено — повторю автоматически"); } catch { toast("Пока не доставлено — повторю автоматически"); } re(); });
     $("#admSend").onclick = async () => { if (await send([sel.tg_id], m.value, $("#admSend"), ADM.file)) { ADM.draft = ""; ADM.file = null; re(); } };
+    $$("[data-retry]").forEach((a) => a.onclick = async (e) => { e.preventDefault(); a.textContent = "отправляю…"; try { const r = await api(`/admin/messages/${a.dataset.retry}/retry`, { method: "POST" }); toast(r.ok ? "Доставлено" : "Пока не доставлено — повторю автоматически"); } catch { toast("Пока не доставлено — повторю автоматически"); } re(); });
     $$("[data-fid]").forEach(async (el) => {
       const id = el.dataset.fid;
       try { ADM_BLOB[id] = ADM_BLOB[id] || URL.createObjectURL(await apiBlob(`/admin/messages/${id}/file`)); el.innerHTML = `<img src="${ADM_BLOB[id]}" alt="фото">`; el.onclick = () => window.open(ADM_BLOB[id], "_blank"); ch.scrollTop = ch.scrollHeight; }
@@ -1598,26 +1600,28 @@ async function pageWallets() {
   if (S.arg && S.arg.startsWith("aml/")) return pageAml(S.arg.slice(4));
   const d = await api("/me/wallets");
   const free = d.limit - d.used;
-  const last = (w) => w.error ? `<span class="bad">${esc(w.error)}</span>` : (w.incoming ? `${nf(w.incoming)} поступл.` : `<span class="faint">поступлений не было</span>`);
+  const last = (w) => w.error ? `<span class="bad">${esc(w.error)}</span>` : ((w.incoming || w.outgoing_n) ? `<span class="ok">+${nf(w.incoming)}</span> пришло${w.outgoing_n ? ` · <span class="bad">−${nf(w.outgoing_n)}</span> ушло` : ""}` : `<span class="faint">переводов не было</span>`);
   const row = (w) => `<tr data-w="${w.id}" class="clk">
      <td><b>${esc(w.label || "Без названия")}</b></td>
      <td><span class="pbdg">${esc(WNET(w))}</span></td>
      <td><span class="addr" data-copy="${esc(w.address)}" title="Нажмите, чтобы скопировать">${esc(w.address)}</span></td>
      <td>${last(w)}${w.hidden ? ` <span class="faint">· скрыто ${nf(w.hidden)}</span>` : ""}</td>
-     <td class="r">${w.muted ? `<button class="btn sm" data-wm="${w.id}" data-v="0">🔕 выкл</button>` : `<button class="btn sm ghost" data-wm="${w.id}" data-v="1">🔔 вкл</button>`}</td>
+     <td class="r nw">${w.muted ? `<button class="btn sm" data-wm="${w.id}" data-v="0" title="Уведомления выключены — нажмите, чтобы включить">🔕 выкл</button>` : `<button class="btn sm ghost" data-wm="${w.id}" data-v="1" title="Уведомления включены — нажмите, чтобы выключить">🔔 вкл</button>`}</td>
+     <td class="r nw">${w.outgoing ? `<button class="btn sm" data-wo="${w.id}" data-v="0" title="Сообщаю, когда деньги уходят с кошелька — нажмите, чтобы выключить">🔴 вкл</button>` : `<button class="btn sm ghost" data-wo="${w.id}" data-v="1" title="Об уходе денег не сообщаю — нажмите, чтобы включить">выкл</button>`}</td>
      <td class="r faint">${w.last_check ? tfmt(w.last_check) : "—"}</td></tr>`;
   $("#main").innerHTML = `<div class="grid">
-   <div class="w c8"><div class="wh">Кошельки · ${nf(d.used)} из ${nf(d.limit)}<span class="sp"></span><span class="mini">Kirka проверяет каждые 3 минуты и пишет в Telegram о каждом поступлении</span></div><div class="wb">
+   <div class="w c8"><div class="wh">Кошельки · ${nf(d.used)} из ${nf(d.limit)}<span class="sp"></span><span class="mini">Kirka проверяет каждые 3 минуты и пишет в Telegram о каждом поступлении, а по желанию — и об уходе денег</span></div><div class="wb">
      <div class="crow"><input class="in mono" id="wA" placeholder="Адрес кошелька: T…, bc1…, 0x…, UQ…, ltc1…, D…" autocomplete="off" style="flex:3">
        <input class="in" id="wN" placeholder="Название, например «Личный»" style="flex:1;max-width:220px"><button class="btn pri" id="wGo" ${free > 0 ? "" : "disabled"}>Следить</button></div>
      <div class="hint" id="wMsg" style="margin-top:6px">${free > 0 ? "Вставьте адрес — сеть определится сама." : "Достигнут лимит кошельков — удалите ненужный, чтобы добавить новый."}</div>
-     ${d.items.length ? `<table class="tbl" style="margin-top:12px"><thead><tr><th>Название</th><th>Сеть</th><th>Адрес</th><th>Поступления</th><th class="r">Уведомления</th><th class="r">Проверено</th></tr></thead><tbody>${d.items.map(row).join("")}</tbody></table>`
+     ${d.items.length ? `<table class="tbl" style="margin-top:12px"><thead><tr><th>Название</th><th>Сеть</th><th>Адрес</th><th>Переводы</th><th class="r">Уведомления</th><th class="r" title="Сообщать, когда деньги уходят с кошелька">Уход денег</th><th class="r">Проверено</th></tr></thead><tbody>${d.items.map(row).join("")}</tbody></table>`
        : `<div class="empty" style="padding:30px 10px">Пока нет кошельков. Добавьте адрес выше или просто пришлите его боту в чат.</div>`}
    </div></div>
    <div class="w c4"><div class="wh">Как это работает</div><div class="wb small">
      <div class="hint" style="line-height:1.55">
        <b>Сети:</b> ${d.chains.map((c) => esc(c.net === c.id ? c.name : `${c.name} (${c.net})`)).join(", ")}.<br><br>
-       <b>Что приходит в Telegram:</b> сумма и монета, сеть, примерная сумма в рублях, название кошелька, полный адрес отправителя, время МСК, кнопки «Открыть в обозревателе» и «Проверить AML».<br><br>
+       <b>Что приходит в Telegram:</b> карточка с суммой и монетой, сетью, суммой в рублях, названием и полным адресом кошелька, полным адресом отправителя, временем МСК, итогом за сутки и курсом в рублях. Кнопки: обозреватель, скопировать адрес, AML.<br><br>
+       <b>Уход денег:</b> по умолчанию выключен. Включите в колонке «Уход денег» — и Kirka сообщит 🔴, как только средства уйдут с кошелька, с адресом получателя.<br><br>
        <b>Что не присылаю:</b> спам-токены и подделки USDT/USDC, нулевые переводы, «пыль» меньше $1 (порог меняется в карточке), переводы с адресов-двойников (отравление адреса — когда мошенник шлёт копейки с адреса, похожего на ваш обычный, чтобы вы скопировали его из истории).<br><br>
        <b>Сон:</b> ночью уведомления копятся и придут утром — по вашему расписанию сна.<br><br>
        Адрес 0x… — это сразу Ethereum и BNB Chain: Kirka следит в обеих сетях, это один кошелёк.
@@ -1625,6 +1629,7 @@ async function pageWallets() {
   const msg = (t, bad) => { const m = $("#wMsg"); m.textContent = t; m.classList.toggle("err", !!bad); };
   $$("#main [data-copy]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); wCopy(el); });
   $$("#main [data-wm]").forEach((b) => b.onclick = async (e) => { e.stopPropagation(); await api(`/me/wallets/${b.dataset.wm}`, { method: "PATCH", body: JSON.stringify({ muted: b.dataset.v === "1" }) }); go("wallets", true); });
+  $$("#main [data-wo]").forEach((b) => b.onclick = async (e) => { e.stopPropagation(); await api(`/me/wallets/${b.dataset.wo}`, { method: "PATCH", body: JSON.stringify({ outgoing: b.dataset.v === "1" }) }); toast(b.dataset.v === "1" ? "Буду сообщать и об уходе денег" : "Об уходе денег больше не сообщаю"); go("wallets", true); });
   $$("#main tr[data-w]").forEach((r) => r.onclick = () => openWallet(+r.dataset.w));
   let tm;
   $("#wA").oninput = () => { clearTimeout(tm); const a = $("#wA").value.trim(); WL.pick = null; if (a.length < 25) return msg(free > 0 ? "Вставьте адрес — сеть определится сама." : "Достигнут лимит кошельков."); tm = setTimeout(async () => {
@@ -1646,29 +1651,31 @@ async function openWallet(id) {
   $("#drIn").innerHTML = '<div class="spin" style="margin:40px auto"></div>'; $("#drawer").hidden = false;
   const d = await api(`/me/wallets/${id}/tx?hidden=${WL.hidden ? 1 : 0}`), w = d.wallet;
   const SH = { dust: "пыль", spam: "спам", fake: "подделка", poison: "двойник", zero: "ноль" };
-  const tx = (t) => `<tr class="${t.status === "ok" ? "" : "faint"}"><td class="num nw">${tfmt(t.at)}</td>
-     <td class="r num nw"><b>+${wMoney(t.amount, t.token)}</b> ${esc(t.token)}<div class="faint small">${t.rub ? "≈ " + Math.round(t.rub).toLocaleString("ru-RU") + " ₽" : (t.usd ? "≈ $" + nf(t.usd, 2) : "")}</div></td>
-     <td class="wfrom">${t.from ? `<span class="addr sm" data-copy="${esc(t.from)}" title="${esc(t.from)} — нажмите, чтобы скопировать">${esc(t.from.length > 20 ? t.from.slice(0, 6) + "…" + t.from.slice(-6) : t.from)}</span> <a class="faint small" href="#wallets/aml/${w.chain}/${encodeURIComponent(t.from)}" title="Проверить отправителя">AML</a>` : `<span class="faint">—</span>`}</td>
+  const tx = (t) => { const out = t.dir === "out", peer = out ? t.to : t.from; return `<tr class="${t.status === "ok" ? "" : "faint"}"><td class="num nw">${tfmt(t.at)}</td>
+     <td class="r num nw"><b class="${out ? "bad" : "ok"}">${out ? "−" : "+"}${wMoney(t.amount, t.token)}</b> ${esc(t.token)}<div class="faint small">${t.rub ? "≈ " + Math.round(t.rub).toLocaleString("ru-RU") + " ₽" : (t.usd ? "≈ $" + nf(t.usd, 2) : "")}</div></td>
+     <td class="wfrom"><span class="faint small">${out ? "куда" : "от"}</span> ${peer ? `<span class="addr sm full" data-copy="${esc(peer)}" title="Нажмите, чтобы скопировать">${esc(peer)}</span> <a class="faint small" href="#wallets/aml/${w.chain}/${encodeURIComponent(peer)}" title="Проверить адрес">AML</a>` : `<span class="faint">—</span>`}</td>
      <td class="nw">${t.status === "ok" ? (t.first ? `<span class="faint small">ранее</span>` : `<span class="pill ok">новое</span>`) : `<span class="pill bad" title="${esc(t.status_name)}">${esc(SH[t.status] || t.status_name)}</span>`}</td>
-     <td class="r"><a class="btn sm ghost" href="${esc(t.url)}" target="_blank" rel="noopener" title="Открыть в ${esc(w.explorer)}">↗</a></td></tr>`;
+     <td class="r"><a class="btn sm ghost" href="${esc(t.url)}" target="_blank" rel="noopener" title="Открыть в ${esc(w.explorer)}">↗</a></td></tr>`; };
   $("#drIn").innerHTML = `
    <div class="dr-h"><div><h2>${esc(w.label || "Без названия")} <span class="faint">${esc(WNET(w))}</span></h2>
      <div class="mut small"><span class="addr" data-copy="${esc(w.address)}">${esc(w.address)}</span></div></div><span class="sp"></span><button class="btn" id="drX">Закрыть</button></div>
    <div class="crow" style="margin:10px 0">
      <input class="in" id="wlL" value="${esc(w.label || "")}" placeholder="Название" style="max-width:220px">
      <label class="hint">Порог, $ <input class="in num" id="wlM" value="${w.min_usd}" style="width:70px"></label>
+     <label class="chk" title="Сообщать в Telegram, когда деньги уходят с кошелька"><input type="checkbox" id="wlO" ${w.outgoing ? "checked" : ""}> сообщать об уходе денег</label>
      <button class="btn" id="wlS">Сохранить</button>
      <span class="sp"></span>
      <a class="btn ghost" href="${esc(w.addr_url)}" target="_blank" rel="noopener">${esc(w.explorer)}</a>
      <button class="btn ghost" id="wlD">Удалить</button></div>
    ${w.error ? `<div class="okbox bad">${esc(w.error)}</div>` : ""}
-   <div class="wh" style="padding:6px 0">История поступлений<span class="sp"></span><label class="chk"><input type="checkbox" id="wlH" ${WL.hidden ? "checked" : ""}> показать скрытые (${nf(w.hidden || 0)})</label></div>
-   ${d.items.length ? `<table class="tbl wtx"><thead><tr><th>МСК</th><th class="r">Сумма</th><th>От кого</th><th></th><th></th></tr></thead><tbody>${d.items.map(tx).join("")}</tbody></table>`
-     : `<div class="empty" style="padding:24px">Поступлений пока нет. Как только придут — появятся здесь и в Telegram.</div>`}`;
+   <div class="wh" style="padding:6px 0">История переводов<span class="sp"></span><label class="chk"><input type="checkbox" id="wlH" ${WL.hidden ? "checked" : ""}> показать скрытые (${nf(w.hidden || 0)})</label></div>
+   ${d.items.length ? `<table class="tbl wtx"><thead><tr><th>МСК</th><th class="r">Сумма</th><th>Откуда / куда</th><th></th><th></th></tr></thead><tbody>${d.items.map(tx).join("")}</tbody></table>`
+     : `<div class="empty" style="padding:24px">Переводов пока нет. Как только будут — появятся здесь и в Telegram.</div>`}`;
   $("#drX").onclick = () => { $("#drawer").hidden = true; };
   $$("#drIn [data-copy]").forEach((el) => el.onclick = () => wCopy(el));
   $$("#drIn a[href^=\"#wallets/aml\"]").forEach((a) => a.onclick = () => { $("#drawer").hidden = true; });
   $("#wlH").onchange = (e) => { WL.hidden = e.target.checked; openWallet(id); };
+  $("#wlO").onchange = async (e) => { await api(`/me/wallets/${id}`, { method: "PATCH", body: JSON.stringify({ outgoing: e.target.checked }) }); toast(e.target.checked ? "Буду сообщать и об уходе денег" : "Об уходе денег больше не сообщаю"); go("wallets", true); };
   $("#wlS").onclick = async () => { try { await api(`/me/wallets/${id}`, { method: "PATCH", body: JSON.stringify({ label: $("#wlL").value.trim(), min_usd: $("#wlM").value.replace(",", ".") }) }); toast("Сохранено"); go("wallets", true); openWallet(id); } catch (e) { toast(e.message); } };
   $("#wlD").onclick = async () => { if (!confirm("Перестать следить за этим кошельком? История поступлений удалится.")) return; await api(`/me/wallets/${id}`, { method: "DELETE" }); $("#drawer").hidden = true; go("wallets", true); };
 }

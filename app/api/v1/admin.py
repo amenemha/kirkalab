@@ -51,6 +51,11 @@ class OutMsg(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+@router.post("/messages/{msg_id}/retry")
+def admin_retry(msg_id: int, db: Session = Depends(get_db), admin=Depends(get_current_admin)):
+    return {"ok": sup.retry_one(db, msg_id)}
+
+
 @router.post("/messages")
 def admin_send(body: OutMsg, db: Session = Depends(get_db), admin=Depends(get_current_admin)):
     try:
