@@ -367,7 +367,7 @@ def retry_failed(db: Session, *, sender=None, media_sender=None, now: datetime |
     now = now or datetime.now(UTC)
     rows = list(db.scalars(select(SupportMessage).where(
         SupportMessage.direction == "out", SupportMessage.status == "failed",
-        SupportMessage.ts >= now - RETRY_WINDOW, *( [SupportMessage.id == only] if only else [])).order_by(SupportMessage.id).limit(50)))
+        *([SupportMessage.id == only] if only else [SupportMessage.ts >= now - RETRY_WINDOW])).order_by(SupportMessage.id).limit(50)))
     ok = bad = 0
     for m in rows:
         meta = dict(m.meta or {})
