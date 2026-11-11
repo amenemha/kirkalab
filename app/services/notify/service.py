@@ -213,37 +213,100 @@ def _pool_short(u: str | None) -> str:
     return re.sub(r"^[a-z+]+://", "", (u or "").strip()) or "—"
 
 
+def _fold(rows: list[str]) -> str:
+    """Подробности свёрнуты: раскрываются нажатием (Telegram expandable blockquote)."""
+    return "<blockquote expandable>" + "\n".join(rows) + "</blockquote>" if rows else ""
+
+
+def _mshort(m: str | None) -> str:
+    import re  # noqa: PLC0415
+    return re.sub(r"^(Antminer|Whatsminer|WhatsMiner|Avalon(Miner)?)\s+", "", (m or "?").strip())
+
+
+def _place_short(name: str | None) -> str:
+    parts = (name or "").split()
+    return " ".join(parts[:2]) if parts else "—"
+
+
+def _dev_row(d: fm.FarmDevice, conts: dict) -> str:
+    """Одна строка асика: адрес (копируется нажатием) · модель · место."""
+    key = d.ip or d.serial or d.worker or f"#{d.id}"
+    return f"<code>{_h(key)}</code> · {_h(_mshort(d.model))} · {_h(_place_short(conts.get(d.container_id)))}"
+
+
+def _host(u: str | None) -> str:
+    return _pool_short(u).split("/")[0]
+
+
+def _acc(w: str | None) -> str:
+    return (w or "").split(".")[0]
+
+
 def _pool_lines(db: Session, evs: list, conts: dict, maxl: int, items: list) -> list[str]:
-    """Смена воркера/пула по каждому асику: было → стало, в цитате, воркер копируется нажатием."""
+    """Смены пула/воркера: группы «что → на что: N», подробности по асикам свёрнуты.
+
+    Не тревога: пропажа/появление данных (одно из значений пустое), итог «было = стало»
+    (асик мигнул и вернулся) и окна комиссии прошивки (DevFee) — их только считаем.
+    """
     by: dict[int, dict] = {}
     for e in evs:
         r = by.setdefault(e.device_id, {})
         k = "w" if e.kind == "worker" else "p"
-        if k + "_old" not in r:
+        if e.old and k + "_old" not in r:
             r[k + "_old"] = e.old
-        r[k + "_new"] = e.new
+        if e.new:
+            r[k + "_new"] = e.new
     devs = {d.id: d for d in db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.id.in_(list(by))))}
-    nw = sum(1 for r in by.values() if "w_new" in r)
-    np_ = sum(1 for r in by.values() if "p_new" in r)
-    head = "🔄 <b>Смена " + ", ".join(x for x in (f"воркера: {nw}" if nw else "", f"пула: {np_}" if np_ else "") if x) + "</b>"
-    out = [head]
-    for i, (did, r) in enumerate(by.items()):
-        d = devs.get(did)
-        items.append({"id": did, "what": "pool", "w_old": r.get("w_old"), "w_new": r.get("w_new"),
-                      "p_old": r.get("p_old"), "p_new": r.get("p_new")})
-        if i >= maxl or d is None:
+    groups: dict[str, list] = {}
+    devfee = 0
+    for did, r in by.items():
+        wo, wn = r.get("w_old"), r.get("w_new")
+        po, pn = r.get("p_old"), r.get("p_new")
+        if "devfee" in f"{pn} {wn}".lower():
+            devfee += 1
             continue
-        place = conts.get(d.container_id) or "—"
-        q = []
-        if "w_new" in r:
-            q.append(f"было: <code>{_h(r.get('w_old') or '—')}</code>")
-            q.append(f"стало: <code>{_h(r.get('w_new') or '—')}</code>")
-        if "p_new" in r:
-            q.append(f"пул: {_h(_pool_short(r.get('p_old')))} → {_h(_pool_short(r.get('p_new')))}")
-        out.append(f"   • {_h(place)} · {_h(d.model or '?')} · {_h(d.ip or d.serial or '#' + str(d.id))}")
-        out.append("<blockquote>" + "\n".join(q) + "</blockquote>")
-    if len(by) > maxl:
-        out.append(f"   … и ещё {len(by) - maxl} — все на сайте по кнопке «Открыть эти асики»")
+        wch = bool(wo and wn and wo != wn)
+        pch = bool(po and pn and _pool_short(po) != _pool_short(pn))
+        if not (wch or pch):
+            continue
+        d = devs.get(did)
+        if d is None:
+            continue
+        items.append({"id": did, "what": "pool", "w_old": wo if wch else None, "w_new": wn if wch else None,
+                      "p_old": po if pch else None, "p_new": pn if pch else None})
+        parts = []
+        if pch:
+            parts.append(f"пул {_host(po)} → {_host(pn)}")
+        if wch and _acc(wo) != _acc(wn):
+            parts.append(f"аккаунт {_acc(wo)} → {_acc(wn)}")
+        elif wch:
+            parts.append("переименован воркер")
+        rows = [_dev_row(d, conts)]
+        if wch:
+            rows.append(f"   <code>{_h(wo)}</code> → <code>{_h(wn)}</code>")
+        groups.setdefault(" · ".join(parts), []).append(rows)
+    out: list[str] = []
+    n = sum(len(v) for v in groups.values())
+    if n:
+        out.append(f"🔄 <b>Сменили пул или воркер: {n}</b>")
+        order = sorted(groups.items(), key=lambda x: -len(x[1]))
+        for g, v in order[:5]:
+            out.append(f"   • {_h(g)} — <b>{len(v)}</b>")
+        if len(order) > 5:
+            out.append(f"   • другие смены — <b>{sum(len(v) for _, v in order[5:])}</b>")
+        det: list[str] = []
+        shown = 0
+        for g, v in order:
+            for rows in v:
+                if shown >= maxl:
+                    break
+                det += rows
+                shown += 1
+        if n > shown:
+            det.append(f"… и ещё {n - shown} — кнопка «Открыть эти асики»")
+        out.append(_fold(det))
+    if devfee:
+        out.append(f"<i>ⓘ Комиссия прошивки (DevFee) сейчас у {devfee} — это норма, не тревога.</i>")
     return out
 
 
@@ -294,37 +357,42 @@ def build_digest(db: Session, prefs: dict, st: dict, now_ts: float, items: list 
     lines: list[str] = []
     maxl = prefs["max_lines"]
     now_msk = datetime.fromtimestamp(now_ts, MSK)
+    chips: list[str] = []
+
+    def section(title: str, devs: list, extra=None) -> None:
+        lines.append(f"{title} <i>· {_h(_top_places(devs, conts, 3))}</i>")
+        rows = [_dev_row(d, conts) + (f" — {_h(extra(i))}" if extra else "") for i, d in enumerate(devs[:maxl])]
+        if len(devs) > maxl:
+            rows.append(f"… и ещё {len(devs) - maxl} — кнопка «Открыть эти асики»")
+        lines.append(_fold(rows))
+
     if t["offline"] and new_off:
-        lines.append(f"🔴 <b>Нет связи: +{len(new_off)}</b> ({_top_places(new_off, conts)})")
-        for d in new_off[:maxl]:
-            lines.append(f"   • {_dev_label(d, conts)}")
-        if len(new_off) > maxl:
-            lines.append(f"   … и ещё {len(new_off) - maxl}")
+        chips.append(f"🔴 +{len(new_off)}")
+        section(f"🔴 <b>Нет связи: +{len(new_off)}</b>", new_off)
         items += [{"id": d.id, "what": "offline"} for d in new_off]
     if t["online"] and back:
-        lines.append(f"🟢 <b>Вернулись в работу: {len(back)}</b> ({_top_places(back, conts)})")
-        for d in back[:maxl]:
-            lines.append(f"   • {_dev_label(d, conts)}")
-        if len(back) > maxl:
-            lines.append(f"   … и ещё {len(back) - maxl}")
+        chips.append(f"🟢 {len(back)}")
+        section(f"🟢 <b>Вернулись в работу: {len(back)}</b>", back)
         items += [{"id": d.id, "what": "online"} for d in back]
     if t["errors"] and new_al:
+        chips.append(f"⚠️ {len(new_al)}")
         by_cls = Counter(CLASSES.get(a.get("cls"), (a.get("cls"), 0))[0] for _, a in new_al)
-        lines.append("⚠️ <b>Новые ошибки: " + str(len(new_al)) + "</b> — " + ", ".join(f"{k} {v}" for k, v in by_cls.most_common()))
-        for d, a in new_al[:maxl]:
-            lines.append(f"   • {_dev_label(d, conts)} — {_h(a.get('msg'))}")
-        if len(new_al) > maxl:
-            lines.append(f"   … и ещё {len(new_al) - maxl}")
+        section("⚠️ <b>Новые ошибки: " + str(len(new_al)) + "</b> — " + _h(", ".join(f"{k} {v}" for k, v in by_cls.most_common())),
+                [d for d, _ in new_al], extra=lambda i: new_al[i][1].get("msg"))
         items += [{"id": d.id, "what": "error", "new": a.get("msg")} for d, a in new_al]
     if t["lowhash"] and new_low:
-        lines.append(f"📉 <b>Low hashrate: +{len(new_low)}</b> ({_top_places([d for d, _ in new_low], conts)})")
+        chips.append(f"📉 {len(new_low)}")
+        lines.append(f"📉 <b>Low hashrate: +{len(new_low)}</b> <i>· {_h(_top_places([d for d, _ in new_low], conts, 3))}</i>")
         items += [{"id": d.id, "what": "lowhash"} for d, _ in new_low]
     if t["pool"] and pool_ev:
-        lines += _pool_lines(db, pool_ev, conts, maxl, items)
+        pl = _pool_lines(db, pool_ev, conts, maxl, items)
+        if pl and pl[0].startswith("🔄"):
+            chips.append("🔄 " + pl[0].split(": ")[-1].rstrip("</b>"))
+        lines += pl
     if not lines:
         return None, new_state, len(new_off)
-    head = f"🔔 <b>Kirka · ферма</b> · {now_msk:%H:%M}"
-    return "\n".join([head, ""] + lines), new_state, len(new_off)
+    head = f"🔔 <b>Ферма</b> · {now_msk:%H:%M}" + ("   " + "  ".join(chips) if len(chips) > 1 else "")
+    return "\n".join([head, ""] + [x for x in lines if x]), new_state, len(new_off)
 
 
 # ---------- «Вероятно, питание» ----------
