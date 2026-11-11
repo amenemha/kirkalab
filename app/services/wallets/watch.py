@@ -366,21 +366,29 @@ def run_wallets(db: Session, reader: Reader | None = None, sender=send, now_ts: 
     reader = reader or Reader()
     checked = sent = 0
     order = {c: i for i, c in enumerate(ORDER)}
-    for w in sorted(db.scalars(select(WalletWatch)).all(), key=lambda x: (order.get(x.chain, 9), x.id)):
+    ids = [w.id for w in sorted(db.scalars(select(WalletWatch)).all(), key=lambda x: (order.get(x.chain, 9), x.id))]
+    for wid in ids:
+        # Кошелёк могли удалить, пока шёл проход, — тогда просто пропускаем.
         try:
+            w = db.get(WalletWatch, wid)
+            if w is None:
+                continue
             poll(db, w, reader)
             db.commit()
             checked += 1
         except ChainError as e:
             db.rollback()
-            w = db.get(WalletWatch, w.id)
-            w.last_error, w.last_check = str(e)[:300], datetime.now(timezone.utc)
-            log.info("wallet %s %s: %s", w.id, w.chain, e)
-            db.commit()
+            w = db.get(WalletWatch, wid)
+            if w is not None:
+                w.last_error, w.last_check = str(e)[:300], datetime.now(timezone.utc)
+                log.info("wallet %s %s: %s", wid, w.chain, e)
+                db.commit()
         except Exception as e:  # noqa: BLE001
             db.rollback()
-            log.exception("wallet %s failed", w.id)
-            w = db.get(WalletWatch, w.id)
+            w = db.get(WalletWatch, wid)
+            if w is None:
+                continue
+            log.exception("wallet %s failed", wid)
             w.last_error = f"ошибка чтения: {type(e).__name__}"
             db.commit()
     now_msk = datetime.fromtimestamp(now_ts or time.time(), MSK)

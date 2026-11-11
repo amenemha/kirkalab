@@ -286,3 +286,24 @@ def test_tron_reader_directions():
     out = R(pause=0).tron(me)
     assert [(t.uid, t.dir, t.amount, t.to) for t in out] == [
         ("t1:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "in", 1250.0, me), ("t2:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t:out", "out", 480.0, SENDER)]
+
+
+def test_wallet_deleted_during_pass(db, user, monkeypatch):
+    monkeypatch.setattr(W, "prices", lambda db=None: ({"TRX": 0.33}, 90.0))
+    monkeypatch.setattr(W, "limit_of", lambda u: 10)
+    rd = FakeReader([])
+    [a] = W.add(db, user, TRON, "A", reader=rd)
+    [b] = W.add(db, user, "TNX5LQuLXHsFYeXo13QbVMTGxcdbS31Rjk", "B", reader=rd)
+    bid = b.id
+
+    class Deleting(FakeReader):
+        def incoming(self, chain, addr, w=None):
+            if addr == TRON:  # пока читаем A, человек удалил B в другом окне
+                from sqlalchemy import delete
+                db.execute(delete(WalletTx).where(WalletTx.watch_id == bid))
+                db.execute(delete(W.WalletWatch).where(W.WalletWatch.id == bid))
+                db.commit()
+            return []
+
+    n, s = W.run_wallets(db, reader=Deleting([]), sender=lambda *a: True)
+    assert n == 1 and s == 0
