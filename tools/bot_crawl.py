@@ -46,6 +46,23 @@ VISIBLE = {"SendMessage", "EditMessageText", "EditMessageReplyMarkup", "SendDocu
            "SendInvoice", "SendPhoto", "EditMessageCaption", "EditMessageMedia"}
 USER = User(id=UID, is_bot=False, first_name="Тест")
 CHAT = Chat(id=UID, type="private")
+# Кнопки, которые меняют данные реального пользователя (удаление, переключатели,
+# подтверждения, сохранения). Обходчик работает на живой базе, поэтому их не нажимает:
+# 11.11 он удалил кошельки администратора кнопкой 🗑.
+MUTATING = re.compile(
+    r"^(wal:(del|mute|unmute|outon|outoff|yes)(:|$)"
+    r"|notif:(?!open$)"
+    r"|qr:(approve|reject)$"
+    r"|plan:buy:"
+    r"|calc:save:"
+    r"|[a-z]+:(del|rm|remove|delete|stop|off|on|approve|reject|save|toggle|reset|clear)(:|$))"
+)
+
+
+def is_mutating(data: str) -> bool:
+    return bool(MUTATING.search(data or ""))
+
+
 BOTUSER = User(id=8928450746, is_bot=True, first_name="Кирка", username="kirkalabbot")
 
 
@@ -94,7 +111,7 @@ def buttons(calls):
             for row in rm.inline_keyboard:
                 for b in row:
                     texts.append(b.text)
-                    if b.callback_data and b.callback_data != "notif:test":  # проверка шлёт реальное сообщение
+                    if b.callback_data:
                         inl.append((b.text, b.callback_data))
                     if b.url:
                         urls.append((b.text, b.url))
@@ -174,6 +191,7 @@ async def main() -> None:
         queue.append(([], "text", s, s))
         seen.add("text:" + s)
     tested = 0
+    skipped: list[str] = []
     forb = set()
     urls_all = set()
     while queue and tested < 400:
@@ -207,6 +225,10 @@ async def main() -> None:
         for t, d in inl:
             if d in seen:
                 continue
+            if is_mutating(d):
+                seen.add(d)
+                skipped.append(d)
+                continue
             f = family(d)
             if fam[f] >= 3:
                 continue
@@ -218,6 +240,7 @@ async def main() -> None:
                 seen.add("text:" + t)
                 queue.append((newpath, "text", t, f"<{t}>"))
     print(f"Нажато кнопок/команд: {tested}")
+    print(f"Не нажаты (меняют данные): {len(skipped)} — {sorted({family(d) for d in skipped})}")
     print(f"Ссылки: {sorted(urls_all)}")
     for f in forb:
         c.fails.append("запрещённое слово " + f)
@@ -232,4 +255,5 @@ async def main() -> None:
         sys.exit(1)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
