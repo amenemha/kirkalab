@@ -25,7 +25,6 @@ import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -533,25 +532,140 @@ def daily_text(db: Session, now_ts: float) -> str:
     return "\n".join(lines)
 
 
+
+
+def _strip(x: str) -> str:
+    import re  # noqa: PLC0415
+    return re.sub(r"<[^>]+>", "", x or "").strip()
+
+
+def to_rich(text: str) -> str:
+    """Сообщение фермы → rich-формат Telegram: заголовок, сводная таблица, по разделам — раскрывающиеся таблицы.
+
+    Разбирает ровно наш текстовый формат (build_digest / power_check / daily_text), поэтому текст и
+    rich-версия всегда показывают одно и то же.
+    """
+    import re  # noqa: PLC0415
+
+    folds: list[str] = []
+
+    def _keep(m):
+        folds.append(m.group(1))
+        return f"\x00{len(folds) - 1}\x00"
+
+    body = re.sub(r"<blockquote expandable>(.*?)</blockquote>", _keep, text or "", flags=re.S)
+    lines = body.split("\n")
+    head = lines[0]
+    title, _, chips = head.partition("   ")
+    out = [f"<h3>{_strip(title)}</h3>"]
+    summary: list[tuple[str, str, str]] = []
+    kv: list[tuple[str, str]] = []
+    blocks: list[str] = []
+    notes: list[str] = []
+    cur: dict | None = None
+
+    def close():
+        nonlocal cur
+        if cur and (cur["groups"] or cur["rows"]):
+            inner = ""
+            if cur["groups"]:
+                inner += "<table compact striped>" + "".join(
+                    f"<tr><td>{g}</td><td align=\"right\"><b>{n}</b></td></tr>" for g, n in cur["groups"]) + "</table>"
+            if cur["rows"]:
+                inner += cur["rows"]
+            blocks.append(f"<details><summary>{cur['sum']}</summary>{inner}</details>")
+        cur = None
+
+    def dev_table(raw: str) -> str:
+        rows, ncol, has_msg = [], 3, False
+        parsed = []
+        for ln in raw.split("\n"):
+            if ln.startswith("   ") and parsed:
+                parsed[-1]["sub"].append(ln.strip())
+                continue
+            if ln.startswith("…"):
+                parsed.append({"more": ln})
+                continue
+            main, _, msg = ln.partition(" — ")
+            parts = main.split(" · ")
+            was = ""
+            if parts and parts[-1].startswith("был "):
+                was = parts.pop()
+            has_msg = has_msg or bool(msg)
+            parsed.append({"c": parts[:3] + [""] * (3 - len(parts[:3])), "msg": msg, "was": was, "sub": []})
+        ncol = 4 if has_msg else 3
+        hdr = ["Асик", "Модель", "Место"] + (["Что"] if has_msg else [])
+        rows.append("<tr>" + "".join(f"<th>{h}</th>" for h in hdr) + "</tr>")
+        for r in parsed:
+            if "more" in r:
+                rows.append(f"<tr><td colspan=\"{ncol}\"><i>{r['more']}</i></td></tr>")
+                continue
+            cells = r["c"] + ([r["msg"]] if has_msg else [])
+            rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+            sub = r["sub"] + ([r["was"].replace("был ", "прежний пул: ")] if r["was"] else [])
+            if sub:
+                rows.append(f"<tr><td colspan=\"{ncol}\">" + "<br>".join(sub) + "</td></tr>")
+        return "<table bordered striped compact>" + "".join(rows) + "</table>"
+
+    for ln in lines[1:]:
+        if not ln.strip():
+            continue
+        m = re.match(r"^\x00(\d+)\x00$", ln.strip())
+        if m:
+            if cur is None:
+                cur = {"sum": "Подробно", "groups": [], "rows": ""}
+            cur["rows"] += dev_table(folds[int(m.group(1))])
+            continue
+        m = re.match(r"^(\S+) <b>(.+?): ([^<]+)</b>(.*)$", ln)
+        if m:
+            close()
+            emo, name, cnt, rest = m.groups()
+            where = _strip(rest).lstrip("—· ").strip()
+            summary.append((f"{emo} {name}", cnt.strip(), where))
+            cur = {"sum": f"{emo} {name}: {cnt.strip()} — список", "groups": [], "rows": ""}
+            continue
+        m = re.match(r"^\s+• (.+) — <b>(\d+)</b>$", ln)
+        if m and cur is not None:
+            cur["groups"].append((m.group(1), m.group(2)))
+            continue
+        if ln.startswith("<i>") or ln.startswith("Если ") or ln.startswith("Без связи весь") or ln.startswith("Больше всего"):
+            notes.append(ln)
+            continue
+        m = re.match(r"^(\S+ [^:<]{1,60}): (.+)$", ln)
+        if m:
+            kv.append((m.group(1), m.group(2)))
+            continue
+        notes.append(ln)
+    close()
+    if summary:
+        out.append("<table bordered striped compact><tr><th>Что</th><th>Сколько</th><th>Где / подробнее</th></tr>" + "".join(
+            f"<tr><td>{a}</td><td align=\"center\"><b>{b}</b></td><td>{c}</td></tr>" for a, b, c in summary) + "</table>")
+    if kv:
+        out.append("<table bordered striped compact>" + "".join(
+            f"<tr><td>{a}</td><td align=\"right\"><b>{b}</b></td></tr>" for a, b in kv) + "</table>")
+    out += blocks
+    if notes:
+        out.append("<footer>" + "<br>".join(_strip(n) if n.startswith("<i>") else n for n in notes) + "</footer>")
+    return "".join(out)
+
+
 def send_telegram(chat_id: int, text: str, *, buttons: bool = True, link: str | None = None) -> bool:
-    token = get_settings().bot_token
-    if not token:
+    """Сообщение фермы: таблицами (rich), если Telegram не принял — обычным текстом."""
+    from app.services import tg as _tg  # noqa: PLC0415
+
+    if not get_settings().bot_token:
         log.warning("BOT_TOKEN не задан — уведомление не отправлено")
         return False
-    payload: dict = {"chat_id": chat_id, "text": text[:4000], "parse_mode": "HTML", "disable_web_page_preview": True}
-    if buttons:
-        payload["reply_markup"] = {"inline_keyboard": [[
-            {"text": "🔎 Открыть эти асики" if link else "🌐 Открыть ферму", "url": link or "https://kirkalab.ru/#map"},
-            {"text": "⚙️ Настроить", "callback_data": "notif:open"},
-        ]]}
+    kb = [[
+        {"text": "🔎 Открыть эти асики" if link else "🌐 Открыть ферму", "url": link or "https://kirkalab.ru/#map"},
+        {"text": "⚙️ Настроить", "callback_data": "notif:open"},
+    ]] if buttons else None
     try:
-        r = httpx.post(f"{get_settings().tg_api_base}/bot{token}/sendMessage", json=payload, timeout=15)
-        if r.status_code != 200:
-            log.warning("telegram %s: %s", r.status_code, r.text[:200])
-        return r.status_code == 200
-    except httpx.HTTPError as exc:
-        log.warning("telegram send failed: %s", exc)
-        return False
+        rich = to_rich(text)
+    except Exception:  # noqa: BLE001 — разбор не должен мешать доставке
+        log.exception("to_rich")
+        rich = None
+    return _tg.send(chat_id, text, kb, rich=rich)
 
 
 def tick(db: Session, now_ts: float | None = None, sender=send_telegram) -> int:
