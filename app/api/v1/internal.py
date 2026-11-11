@@ -942,7 +942,7 @@ def internal_wallets(
     x_bot_secret: str | None = Header(default=None, alias="X-Bot-Secret"),
     db: Session = Depends(get_db),
 ):
-    """Бот: кошельки человека. action: detect | list | add | mute | unmute | delete."""
+    """Бот: кошельки человека. action: detect | list | add | mute | unmute | out_on | out_off | delete."""
     _require_bot_secret(x_bot_secret)
     from app.db.wallet_models import WalletWatch
     from app.services.wallets import watch as ww
@@ -959,12 +959,14 @@ def internal_wallets(
         except ww.WalletError as e:
             return {"ok": False, "error": e.text}
         return {"ok": True, "added": [ww.view(w, db) for w in ws]}
-    if act in ("mute", "unmute", "delete"):
+    if act in ("mute", "unmute", "delete", "out_on", "out_off"):
         w = ww.owned(db, u, int(body.get("id") or 0))
         if not w:
             return {"ok": False, "error": "Кошелёк не найден"}
         if act == "delete":
             db.delete(w)
+        elif act.startswith("out_"):
+            w.outgoing = act == "out_on"
         else:
             w.muted = act == "mute"
         db.commit()

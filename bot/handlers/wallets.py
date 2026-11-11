@@ -54,9 +54,11 @@ def wallet_line(w: dict) -> str:
     if w.get("error"):
         lines.append(f"⚠️ {html.escape(w['error'])}")
     elif last:
-        lines.append(f"Последнее: +{_money(last['amount'], last['token'])} {html.escape(last['token'])} · {last['at'][8:10]}.{last['at'][5:7]}")
+        sign = "−" if last.get("dir") == "out" else "+"
+        lines.append(f"Последнее: {sign}{_money(last['amount'], last['token'])} {html.escape(last['token'])} · {last['at'][8:10]}.{last['at'][5:7]}")
     else:
-        lines.append("Поступлений пока не было")
+        lines.append("Переводов пока не было")
+    lines.append("Сообщаю: поступления" + (" и уход денег" if w.get("outgoing") else " · уход денег выключен"))
     return "\n".join(lines)
 
 
@@ -78,6 +80,7 @@ def list_kb(d: dict) -> InlineKeyboardMarkup:
     for w in (d.get("items") or [])[:10]:
         nm = (w.get("label") or w["address"][:6] + "…" + w["address"][-4:])[:18]
         rows.append([_b(("🔔 " if w.get("muted") else "🔕 ") + nm, f"wal:{'unmute' if w.get('muted') else 'mute'}:{w['id']}"),
+                     _b("🔴 Уход: вкл" if w.get("outgoing") else "⚪️ Уход: выкл", f"wal:{'outoff' if w.get('outgoing') else 'outon'}:{w['id']}"),
                      _b("🗑", f"wal:del:{w['id']}")])
     rows.append([_b("➕ Добавить кошелёк", "wal:add"), _b("🌐 На сайте", url=f"{SITE}#wallets")])
     rows.append([_b("🔁 Обновить", "wal:open"), _b("☰ Меню", "hub:menu")])
@@ -181,12 +184,14 @@ async def cb_no(cb: CallbackQuery, state: FSMContext) -> None:
         await cb.message.delete()
 
 
-@router.callback_query(F.data.regexp(r"^wal:(mute|unmute|del):\d+$"))
+@router.callback_query(F.data.regexp(r"^wal:(mute|unmute|del|outon|outoff):\d+$"))
 async def cb_mute(cb: CallbackQuery, state: FSMContext) -> None:
     _, act, wid = cb.data.split(":")
-    r = await call(cb.bot, {"action": {"del": "delete"}.get(act, act), "tg_id": cb.from_user.id, "id": int(wid)})
+    r = await call(cb.bot, {"action": {"del": "delete", "outon": "out_on", "outoff": "out_off"}.get(act, act), "tg_id": cb.from_user.id,
+                            "id": int(wid)})
     ok = bool(r and r.get("ok"))
-    await cb.answer({"mute": "Уведомления по кошельку выключены", "unmute": "Уведомления включены", "del": "Кошелёк удалён"}[act]
+    await cb.answer({"mute": "Уведомления по кошельку выключены", "unmute": "Уведомления включены", "del": "Кошелёк удалён",
+                     "outon": "Буду сообщать и об уходе денег", "outoff": "Об уходе денег больше не сообщаю"}[act]
                     if ok else "Кошелёк не найден")
     if cb.message and cb.message.text and cb.message.text.startswith("👛 Кошельки"):
         await show(cb.message, state, cb.from_user.id)

@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     # in Redis with a TTL, with a durable fallback to the latest persisted
     # ``fx_rates`` row when the source is down. The HTTP knobs mirror the market
     # provider's so both integrations time out/retry consistently.
-    fx_cache_ttl_seconds: int = 3600
+    fx_cache_ttl_seconds: int = 600
     fx_http_timeout_seconds: float = 5.0
     fx_http_retries: int = 2
 

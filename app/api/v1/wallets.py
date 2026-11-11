@@ -56,6 +56,8 @@ def edit_wallet(wid: int, body: dict, user: models.User = Depends(get_current_us
         w.label = (str(body.get("label") or "").strip()[:80]) or None
     if "muted" in body:
         w.muted = bool(body.get("muted"))
+    if "outgoing" in body:
+        w.outgoing = bool(body.get("outgoing"))
     if "min_usd" in body:
         try:
             w.min_usd = max(0.0, min(1e6, float(body.get("min_usd"))))

@@ -182,6 +182,8 @@ class Transfer:
     frm: str | None
     at: datetime
     flag: str | None = None   # spam | fake (подделка токена) | None
+    dir: str = "in"           # in | out
+    to: str | None = None     # куда ушло (для исходящих)
 
 
 def _ts(x) -> datetime:
@@ -192,27 +194,63 @@ def _ts(x) -> datetime:
     return datetime.fromtimestamp(x / 1000 if x > 1e11 else x, tz=timezone.utc)
 
 
+# Хост, который ответил «лимит запросов», отдыхает: до этого времени к нему не ходим (общая для всех читателей).
+_COOL: dict[str, float] = {}
+_LAST: dict[str, float] = {}
+GAP = {"api.trongrid.io": 0.4, "api.blockchair.com": 1.2, "api.mainnet-beta.solana.com": 1.0, "toncenter.com": 1.1,
+       "api.blockcypher.com": 1.0}
+
+
 class Reader:
-    def __init__(self, http: httpx.Client | None = None, pause: float = 0.35):
-        self.http = http or httpx.Client(timeout=25, follow_redirects=True, headers={"User-Agent": UA, "Accept": "application/json"})
+    def __init__(self, http: httpx.Client | None = None, pause: float = 0.35, retries: int = 2):
+        self.http = http or httpx.Client(timeout=httpx.Timeout(30, connect=10), follow_redirects=True,
+                                         headers={"User-Agent": UA, "Accept": "application/json"})
         self.pause = pause
+        self.retries = retries
         self.px: dict[str, float] = {}  # цены токенов, которые источник отдал вместе с переводом
+        self._seen: dict[tuple, list] = {}
+        import os  # noqa: PLC0415
+        self.tron_key = os.environ.get("TRONGRID_API_KEY") or ""
 
     def _j(self, method: str, url: str, **kw):
-        try:
-            r = self.http.request(method, url, **kw)
-        except httpx.HTTPError as e:
-            raise ChainError(f"сеть не ответила: {type(e).__name__}") from e
-        if self.pause:
-            time.sleep(self.pause)
-        if r.status_code == 429:
+        host = httpx.URL(url).host
+        now = time.time()
+        if _COOL.get(host, 0) > now:
             raise ChainError("источник просит подождать (лимит запросов)")
-        if r.status_code >= 400:
-            raise ChainError(f"источник ответил {r.status_code}")
-        try:
-            return r.json()
-        except ValueError as e:
-            raise ChainError("источник вернул не данные") from e
+        if host == "api.trongrid.io" and self.tron_key:
+            kw["headers"] = {**(kw.get("headers") or {}), "TRON-PRO-API-KEY": self.tron_key}
+        last = None
+        for i in range(self.retries + 1):
+            gap = GAP.get(host, 0) if self.pause else 0
+            wait = _LAST.get(host, 0) + gap - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            _LAST[host] = time.time()
+            try:
+                r = self.http.request(method, url, **kw)
+            except httpx.HTTPError as e:
+                last = ChainError(f"сеть не ответила: {type(e).__name__}")
+                if self.pause and i < self.retries:
+                    time.sleep(1.5 * (i + 1))
+                continue
+            if self.pause:
+                time.sleep(self.pause)
+            if r.status_code == 429 or r.status_code in (502, 503, 504):
+                last = ChainError("источник просит подождать (лимит запросов)" if r.status_code == 429 else f"источник ответил {r.status_code}")
+                if i < self.retries:
+                    if self.pause:
+                        time.sleep(2.0 * (i + 1))
+                    continue
+                if r.status_code == 429:
+                    _COOL[host] = time.time() + 120
+                raise last
+            if r.status_code >= 400:
+                raise ChainError(f"источник ответил {r.status_code}")
+            try:
+                return r.json()
+            except ValueError as e:
+                raise ChainError("источник вернул не данные") from e
+        raise last or ChainError("сеть не ответила")
 
     def get(self, url, **params):
         return self._j("GET", url, params=params or None)
@@ -231,12 +269,17 @@ class Reader:
             if not st.get("confirmed"):
                 continue
             ins = [(v.get("prevout") or {}).get("scriptpubkey_address") for v in tx.get("vin") or []]
-            if addr in ins:
-                continue  # наш собственный исходящий (сдача)
-            val = sum(o.get("value") or 0 for o in tx.get("vout") or [] if o.get("scriptpubkey_address") == addr)
+            vout = tx.get("vout") or []
+            if addr in ins:  # исходящий: сумма, ушедшая на чужие адреса (сдача себе не считается)
+                val = sum(o.get("value") or 0 for o in vout if o.get("scriptpubkey_address") not in (addr, None))
+                to = next((o.get("scriptpubkey_address") for o in vout if o.get("scriptpubkey_address") not in (addr, None)), None)
+                if val > 0:
+                    out.append(Transfer(f"{tx['txid']}:out", tx["txid"], chain, val / 1e8, addr, _ts(st.get("block_time")), dir="out", to=to))
+                continue
+            val = sum(o.get("value") or 0 for o in vout if o.get("scriptpubkey_address") == addr)
             if val <= 0:
                 continue
-            out.append(Transfer(tx["txid"], tx["txid"], chain, val / 1e8, next((x for x in ins if x), None), _ts(st.get("block_time"))))
+            out.append(Transfer(tx["txid"], tx["txid"], chain, val / 1e8, next((x for x in ins if x), None), _ts(st.get("block_time")), to=addr))
         return out
 
     def btc(self, addr, w=None):
@@ -246,22 +289,58 @@ class Reader:
         return self.esplora("https://litecoinspace.org/api", "LTC", addr)
 
     def doge(self, addr, w=None):
+        try:
+            return self._doge_blockchair(addr)
+        except ChainError:
+            return self._doge_blockcypher(addr)  # запасной источник
+
+    def doge_to(self, txid: str, addr: str) -> str | None:
+        """Куда ушли DOGE: первый выход перевода не на наш адрес."""
+        d = self.get(f"https://api.blockcypher.com/v1/doge/main/txs/{txid}")
+        for o in d.get("outputs") or []:
+            a = (o.get("addresses") or [None])[0]
+            if a and a != addr:
+                return a
+        return None
+
+    def _doge_blockchair(self, addr):
         d = self.get(f"https://api.blockchair.com/dogecoin/dashboards/address/{addr}", transaction_details="true", limit=25)
         rows = ((d.get("data") or {}).get(addr) or {}).get("transactions") or []
         out = []
         for t in rows:
             ch = t.get("balance_change") or 0
-            if ch > 0 and (t.get("block_id") or 0) > 0:
+            if ch and (t.get("block_id") or 0) > 0:
                 at = datetime.strptime(t["time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc) if t.get("time") else _ts(0)
-                out.append(Transfer(t["hash"], t["hash"], "DOGE", ch / 1e8, None, at))
+                if ch > 0:
+                    out.append(Transfer(t["hash"], t["hash"], "DOGE", ch / 1e8, None, at, to=addr))
+                else:
+                    out.append(Transfer(f"{t['hash']}:out", t["hash"], "DOGE", -ch / 1e8, addr, at, dir="out"))
+        return out
+
+    def _doge_blockcypher(self, addr):
+        d = self.get(f"https://api.blockcypher.com/v1/doge/main/addrs/{addr}", limit=50)
+        net: dict[str, list] = {}
+        for t in d.get("txrefs") or []:
+            if (t.get("confirmations") or 0) < 1:
+                continue
+            v = int(t.get("value") or 0) * (1 if (t.get("tx_input_n", -1) < 0) else -1)
+            e = net.setdefault(t["tx_hash"], [0, t.get("confirmed")])
+            e[0] += v
+        out = []
+        for h, (v, at) in net.items():
+            when = datetime.fromisoformat(at.replace("Z", "+00:00")) if at else _ts(0)
+            if v > 0:
+                out.append(Transfer(h, h, "DOGE", v / 1e8, None, when, to=addr))
+            elif v < 0:
+                out.append(Transfer(f"{h}:out", h, "DOGE", -v / 1e8, addr, when, dir="out"))
         return out
 
     # --- TRON ---
     def tron(self, addr, w=None):
         out = []
         b = f"https://api.trongrid.io/v1/accounts/{addr}"
-        for t in self.get(f"{b}/transactions/trc20", only_to="true", limit=50, only_confirmed="true").get("data") or []:
-            if t.get("to") != addr or t.get("type") not in ("Transfer", None):
+        for t in self.get(f"{b}/transactions/trc20", limit=50, only_confirmed="true").get("data") or []:
+            if t.get("type") not in ("Transfer", None) or addr not in (t.get("to"), t.get("from")):
                 continue
             ti = t.get("token_info") or {}
             real = TOKENS["TRON"].get(ti.get("address") or "")
@@ -269,9 +348,10 @@ class Reader:
             dec = real[1] if real else int(ti.get("decimals") or 6)
             amt = int(t.get("value") or 0) / 10 ** dec
             flag = None if real else ("fake" if sym.upper() in STABLE else "spam")
-            out.append(Transfer(f"{t['transaction_id']}:{ti.get('address')}", t["transaction_id"], sym, amt, t.get("from"),
-                                _ts(t.get("block_timestamp")), flag))
-        for t in self.get(f"{b}/transactions", only_to="true", limit=30, only_confirmed="true").get("data") or []:
+            out_ = t.get("from") == addr and t.get("to") != addr
+            out.append(Transfer(f"{t['transaction_id']}:{ti.get('address')}" + (":out" if out_ else ""), t["transaction_id"], sym, amt,
+                                t.get("from"), _ts(t.get("block_timestamp")), flag, "out" if out_ else "in", t.get("to")))
+        for t in self.get(f"{b}/transactions", limit=30, only_confirmed="true").get("data") or []:
             c = ((t.get("raw_data") or {}).get("contract") or [{}])[0]
             if c.get("type") != "TransferContract" or (t.get("ret") or [{}])[0].get("contractRet") != "SUCCESS":
                 continue
@@ -280,38 +360,56 @@ class Reader:
                 to, frm = tron_from_hex(v.get("to_address") or ""), tron_from_hex(v.get("owner_address") or "")
             except ValueError:
                 continue
-            if to != addr:
-                continue
-            out.append(Transfer(t["txID"], t["txID"], "TRX", int(v.get("amount") or 0) / 1e6, frm, _ts(t.get("block_timestamp"))))
+            if to == addr and frm != addr:
+                out.append(Transfer(t["txID"], t["txID"], "TRX", int(v.get("amount") or 0) / 1e6, frm, _ts(t.get("block_timestamp")), to=to))
+            elif frm == addr and to != addr:
+                out.append(Transfer(f"{t['txID']}:out", t["txID"], "TRX", int(v.get("amount") or 0) / 1e6, frm, _ts(t.get("block_timestamp")),
+                                    dir="out", to=to))
         return out
 
     # --- TON ---
     def ton(self, addr, w=None):
-        raw = ton_raw(addr)
+        raw = (ton_raw(addr) or "").upper()
+
+        def fr(x):
+            return ton_friendly(x) if x and ":" in x else x
         out = []
         for t in self.get("https://toncenter.com/api/v3/transactions", account=addr, limit=30, sort="desc").get("transactions") or []:
+            if (t.get("description") or {}).get("aborted"):
+                continue
             m = t.get("in_msg") or {}
             v = int(m.get("value") or 0)
-            if not m.get("source") or v <= 0 or (t.get("description") or {}).get("aborted"):
-                continue
             h = t.get("hash")
-            out.append(Transfer(h, h, "TON", v / 1e9, ton_friendly(m["source"]) if ":" in m["source"] else m["source"], _ts(t.get("now"))))
-        for t in self.get("https://toncenter.com/api/v3/jetton/transfers", owner_address=addr, direction="in", limit=30, sort="desc").get("jetton_transfers") or []:
-            if t.get("transaction_aborted") or (t.get("destination") or "").upper() != (raw or "").upper():
+            if m.get("source") and v > 0:
+                out.append(Transfer(h, h, "TON", v / 1e9, fr(m["source"]), _ts(t.get("now")), to=addr))
+            for k, om in enumerate(t.get("out_msgs") or []):
+                ov = int(om.get("value") or 0)
+                if om.get("destination") and ov > 0 and not (om.get("message_content") or {}).get("decoded", {}).get("type") == "jetton_transfer":
+                    out.append(Transfer(f"{h}:out{k}", h, "TON", ov / 1e9, addr, _ts(t.get("now")), dir="out", to=fr(om["destination"])))
+        for t in self.get("https://toncenter.com/api/v3/jetton/transfers", owner_address=addr, limit=30, sort="desc").get("jetton_transfers") or []:
+            if t.get("transaction_aborted"):
+                continue
+            dst, src = (t.get("destination") or "").upper(), (t.get("source") or "").upper()
+            if dst != raw and src != raw:
                 continue
             real = TOKENS["TON"].get((t.get("jetton_master") or "").upper())
             amt = int(t.get("amount") or 0) / 10 ** (real[1] if real else 9)
-            src = t.get("source")
-            out.append(Transfer(f"{t.get('transaction_hash')}:j", t.get("transaction_hash"), real[0] if real else "JETTON", amt,
-                                ton_friendly(src) if src and ":" in src else src, _ts(t.get("transaction_now")), None if real else "spam"))
+            o = src == raw and dst != raw
+            out.append(Transfer(f"{t.get('transaction_hash')}:j" + ("o" if o else ""), t.get("transaction_hash"), real[0] if real else "JETTON", amt,
+                                fr(t.get("source")), _ts(t.get("transaction_now")), None if real else "spam", "out" if o else "in",
+                                fr(t.get("destination"))))
         return out
 
     # --- ETH (Blockscout) ---
     def eth(self, addr, w=None):
         b = f"https://eth.blockscout.com/api/v2/addresses/{addr}"
+        me = addr.lower()
         out = []
-        for t in self.get(f"{b}/token-transfers", type="ERC-20", filter="to").get("items") or []:
-            if ((t.get("to") or {}).get("hash") or "").lower() != addr.lower():
+        for t in self.get(f"{b}/token-transfers", type="ERC-20").get("items") or []:
+            to_ = ((t.get("to") or {}).get("hash") or "").lower()
+            fr = t.get("from") or {}
+            o = (fr.get("hash") or "").lower() == me and to_ != me
+            if to_ != me and not o:
                 continue
             tk = t.get("token") or {}
             real = TOKENS["ETH"].get((tk.get("address_hash") or tk.get("address") or "").lower())
@@ -319,20 +417,25 @@ class Reader:
             dec = int(tot.get("decimals") or tk.get("decimals") or 18)
             amt = int(tot.get("value") or 0) / 10 ** dec
             sym = real[0] if real else str(tk.get("symbol") or "?")[:16]
-            fr = t.get("from") or {}
             flag = None if real else ("fake" if sym.upper() in STABLE else "spam")
             if not real and flag == "spam" and tk.get("exchange_rate") and tk.get("reputation") in (None, "ok") and tk.get("holders_count", "0") not in ("0", None):
                 flag = None
                 self.px[sym] = float(tk["exchange_rate"])
-            if fr.get("is_scam"):
+            if fr.get("is_scam") and not o:
                 flag = "spam"
-            out.append(Transfer(f"{t.get('transaction_hash')}:{t.get('log_index')}", t.get("transaction_hash"), sym, amt,
-                                fr.get("hash"), _ts(_iso(t.get("timestamp"))), flag))
-        for t in self.get(f"{b}/transactions", filter="to").get("items") or []:
+            out.append(Transfer(f"{t.get('transaction_hash')}:{t.get('log_index')}" + (":out" if o else ""), t.get("transaction_hash"), sym, amt,
+                                fr.get("hash"), _ts(_iso(t.get("timestamp"))), flag, "out" if o else "in", (t.get("to") or {}).get("hash")))
+        for t in self.get(f"{b}/transactions").get("items") or []:
             v = int(t.get("value") or 0)
-            if v <= 0 or t.get("result") != "success" or ((t.get("to") or {}).get("hash") or "").lower() != addr.lower():
+            if v <= 0 or t.get("result") != "success":
                 continue
-            out.append(Transfer(t["hash"], t["hash"], "ETH", v / 1e18, (t.get("from") or {}).get("hash"), _ts(_iso(t.get("timestamp")))))
+            to_ = ((t.get("to") or {}).get("hash") or "").lower()
+            fr_ = ((t.get("from") or {}).get("hash") or "").lower()
+            if to_ == me and fr_ != me:
+                out.append(Transfer(t["hash"], t["hash"], "ETH", v / 1e18, (t.get("from") or {}).get("hash"), _ts(_iso(t.get("timestamp"))), to=addr))
+            elif fr_ == me and to_ != me:
+                out.append(Transfer(f"{t['hash']}:out", t["hash"], "ETH", v / 1e18, addr, _ts(_iso(t.get("timestamp"))), dir="out",
+                                    to=(t.get("to") or {}).get("hash")))
         return out
 
     # --- BSC (публичный RPC: события Transfer стейблов + разница баланса BNB) ---
@@ -348,13 +451,19 @@ class Reader:
         frm = start
         while frm <= head:
             to = min(frm + 4999, head)
-            logs = self.rpc(self.BSC_RPC, "eth_getLogs", [{"fromBlock": hex(frm), "toBlock": hex(to), "address": list(TOKENS["BSC"]),
-                                                           "topics": [self.TRANSFER, None, topic_to]}]) or []
-            for lg in logs:
-                sym, dec = TOKENS["BSC"][lg["address"].lower()]
-                amt = int(lg.get("data") or "0x0", 16) / 10 ** dec
-                out.append(Transfer(f"{lg['transactionHash']}:{int(lg['logIndex'], 16)}", lg["transactionHash"], sym, amt,
-                                    "0x" + lg["topics"][1][-40:], _ts(int(lg["blockTimestamp"], 16)) if lg.get("blockTimestamp") else datetime.now(timezone.utc)))
+            for side in ("in", "out"):
+                tp = [self.TRANSFER, None, topic_to] if side == "in" else [self.TRANSFER, topic_to, None]
+                logs = self.rpc(self.BSC_RPC, "eth_getLogs", [{"fromBlock": hex(frm), "toBlock": hex(to), "address": list(TOKENS["BSC"]),
+                                                               "topics": tp}]) or []
+                for lg in logs:
+                    sym, dec = TOKENS["BSC"][lg["address"].lower()]
+                    amt = int(lg.get("data") or "0x0", 16) / 10 ** dec
+                    src, dst = "0x" + lg["topics"][1][-40:], "0x" + lg["topics"][2][-40:]
+                    if src == dst:
+                        continue
+                    out.append(Transfer(f"{lg['transactionHash']}:{int(lg['logIndex'], 16)}" + (":out" if side == "out" else ""), lg["transactionHash"],
+                                        sym, amt, src,
+                                        _ts(int(lg["blockTimestamp"], 16)) if lg.get("blockTimestamp") else datetime.now(timezone.utc), dir=side, to=dst))
             frm = to + 1
         bal = int(self.rpc(self.BSC_RPC, "eth_getBalance", [addr, "latest"]), 16) / 1e18
         if w is not None:
@@ -362,7 +471,9 @@ class Reader:
             w.cursor = str(head)
             w.balance = {**(w.balance or {}), "BNB": bal}
             if prev is not None and bal - prev > 1e-9:
-                out.append(Transfer(f"bnb:{head}", f"bnb:{head}", "BNB", bal - prev, None, datetime.now(timezone.utc)))
+                out.append(Transfer(f"bnb:{head}", f"bnb:{head}", "BNB", bal - prev, None, datetime.now(timezone.utc), to=addr))
+            elif prev is not None and prev - bal > 1e-9:
+                out.append(Transfer(f"bnb:{head}:out", f"bnb:{head}", "BNB", prev - bal, addr, datetime.now(timezone.utc), dir="out"))
         return out
 
     # --- SOL ---
@@ -391,21 +502,35 @@ class Reader:
                 i = keys.index(addr)
                 d = ((meta.get("postBalances") or [0] * (i + 1))[i] - (meta.get("preBalances") or [0] * (i + 1))[i]) / 1e9
                 if d > 0 and payer != addr:
-                    out.append(Transfer(s["signature"], s["signature"], "SOL", d, payer, at))
+                    out.append(Transfer(s["signature"], s["signature"], "SOL", d, payer, at, to=addr))
+                elif d < 0 and payer == addr:
+                    dst = next((k for j, k in enumerate(keys) if k != addr and j < len(meta.get("postBalances") or [])
+                                and (meta["postBalances"][j] - (meta.get("preBalances") or [0] * len(keys))[j]) > 0), None)
+                    out.append(Transfer(f"{s['signature']}:out", s["signature"], "SOL", -d, addr, at, dir="out", to=dst))
             pre = {(b.get("mint"), b.get("owner")): float((b.get("uiTokenAmount") or {}).get("uiAmount") or 0) for b in meta.get("preTokenBalances") or []}
             for b in meta.get("postTokenBalances") or []:
                 if b.get("owner") != addr:
                     continue
                 mint = b.get("mint")
                 d = float((b.get("uiTokenAmount") or {}).get("uiAmount") or 0) - pre.get((mint, addr), 0.0)
-                if d <= 0:
+                if not d:
                     continue
                 real = TOKENS["SOL"].get(mint)
-                out.append(Transfer(f"{s['signature']}:{mint}", s["signature"], real[0] if real else "SPL", d, payer, at, None if real else "spam"))
+                if d > 0:
+                    out.append(Transfer(f"{s['signature']}:{mint}", s["signature"], real[0] if real else "SPL", d, payer, at, None if real else "spam", to=addr))
+                elif real:
+                    dst = next((x.get("owner") for x in meta.get("postTokenBalances") or [] if x.get("mint") == mint and x.get("owner") != addr), None)
+                    out.append(Transfer(f"{s['signature']}:{mint}:out", s["signature"], real[0], -d, addr, at, dir="out", to=dst))
         return out
 
     def incoming(self, chain: str, addr: str, w=None) -> list[Transfer]:
-        return getattr(self, chain.lower())(addr, w)
+        """Переводы адреса. Один и тот же адрес у разных людей читается за проход один раз."""
+        if chain in ("BSC", "SOL"):  # курсор хранится у наблюдения — читаем каждое отдельно
+            return getattr(self, chain.lower())(addr, w)
+        key = (chain, addr)
+        if key not in self._seen:
+            self._seen[key] = getattr(self, chain.lower())(addr, w)
+        return list(self._seen[key])
 
     # --- открытая проверка отправителя: чёрные списки Tether / Circle ---
     def blacklisted(self, chain: str, addr: str) -> list[str]:

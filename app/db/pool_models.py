@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (
-    BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text,
+    JSON, BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text,
     UniqueConstraint, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -50,6 +50,7 @@ class PoolAccount(Base):
     last_ok: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     note: Mapped[str | None] = mapped_column(Text)  # что ссылка не показывает (начисления/воркеры)
+    alert: Mapped[dict | None] = mapped_column(JSON)  # состояние оповещений по ссылке: {"st": ok|low|zero|err, "since": ts, ...}
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
