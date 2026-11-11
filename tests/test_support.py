@@ -134,3 +134,51 @@ def test_files_both_ways(client, db, monkeypatch):
 def test_upload_needs_admin(client, db, monkeypatch):
     _setup(client, db, monkeypatch)
     assert client.post("/api/v1/admin/messages/upload", data={"tg_ids": "777"}, files={"file": ("a.png", b"x", "image/png")}).status_code in (401, 403)
+
+
+def test_failed_out_is_retried_automatically(client, db, monkeypatch):
+    h, _ = _setup(client, db, monkeypatch)
+    monkeypatch.setattr(sup, "tg_send", lambda *a, **k: None)  # связь пропала
+    r = client.post("/api/v1/admin/messages", json={"tg_ids": [777], "text": "ответ"}, headers=h).json()
+    assert r["failed"] == 1
+    th = client.get("/api/v1/admin/messages?tg=777", headers=h).json()["items"]
+    mid = th[-1]["id"]
+    assert th[-1]["status"] == "failed"
+    now = datetime.now(UTC)
+    # всё ещё нет связи — попытка учтена, статус прежний
+    assert sup.retry_failed(db, now=now)["failed"] == 1
+    # связь вернулась, но пауза между попытками ещё не прошла
+    monkeypatch.setattr(sup, "tg_send", _fake)
+    assert sup.retry_failed(db, now=now + timedelta(seconds=20))["sent"] == 0
+    assert sup.retry_failed(db, now=now + timedelta(minutes=2))["sent"] == 1
+    item = [m for m in client.get("/api/v1/admin/messages?tg=777", headers=h).json()["items"] if m["id"] == mid][0]
+    assert item["status"] == "sent" and item["retried"] is True
+    assert SENT[-1] == (777, "ответ")
+
+
+def test_retry_now_button(client, db, monkeypatch):
+    h, _ = _setup(client, db, monkeypatch)
+    monkeypatch.setattr(sup, "tg_send", lambda *a, **k: None)
+    client.post("/api/v1/admin/messages", json={"tg_ids": [777], "text": "ещё"}, headers=h)
+    mid = client.get("/api/v1/admin/messages?tg=777", headers=h).json()["items"][-1]["id"]
+    assert client.post(f"/api/v1/admin/messages/{mid}/retry", headers=h).json()["ok"] is False
+    monkeypatch.setattr(sup, "tg_send", _fake)
+    assert client.post(f"/api/v1/admin/messages/{mid}/retry", headers=h).json()["ok"] is True
+    assert client.post(f"/api/v1/admin/messages/{mid}/retry", headers=h).json()["ok"] is False  # уже доставлено
+
+
+def test_tg_api_base_used(monkeypatch):
+    from app.services import tg
+    seen = {}
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True, "result": {"message_id": 5}}
+
+    monkeypatch.setattr(get_settings(), "tg_api_base", "http://caddy:8081")
+    monkeypatch.setattr(get_settings(), "bot_token", "T")
+    monkeypatch.setattr(tg.httpx, "post", lambda url, **k: seen.setdefault("u", url) and R())
+    tg.call("getMe", {})
+    assert seen["u"] == "http://caddy:8081/botT/getMe"

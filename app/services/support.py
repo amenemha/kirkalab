@@ -33,7 +33,7 @@ def tg_send(chat_id: int, text: str, *, reply_button: bool = True) -> int | None
     if reply_button:
         payload["reply_markup"] = {"inline_keyboard": [[{"text": "✉️ Ответить", "callback_data": "sup:write"}]]}
     try:
-        r = httpx.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload, timeout=15)
+        r = httpx.post(f"{get_settings().tg_api_base}/bot{token}/sendMessage", json=payload, timeout=15)
         if r.status_code == 200:
             return (r.json().get("result") or {}).get("message_id")
         log.warning("support send %s: %s", r.status_code, r.text[:200])
@@ -72,7 +72,7 @@ def tg_media(chat_id: int, file: dict, caption: str = "", *, reply_button: bool 
     if reply_button:
         import json as _json
         payload["reply_markup"] = _json.dumps({"inline_keyboard": [[{"text": "✉️ Ответить", "callback_data": "sup:write"}]]})
-    url = f"https://api.telegram.org/bot{token}/{MEDIA_METHOD[kind]}"
+    url = f"{get_settings().tg_api_base}/bot{token}/{MEDIA_METHOD[kind]}"
     try:
         if file.get("data") is not None:
             files = {kind: (file.get("name") or "file", file["data"], file.get("mime") or "application/octet-stream")}
@@ -97,11 +97,11 @@ def tg_download(file_id: str) -> tuple[bytes, str | None] | None:
     if not token:
         return None
     try:
-        r = httpx.get(f"https://api.telegram.org/bot{token}/getFile", params={"file_id": file_id}, timeout=20)
+        r = httpx.get(f"{get_settings().tg_api_base}/bot{token}/getFile", params={"file_id": file_id}, timeout=20)
         path = (r.json().get("result") or {}).get("file_path") if r.status_code == 200 else None
         if not path:
             return None
-        d = httpx.get(f"https://api.telegram.org/file/bot{token}/{path}", timeout=120)
+        d = httpx.get(f"{get_settings().tg_api_base}/file/bot{token}/{path}", timeout=120)
         return (d.content, path.rsplit("/", 1)[-1]) if d.status_code == 200 else None
     except httpx.HTTPError as exc:
         log.warning("support download failed: %s", exc)
@@ -233,7 +233,7 @@ def send_out(db: Session, tg_ids: list[int], text: str, *, by_user_id: int | Non
 def thread(db: Session, tg: int, limit: int = 200) -> list[dict]:
     rows = db.scalars(select(SupportMessage).where(SupportMessage.tg_id == tg).order_by(SupportMessage.ts.desc(), SupportMessage.id.desc()).limit(limit)).all()
     return [{"id": r.id, "ts": act._iso(r.ts), "dir": r.direction, "text": r.text, "status": r.status, "broadcast": bool(r.broadcast),
-             "quote": (r.meta or {}).get("quote"), "quote_bot": bool((r.meta or {}).get("quote_bot")), "quote_link": (r.meta or {}).get("quote_link"),
+             "quote": (r.meta or {}).get("quote"), "quote_bot": bool((r.meta or {}).get("quote_bot")), "quote_link": (r.meta or {}).get("quote_link"), "retried": bool((r.meta or {}).get("retried")),
              "file": {k: v for k, v in ((r.meta or {}).get("file") or {}).items() if k in ("type", "name", "size", "mime")} or None} for r in reversed(rows)]
 
 
@@ -335,3 +335,75 @@ def access_text(kind: str, days: int, until: datetime) -> str:
     if kind == "trial":
         return f"🎁 Вам открыт пробный период Kirka: полный доступ на {days} дн., до {d}.\n\nВсе разделы бота и сайта доступны без ограничений. Вопросы — кнопка «Ответить» ниже."
     return f"🎁 Вам открыт полный доступ Kirka на {days} дн., до {d}.\n\nВсе разделы бота и сайта доступны без ограничений. Вопросы — кнопка «Ответить» ниже."
+
+
+# ---------- автоповтор недоставленных ----------
+RETRY_MAX = 8
+RETRY_WINDOW = timedelta(hours=24)
+
+
+def retry_one(db: Session, msg_id: int, *, sender=None, media_sender=None) -> bool:
+    """«Повторить» из админки: сразу, без ожидания паузы между попытками."""
+    m = db.get(SupportMessage, msg_id)
+    if not m or m.direction != "out" or m.status != "failed":
+        return False
+    meta = dict(m.meta or {})
+    meta.pop("last_try", None)
+    meta["tries"] = 0
+    m.meta = meta
+    db.commit()
+    r = retry_failed(db, sender=sender, media_sender=media_sender, only=msg_id)
+    return bool(r["sent"])
+
+
+def retry_failed(db: Session, *, sender=None, media_sender=None, now: datetime | None = None, only: int | None = None) -> dict:
+    """Повторно отправляет недоставленные исходящие за последние сутки.
+
+    Пауза между попытками растёт: 1, 2, 4… минут (не чаще). Файл повторяется, если у него
+    есть file_id Telegram; если файл не успел загрузиться — повторяем текст с пометкой.
+    """
+    sender = sender or tg_send
+    media_sender = media_sender or tg_media
+    now = now or datetime.now(UTC)
+    rows = list(db.scalars(select(SupportMessage).where(
+        SupportMessage.direction == "out", SupportMessage.status == "failed",
+        SupportMessage.ts >= now - RETRY_WINDOW, *( [SupportMessage.id == only] if only else [])).order_by(SupportMessage.id).limit(50)))
+    ok = bad = 0
+    for m in rows:
+        meta = dict(m.meta or {})
+        tries = int(meta.get("tries") or 0)
+        if tries >= RETRY_MAX:
+            continue
+        last = meta.get("last_try")
+        if last:
+            try:
+                lt = datetime.fromisoformat(last)
+                if (now - lt).total_seconds() < 60 * (2 ** max(0, tries - 1)):
+                    continue
+            except ValueError:
+                pass
+        f = meta.get("file") or None
+        file = f if f and f.get("file_id") else None
+        text = m.text or ""
+        if f and not file:
+            text = (text + "\n\n" if text else "") + "📎 " + (f.get("name") or "файл") + " — отправлю повторно отдельно"
+        if not text and not file:
+            continue
+        try:
+            mid, _ = _deliver(m.tg_id, text, file, sender, media_sender)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("support retry %s: %s", m.id, type(exc).__name__)
+            mid = None
+        meta["tries"] = tries + 1
+        meta["last_try"] = now.isoformat()
+        if mid:
+            m.status = "sent"
+            meta["message_id"] = mid
+            meta["retried"] = True
+            ok += 1
+        else:
+            bad += 1
+        m.meta = meta
+    if rows:
+        db.commit()
+    return {"sent": ok, "failed": bad}

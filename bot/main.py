@@ -18,6 +18,7 @@ import logging
 from bot.session import RetrySession
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
@@ -65,7 +66,7 @@ async def main() -> None:
 
   bot = Bot(
     token=settings.bot_token,
-    session=RetrySession(),
+    session=RetrySession(api=TelegramAPIServer.from_base(settings.tg_api_base.rstrip("/"))),
     default=DefaultBotProperties(parse_mode=ParseMode.HTML),
   )
 

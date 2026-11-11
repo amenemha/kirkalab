@@ -89,7 +89,7 @@ def _tg_name(db: Session, tg: int, cache: dict) -> dict:
     token = get_settings().bot_token
     if token:
         try:
-            r = httpx.get(f"https://api.telegram.org/bot{token}/getChat", params={"chat_id": tg}, timeout=6)
+            r = httpx.get(f"{get_settings().tg_api_base}/bot{token}/getChat", params={"chat_id": tg}, timeout=6)
             j = r.json().get("result") or {}
             val["username"] = j.get("username")
             val["name"] = " ".join(x for x in (j.get("first_name"), j.get("last_name")) if x) or None

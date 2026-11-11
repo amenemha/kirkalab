@@ -41,6 +41,8 @@ class Settings(BaseSettings):
 
     # Market data integrations (CoinGecko + mempool.space, both public).
     coingecko_base_url: str = "https://api.coingecko.com"
+    # Куда ходить в Telegram Bot API. На проде — внутренний шлюз с несколькими адресами Telegram (deploy/Caddyfile).
+    tg_api_base: str = "https://api.telegram.org"
     # Тестовый период: всем пользователям открыто всё (без PRO-ограничений).
     test_mode_all_pro: bool = False
     whattomine_asic_url: str = "https://whattomine.com/asic.json"

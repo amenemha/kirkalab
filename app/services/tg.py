@@ -7,7 +7,6 @@ import re
 import httpx
 
 log = logging.getLogger("kirka.tg")
-API = "https://api.telegram.org/bot{}/{}"
 _rich_ok = {"v": True}  # если Telegram отверг rich-формат, до перезапуска шлём обычным
 
 
@@ -16,12 +15,17 @@ def _token() -> str | None:
     return get_settings().bot_token
 
 
+def _base() -> str:
+    from app.core.config import get_settings  # noqa: PLC0415
+    return get_settings().tg_api_base.rstrip("/")
+
+
 def call(method: str, payload: dict, timeout: float = 15) -> dict | None:
     tok = _token()
     if not tok:
         return None
     try:
-        r = httpx.post(API.format(tok, method), json=payload, timeout=timeout)
+        r = httpx.post(f"{_base()}/bot{tok}/{method}", json=payload, timeout=timeout)
     except httpx.HTTPError as exc:
         log.warning("telegram %s failed: %s", method, type(exc).__name__)
         return None

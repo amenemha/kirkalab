@@ -1386,7 +1386,7 @@ async function pageAdmin() {
   const person = sel ? `
   <div class="grid" style="margin-top:12px">
     <div class="w c7"><div class="wh">Переписка: ${who(sel)}<span class="sp"></span><button class="btn ghost" id="admClose" style="height:24px">закрыть ✕</button></div><div class="wb">
-      <div class="chat" id="admChat">${th.items.length ? th.items.map((m) => `<div class="bub b${m.dir}${m.status === "failed" ? " fail" : ""}">${quoteBub(m)}${fileBub(m)}${m.text ? `<div>${esc(m.text)}</div>` : ""}<span>${m.dir === "in" ? "от человека" : m.broadcast ? "рассылка" : "вы"} · ${tfmt(m.ts)}${m.status === "failed" ? " · не доставлено" : ""}</span></div>`).join("") : '<div class="hint">Сообщений пока нет. Напишите первым — сообщение придёт человеку от бота, он сможет ответить кнопкой «Ответить» и прислать скриншот или файл.</div>'}</div>
+      <div class="chat" id="admChat">${th.items.length ? th.items.map((m) => `<div class="bub b${m.dir}${m.status === "failed" ? " fail" : ""}">${quoteBub(m)}${fileBub(m)}${m.text ? `<div>${esc(m.text)}</div>` : ""}<span>${m.dir === "in" ? "от человека" : m.broadcast ? "рассылка" : "вы"} · ${tfmt(m.ts)}${m.status === "failed" ? ` · не доставлено, повторю автоматически · <a href="#" data-retry="${m.id}">Повторить сейчас</a>` : m.retried ? " · доставлено повторно" : ""}</span></div>`).join("") : '<div class="hint">Сообщений пока нет. Напишите первым — сообщение придёт человеку от бота, он сможет ответить кнопкой «Ответить» и прислать скриншот или файл.</div>'}</div>
       <div class="crow" style="margin-top:10px;align-items:flex-end"><textarea class="in" id="admMsg" rows="3" placeholder="Сообщение человеку от бота… Скриншот можно вставить сюда (Ctrl+V) или перетащить файл" style="flex:1;resize:vertical">${esc(ADM.draft)}</textarea><label class="btn" title="Прикрепить файл">📎<input type="file" id="admFile" hidden></label><button class="btn pri" id="admSend">Отправить</button></div>
       <div id="admAtt" style="margin-top:6px">${attachChip(ADM.file, "admFileX")}</div>
       <div class="hint" style="margin-top:6px">Файлы до 20 МБ: скриншоты, фото, PDF, видео. Ответить можно и прямо в Telegram: бот пересылает сообщения и файлы людей менеджерам — нажмите «Ответить» на пересланном, можно с фото.</div>
@@ -1469,7 +1469,9 @@ async function pageAdmin() {
     const m = $("#admMsg"); m.oninput = () => ADM.draft = m.value;
     m.onkeydown = (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("#admSend").click(); };
     wireAttach(m, $("#admFile"), "admFileX", "file");
+    $$("[data-retry]").forEach((a) => a.onclick = async (e) => { e.preventDefault(); a.textContent = "отправляю…"; try { const r = await api(`/admin/messages/${a.dataset.retry}/retry`, { method: "POST" }); toast(r.ok ? "Доставлено" : "Пока не доставлено — повторю автоматически"); } catch { toast("Пока не доставлено — повторю автоматически"); } re(); });
     $("#admSend").onclick = async () => { if (await send([sel.tg_id], m.value, $("#admSend"), ADM.file)) { ADM.draft = ""; ADM.file = null; re(); } };
+    $$("[data-retry]").forEach((a) => a.onclick = async (e) => { e.preventDefault(); a.textContent = "отправляю…"; try { const r = await api(`/admin/messages/${a.dataset.retry}/retry`, { method: "POST" }); toast(r.ok ? "Доставлено" : "Пока не доставлено — повторю автоматически"); } catch { toast("Пока не доставлено — повторю автоматически"); } re(); });
     $$("[data-fid]").forEach(async (el) => {
       const id = el.dataset.fid;
       try { ADM_BLOB[id] = ADM_BLOB[id] || URL.createObjectURL(await apiBlob(`/admin/messages/${id}/file`)); el.innerHTML = `<img src="${ADM_BLOB[id]}" alt="фото">`; el.onclick = () => window.open(ADM_BLOB[id], "_blank"); ch.scrollTop = ch.scrollHeight; }
