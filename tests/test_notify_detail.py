@@ -86,3 +86,18 @@ def test_pool_noise_is_not_reported(db):
     assert "пул zec.2miners.ru:1010 → zec.2miners.com:1010 — <b>2</b>" in t
     assert "DevFee) сейчас у 1" in t
     assert "btc.viabtc.io:3333 → btc.viabtc.io:3333" not in t and "umhost" not in t
+
+
+def test_account_moves_grouped_in_one_line(db):
+    devs = _devs(db, n_err=3)
+    ns.set_prefs(db, TG, {"types": {"daily": False, "pool": True, "online": False, "offline": False, "errors": False}})
+    sent = []
+    snd = lambda tg, text, link=None: sent.append(text) or True  # noqa: E731
+    assert ns.tick(db, NOW, snd) == 0
+    for i, (d, po) in enumerate([(devs[1], "btc.ru.viabtc.me:3333"), (devs[2], "btcproxy.umhost.io:6060")]):
+        db.add(fm.FarmDeviceEvent(id=3000 + 2 * i, device_id=d.id, kind="pool", old=po, new="btc.viabtc.io:3333"))
+        db.add(fm.FarmDeviceEvent(id=3001 + 2 * i, device_id=d.id, kind="worker", old=f"EktonT21.x{i}", new=f"Ecton.y{i}"))
+    db.commit()
+    assert ns.tick(db, NOW + 16 * 60, snd) == 1
+    assert "аккаунт EktonT21 → Ecton · на пул btc.viabtc.io:3333 — <b>2</b>" in sent[-1]
+    assert "был btcproxy.umhost.io:6060" in sent[-1]

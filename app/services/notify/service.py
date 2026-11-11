@@ -275,13 +275,16 @@ def _pool_lines(db: Session, evs: list, conts: dict, maxl: int, items: list) -> 
         items.append({"id": did, "what": "pool", "w_old": wo if wch else None, "w_new": wn if wch else None,
                       "p_old": po if pch else None, "p_new": pn if pch else None})
         parts = []
-        if pch:
-            parts.append(f"пул {_host(po)} → {_host(pn)}")
-        if wch and _acc(wo) != _acc(wn):
+        acc = wch and _acc(wo) != _acc(wn)
+        if acc:
             parts.append(f"аккаунт {_acc(wo)} → {_acc(wn)}")
-        elif wch:
+            if pch:
+                parts.append(f"на пул {_host(pn)}")
+        elif pch:
+            parts.append(f"пул {_host(po)} → {_host(pn)}")
+        if wch and not acc:
             parts.append("переименован воркер")
-        rows = [_dev_row(d, conts)]
+        rows = [_dev_row(d, conts) + (f" · был {_h(_host(po))}" if acc and pch else "")]
         if wch:
             rows.append(f"   <code>{_h(wo)}</code> → <code>{_h(wn)}</code>")
         groups.setdefault(" · ".join(parts), []).append(rows)
@@ -310,8 +313,9 @@ def _pool_lines(db: Session, evs: list, conts: dict, maxl: int, items: list) -> 
     return out
 
 
-def _top_places(devs: list, conts: dict, n: int = 4) -> str:
-    c = Counter(conts.get(d.container_id) or "без контейнера" for d in devs)
+def _top_places(devs: list, conts: dict, n: int = 4, short: bool = False) -> str:
+    c = Counter((_place_short(conts.get(d.container_id)) if short and d.container_id in conts else conts.get(d.container_id)) or "без контейнера"
+                for d in devs)
     parts = [f"{k}: {v}" for k, v in c.most_common(n)]
     if len(c) > n:
         parts.append(f"ещё {len(c) - n}")
@@ -360,7 +364,7 @@ def build_digest(db: Session, prefs: dict, st: dict, now_ts: float, items: list 
     chips: list[str] = []
 
     def section(title: str, devs: list, extra=None) -> None:
-        lines.append(f"{title} <i>· {_h(_top_places(devs, conts, 3))}</i>")
+        lines.append(f"{title} <i>· {_h(_top_places(devs, conts, 3, short=True))}</i>")
         rows = [_dev_row(d, conts) + (f" — {_h(extra(i))}" if extra else "") for i, d in enumerate(devs[:maxl])]
         if len(devs) > maxl:
             rows.append(f"… и ещё {len(devs) - maxl} — кнопка «Открыть эти асики»")
@@ -382,7 +386,7 @@ def build_digest(db: Session, prefs: dict, st: dict, now_ts: float, items: list 
         items += [{"id": d.id, "what": "error", "new": a.get("msg")} for d, a in new_al]
     if t["lowhash"] and new_low:
         chips.append(f"📉 {len(new_low)}")
-        lines.append(f"📉 <b>Low hashrate: +{len(new_low)}</b> <i>· {_h(_top_places([d for d, _ in new_low], conts, 3))}</i>")
+        lines.append(f"📉 <b>Low hashrate: +{len(new_low)}</b> <i>· {_h(_top_places([d for d, _ in new_low], conts, 3, short=True))}</i>")
         items += [{"id": d.id, "what": "lowhash"} for d, _ in new_low]
     if t["pool"] and pool_ev:
         pl = _pool_lines(db, pool_ev, conts, maxl, items)
