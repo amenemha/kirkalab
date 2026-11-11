@@ -25,9 +25,9 @@ def test_digest_lists_back_and_worker_change_and_link(db, client):
     assert ns.tick(db, NOW + 16 * 60, sender) == 1
     text, link = calls[-1]
     assert "Вернулись в работу: 1" in text and "w.o0" in text
-    assert "Смена воркера: 1, пула: 1" in text
-    assert "было: <code>acc.10k-r33</code>" in text and "стало: <code>acc.10k-r35</code>" in text
-    assert "btc.viabtc.io:3333 → btc.f2pool.com:1314" in text and "<blockquote>" in text
+    assert "Сменили пул или воркер: 1" in text
+    assert "пул btc.viabtc.io:3333 → btc.f2pool.com:1314 · переименован воркер — <b>1</b>" in text
+    assert "<code>acc.10k-r33</code> → <code>acc.10k-r35</code>" in text and "<blockquote expandable>" in text
     assert link and link.startswith("https://kirkalab.ru/#ev/")
     tok = link.split("#ev/")[1]
     b = ns.get_batch(db, tok)
@@ -55,9 +55,34 @@ def test_old_sender_signature_still_works(db):
 def test_support_quote_saved_and_forwarded(db, monkeypatch):
     out = []
     monkeypatch.setattr(sup, "managers", lambda db: [555])
-    meta = {"username": "u", "quote": "🔔 Kirka · ферма · 18:29\nВернулись в работу: 1", "quote_bot": True,
+    meta = {"username": "u", "quote": "🔔 Ферма · 18:29\nВернулись в работу: 1", "quote_bot": True,
             "quote_link": "https://kirkalab.ru/#ev/abc"}
     sup.incoming(db, 777, "что именно включилось?", meta, sender=lambda m, t, reply_button=False: out.append(t) or 1)
     assert "↪ В ответ на сообщение бота" in out[0] and "Вернулись в работу: 1" in out[0] and "#ev/abc" in out[0]
     th = sup.thread(db, 777)
     assert th[-1]["quote"].startswith("🔔") and th[-1]["quote_bot"] and th[-1]["quote_link"].endswith("#ev/abc")
+
+
+def test_pool_noise_is_not_reported(db):
+    """Пропажа данных, «было = стало» и DevFee — не смена пула; реальные смены группируются."""
+    devs = _devs(db, n_err=3)
+    ns.set_prefs(db, TG, {"types": {"daily": False, "pool": True, "online": False, "offline": False, "errors": False}})
+    sent = []
+    assert ns.tick(db, NOW, lambda tg, text, link=None: sent.append(text) or True) == 0
+    a, b, c, e, f = devs[1], devs[2], devs[3], devs[4], devs[5]
+    evs = [
+        (a, "pool", "stratum+tcp://btc.viabtc.io:3333", ""), (a, "pool", "", "stratum+tcp://btc.viabtc.io:3333"),  # мигнул
+        (b, "pool", "stratum+tcp://btcproxy.umhost.io:6060", ""),  # данные пропали
+        (c, "pool", "stratum+tcp://btc.viabtc.io:3333", "DevFee"), (c, "worker", "acc.1", "venkat1812"),  # комиссия прошивки
+        (e, "pool", "zec.2miners.ru:1010", "zec.2miners.com:1010"),
+        (f, "pool", "zec.2miners.ru:1010", "zec.2miners.com:1010"),
+    ]
+    for i, (d, k, o, n) in enumerate(evs):
+        db.add(fm.FarmDeviceEvent(id=2000 + i, device_id=d.id, kind=k, old=o, new=n))
+    db.commit()
+    assert ns.tick(db, NOW + 16 * 60, lambda tg, text, link=None: sent.append(text) or True) == 1
+    t = sent[-1]
+    assert "Сменили пул или воркер: 2" in t
+    assert "пул zec.2miners.ru:1010 → zec.2miners.com:1010 — <b>2</b>" in t
+    assert "DevFee) сейчас у 1" in t
+    assert "btc.viabtc.io:3333 → btc.viabtc.io:3333" not in t and "umhost" not in t
