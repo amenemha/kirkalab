@@ -1,7 +1,9 @@
 """✉️ Написать менеджеру: сообщение уходит менеджерам, ответ приходит сюда же.
 
 Менеджер может ответить прямо в Telegram — «Ответить» на пересланное ботом сообщение.
-Любой свободный текст вне сценариев тоже передаётся менеджеру.
+Свободный текст вне сценариев: число после расчёта — новая цена электроэнергии
+(пересчитываем), короткая реплика — спрашиваем, передать ли менеджеру, связный
+вопрос или файл — передаём менеджеру сразу.
 """
 from __future__ import annotations
 
@@ -116,8 +118,51 @@ async def got_text(message: Message, state: FSMContext) -> None:
     await message.answer(DONE if ok else "Не получилось отправить — попробуйте ещё раз чуть позже.", reply_markup=_menu_kb())
 
 
+def is_short(text: str) -> bool:
+  """Короткая реплика («5.5», «ок», «привет») — не похоже на обращение к менеджеру."""
+  t = (text or "").strip()
+  return len(t.split()) < 3 and len(t) < 20 and not t.endswith("?")
+
+
+def as_price(text: str) -> tuple[str, str] | None:
+  """«5.5», «5,5 ₽», «0.06 usdt» → (значение, валюта); иначе None."""
+  import re
+  t = (text or "").strip().lower().replace(",", ".")
+  m = re.fullmatch(r"(\d{1,4}(?:\.\d{1,6})?)\s*(₽|р\.?|руб\.?|rub|usdt|usd|\$)?", t)
+  if not m:
+    return None
+  cur = "USDT" if m.group(2) in ("usdt", "usd", "$") else "RUB"
+  return m.group(1), cur
+
+
+ASK_SHORT = "Не поняла, что сделать с «{t}». Передать менеджеру?"
+
+
+def _ask_kb() -> InlineKeyboardMarkup:
+  return InlineKeyboardMarkup(inline_keyboard=[[
+    InlineKeyboardButton(text="✉️ Передать менеджеру", callback_data="sup:send"),
+    InlineKeyboardButton(text="☰ Меню", callback_data="hub:menu")]])
+
+
+@router.callback_query(F.data == "sup:send")
+async def cb_send_pending(cb: CallbackQuery, state: FSMContext) -> None:
+  data = await state.get_data()
+  t = data.get("sup_pending")
+  if not t:
+    await cb.answer("Напишите сообщение ещё раз", show_alert=True)
+    return
+  u = cb.from_user
+  name = " ".join(x for x in (u.first_name, u.last_name) if x) or None
+  r = await cb.bot.kirkalab_client._request("POST", "/api/v1/internal/support", headers=_hdr(),
+                                            json={"telegram_user_id": u.id, "text": t, "username": u.username, "name": name})
+  await state.update_data(sup_pending=None)
+  await cb.answer()
+  await cb.message.edit_text(DONE if r.status_code == 200 else "Не получилось отправить — попробуйте ещё раз чуть позже.",
+                             reply_markup=_menu_kb())
+
+
 @router.message(StateFilter(None), (F.text & ~F.text.startswith("/")) | MEDIA)
-async def free_text(message: Message) -> None:
+async def free_text(message: Message, state: FSMContext) -> None:
   """Свободный текст или файл: ответ менеджера на пересланное сообщение или новое сообщение менеджеру."""
   rt = message.reply_to_message
   if rt and rt.from_user and rt.from_user.id == message.bot.id:
@@ -128,6 +173,20 @@ async def free_text(message: Message) -> None:
     r = await message.bot.kirkalab_client._request("POST", "/api/v1/internal/support/reply", headers=_hdr(), json=body)
     if r.status_code == 200:
       await message.answer("✓ Ответ отправлен." if r.json().get("ok") else "Связь с Telegram сейчас нестабильна — ответ сохранён, доставлю автоматически в ближайшие минуты.")
+      return
+  if message.text and not rt:
+    data = await state.get_data()
+    price = as_price(message.text)
+    if price and (data.get("device_model_id") is not None or data.get("hashrate_ths")):
+      from bot.handlers.calc import _run_and_render
+      await state.update_data(power_price=price[0], price_currency=price[1], save_power_price=False)
+      screen = await message.answer("⏳ Пересчитываю по " + price[0] + (" ₽" if price[1] == "RUB" else " USDT") + " за кВт·ч…")
+      await _run_and_render(screen, message.from_user.id, state)
+      return
+    if is_short(message.text):
+      await state.update_data(sup_pending=message.text)
+      import html
+      await message.answer(ASK_SHORT.format(t=html.escape(message.text.strip())), reply_markup=_ask_kb())
       return
   ok = await _deliver(message)
   if _first_in_group(message):

@@ -74,15 +74,18 @@ async def pools_cmd(message: Message, state: FSMContext) -> None:
     await safe_delete(message)
     await drop_screen(message, state)
     data = await _load(message.bot.kirkalab_client, message.from_user.id)
-    text = _fmt(data) if data is not None else "🌊 Пулы пока доступны только администраторам."
-    await edit_live_screen(message, state, text, reply_markup=_kb())
+    if data is None:
+        from bot.handlers.conn import show_conn
+        await show_conn(message, state, message.from_user.id)
+        return
+    await edit_live_screen(message, state, _fmt(data), reply_markup=_kb())
 
 
 @router.callback_query(F.data == "pools:refresh")
 async def pools_refresh(cb: CallbackQuery) -> None:
     data = await _load(cb.bot.kirkalab_client, cb.from_user.id)
     if data is None:
-        await cb.answer("Пулы доступны только администраторам", show_alert=True)
+        await cb.answer("Ваши ссылки пулов — в «🔌 Подключения»", show_alert=True)
         return
     try:
         await cb.message.edit_text(_fmt(data), reply_markup=_kb(), parse_mode="HTML")

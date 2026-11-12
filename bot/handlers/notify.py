@@ -80,7 +80,7 @@ def render(data: dict) -> tuple[str, InlineKeyboardMarkup]:
   return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-DENIED = "🔔 Уведомления фермы доступны управляющим площадки."
+DENIED = "🔔 Уведомления фермы включатся, когда вы подключите ферму: CROFT или ссылку наблюдателя пула (🔌 Подключения). О кошельках пишу всегда."
 
 
 def _is_digest(msg: Message | None) -> bool:
