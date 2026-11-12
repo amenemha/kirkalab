@@ -122,13 +122,28 @@ async def send_profile(
   is_pro = bool(profile.get("is_pro"))
   is_linked = bool(profile.get("is_linked"))
   _ = is_linked
-  text = (
-    "👤 <b>Ваш профиль</b>\n\n"
-    f"🆔 Кабинет: #{profile.get('id')}\n"
-    "🧪 Тестовый доступ: всё открыто\n\n"
-    "Доступ к расчётам и каталогу включён автоматически."
-  )
+  text = await profile_text(message, user_id)
   await edit_live_screen(message, state, text, reply_markup=profile_menu(is_pro=is_pro))
+
+
+async def profile_text(message: Message, user_id: int) -> str:
+  """Профиль: имя/ник из Telegram и что подключено — без внутренних номеров."""
+  import html
+
+  from bot.handlers.conn import call
+
+  chat = message.chat
+  nick = f"@{chat.username}" if getattr(chat, "username", None) else (getattr(chat, "first_name", None) or "")
+  lines = ["👤 <b>Профиль</b>" + (f" · {html.escape(nick)}" if nick else ""), ""]
+  d = await call(message.bot, {"action": "list", "tg_id": user_id}) or {}
+  crofts, pools = d.get("croft") or [], d.get("pools") or []
+  srv = d.get("server") or {}
+  if srv.get("croft"):
+    lines.append("🏭 Общая ферма — вы управляющий")
+  lines.append(f"🔑 CROFT: {len(crofts)} подключено" if crofts else "🔑 CROFT: не подключён")
+  lines.append(f"🔗 Ссылки пулов: {len(pools)}" if pools else "🔗 Ссылки пулов: нет")
+  lines += ["", "Калькулятор и каталог работают сразу. Ферму, пулы и кошельки подключайте в «🔌 Подключения»."]
+  return "\n".join(lines)
 
 
 @router.callback_query(F.data == "profile:help")

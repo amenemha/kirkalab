@@ -74,9 +74,11 @@ def profile_menu(*, is_pro: bool) -> InlineKeyboardMarkup:
   Tariff/PRO and Help live here (not in the main menu). A non-PRO user is
   offered the optional email/password link to an existing PRO/web account."""
   builder = InlineKeyboardBuilder()
+  builder.button(text="🔌 Подключения", callback_data="conn:open")
+  builder.button(text="👛 Кошельки", callback_data="wal:open")
   builder.button(text="🔔 Уведомления", callback_data="notif:open")
   builder.button(text="ℹ️ Помощь", callback_data="profile:help")
-  builder.adjust(1)
+  builder.adjust(2)
   return builder.as_markup()
 
 

@@ -203,11 +203,16 @@ async def show_farm(message: Message, state: FSMContext, uid: int) -> None:
                            reply_markup=farm_kb(await site_link(message.bot, uid, "map")))
 
 
+NO_FARM_PROBLEMS = ("⚠️ <b>Проблемы</b>\n\nЗдесь появятся асики без связи, с ошибками и низким хешрейтом. "
+                    "Подключите свой CROFT или пришлите ссылку наблюдателя пула — и я начну следить.")
+
+
 async def show_problems(message: Message, state: FSMContext, uid: int) -> None:
     data = await farm_load(message.bot.kirkalab_client, uid)
     if data is None:
-        await edit_live_screen(message, state, "⚠️ Раздел доступен только администраторам.",
-                               reply_markup=InlineKeyboardMarkup(inline_keyboard=[[btn("☰ Меню", "hub:menu")]]))
+        await edit_live_screen(message, state, NO_FARM_PROBLEMS,
+                               reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                   [btn("🔌 Подключения", "conn:open")], [btn("☰ Меню", "hub:menu")]]))
         return
     await edit_live_screen(message, state, problems_text(data), reply_markup=problems_kb(await site_link(message.bot, uid, "errors")))
 
