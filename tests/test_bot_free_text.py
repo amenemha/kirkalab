@@ -1,8 +1,15 @@
 """Свободный текст: цена после расчёта пересчитывает, короткие реплики не уходят менеджеру."""
-from bot.handlers.support import as_price, is_short
+import pytest
+
+
+def _fns():
+    pytest.importorskip("aiogram")
+    from bot.handlers.support import as_price, is_short
+    return as_price, is_short
 
 
 def test_as_price():
+    as_price, _ = _fns()
     assert as_price("5.5") == ("5.5", "RUB")
     assert as_price("5,5 ₽") == ("5.5", "RUB")
     assert as_price("0.06 usdt") == ("0.06", "USDT")
@@ -12,6 +19,7 @@ def test_as_price():
 
 
 def test_is_short():
+    _, is_short = _fns()
     assert is_short("5.5")
     assert is_short("ок")
     assert is_short("привет")
