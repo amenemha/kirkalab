@@ -66,10 +66,14 @@ def _ths(mhs):
     return round(float(mhs) / 1e6, 3) if mhs is not None else None
 
 
+BATCH = 500
+
+
 def run_sync(db: Session, client: CroftClient) -> fm.FarmSyncRun:
     run = fm.FarmSyncRun(started_at=_now())
     db.add(run)
     db.commit()
+    run_id = run.id
     try:
         groups = client.view_groups()
         customer = next((g["customer"]["uniqId"] for g in groups if g.get("customer")), None)
@@ -79,14 +83,17 @@ def run_sync(db: Session, client: CroftClient) -> fm.FarmSyncRun:
             hc = g.get("hosterClient")
             if hc:
                 _upsert_ref(db, fm.FarmClient, {}, hc, comment=hc.get("comment"))
-        raw = client.devices(customer)
-        n_events = _apply(db, raw)
-        run.devices = len(raw)
+        db.commit()
+        it = client.iter_devices(customer) if hasattr(client, "iter_devices") else iter(client.devices(customer))
+        n_dev, n_events = _apply_stream(db, it)
+        run = db.get(fm.FarmSyncRun, run_id)
+        run.devices = n_dev
         run.events = n_events
         run.ok = True
     except Exception as e:  # noqa: BLE001
         db.rollback()
         log.exception("sync failed")
+        run = db.get(fm.FarmSyncRun, run_id)
         run.error = str(e)[:2000]
     run.finished_at = _now()
     db.add(run)
@@ -95,19 +102,47 @@ def run_sync(db: Session, client: CroftClient) -> fm.FarmSyncRun:
 
 
 def _apply(db: Session, raw: list[dict]) -> int:
+    return _apply_stream(db, iter(raw))[1]
+
+
+def _apply_stream(db: Session, devices) -> tuple[int, int]:
+    """Разбор асиков пачками по BATCH: память не растёт с размером фермы."""
     now = _now()
     hour = now.replace(minute=0, second=0, microsecond=0)
-    sites, conts, clients = {}, {}, {}
-    existing = {d.ext_id: d for d in db.scalars(select(fm.FarmDevice))}
-    # Low hashrate считаем по среднему за последний час (прошлый + текущий час из почасовой таблицы).
-    low_pct = float(get_settings(db)["lowhash_pct"])
+    ctx = dict(now=now, hour=hour, sites={}, conts={}, clients={}, per_cont={},
+               low_pct=float(get_settings(db)["lowhash_pct"]))
     H = fm.FarmDeviceHourly
-    hr_acc = {dev_id: (hs or 0.0, n or 0) for dev_id, hs, n in db.execute(
+    ctx["hr_acc"] = {dev_id: (hs or 0.0, n or 0) for dev_id, hs, n in db.execute(
         select(H.device_id, func.sum(H.hashrate_sum), func.sum(H.online_samples))
         .where(H.hour >= hour - timedelta(hours=1)).group_by(H.device_id))}
+    n_dev = n_ev = 0
+    batch: list[dict] = []
+    for d in devices:
+        batch.append(d)
+        if len(batch) >= BATCH:
+            n_ev += _apply_batch(db, batch, ctx)
+            n_dev += len(batch)
+            batch = []
+    if batch:
+        n_ev += _apply_batch(db, batch, ctx)
+        n_dev += len(batch)
+    per_cont = ctx["per_cont"]
+    db.bulk_insert_mappings(fm.FarmContainerSample, [
+        dict(container_id=k, at=now, total=v["total"], online=v["online"], offline=v["offline"],
+             hashrate_ths=round(v["hr"], 3), power_kw=round(v["kw"], 2)) for k, v in per_cont.items()])
+    _detect_incidents(db, now, per_cont)
+    db.commit()
+    return n_dev, n_ev
+
+
+def _apply_batch(db: Session, raw: list[dict], ctx: dict) -> int:
+    now, hour, low_pct, hr_acc = ctx["now"], ctx["hour"], ctx["low_pct"], ctx["hr_acc"]
+    sites, conts, clients, per_cont = ctx["sites"], ctx["conts"], ctx["clients"], ctx["per_cont"]
+    ids = [d["uniqId"] for d in raw if d.get("uniqId")]
+    # Low hashrate считаем по среднему за последний час (прошлый + текущий час из почасовой таблицы).
+    existing = {d.ext_id: d for d in db.scalars(select(fm.FarmDevice).where(fm.FarmDevice.ext_id.in_(ids)))}
     events: list[dict] = []
     hourly: list[dict] = []
-    per_cont: dict[int, dict] = {}
     seen = set()
 
     for d in raw:
@@ -191,11 +226,8 @@ def _apply(db: Session, raw: list[dict]) -> int:
         db.bulk_insert_mappings(fm.FarmDeviceEvent, events)
     if hourly and db.bind.dialect.name == "postgresql":
         _upsert_hourly(db, hourly)
-    db.bulk_insert_mappings(fm.FarmContainerSample, [
-        dict(container_id=k, at=now, total=v["total"], online=v["online"], offline=v["offline"],
-             hashrate_ths=round(v["hr"], 3), power_kw=round(v["kw"], 2)) for k, v in per_cont.items()])
-    _detect_incidents(db, now, per_cont)
     db.commit()
+    db.expunge_all()
     return len(events)
 
 
