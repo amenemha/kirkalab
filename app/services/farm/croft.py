@@ -44,3 +44,51 @@ class CroftClient:
             p["hosterClientUniqId"] = client_id
         data = self._get("devices", p)
         return data.get("devices", []) if isinstance(data, dict) else data
+
+    def iter_devices(self, customer_id: str, client_id: str | None = None):
+        """Асики по одному, без загрузки всего ответа в память (у крупных ферм он десятки МБ)."""
+        import ijson
+
+        p = {"customerUniqId": customer_id}
+        if client_id:
+            p["hosterClientUniqId"] = client_id
+        with httpx.Client(timeout=self.timeout) as c:
+            for attempt in (1, 2):
+                tok = self._auth(c)
+                with c.stream("GET", f"{self.base}/devices", params=p, headers={"Authorization": f"Bearer {tok}"}) as r:
+                    if r.status_code == 401 and attempt == 1:
+                        self._token = None
+                        continue
+                    r.raise_for_status()
+                    src = _Stream(r.iter_bytes())
+                    prefix = "item" if src.first() == b"[" else "devices.item"
+                    yield from ijson.items(src, prefix, use_float=True)
+                    return
+
+
+class _Stream:
+    """Файлоподобная обёртка над потоком байтов для ijson; first() — первый значимый байт."""
+
+    def __init__(self, it):
+        self._it = iter(it)
+        self._buf = b""
+
+    def first(self) -> bytes:
+        while not self._buf.lstrip():
+            chunk = next(self._it, None)
+            if chunk is None:
+                return b""
+            self._buf += chunk
+        return self._buf.lstrip()[:1]
+
+    def read(self, n: int = -1) -> bytes:
+        while n < 0 or len(self._buf) < n:
+            chunk = next(self._it, None)
+            if chunk is None:
+                break
+            self._buf += chunk
+        if n < 0:
+            out, self._buf = self._buf, b""
+        else:
+            out, self._buf = self._buf[:n], self._buf[n:]
+        return out
